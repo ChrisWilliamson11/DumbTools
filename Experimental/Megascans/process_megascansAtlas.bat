@@ -1,0 +1,13 @@
+@echo off
+echo Starting Megascans processing...
+
+:loop
+echo Running Blender...
+"C:\Program Files (x86)\Steam\steamapps\common\Blender\blender.exe" -b -P "J:/DumbTools/DumbTools/Experimental/Megascans/CreateMegascans3D.py"
+
+echo Blender process ended or crashed
+echo Waiting 10 seconds before restart...
+timeout /t 2
+
+echo Restarting...
+goto loop

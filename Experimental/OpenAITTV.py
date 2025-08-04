@@ -1,7 +1,7 @@
 # Tooltip: OpenAI text to speech
 from openai import OpenAI
 import os
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", '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'))
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", ''))
 
 response = client.audio.speech.create(
     model="tts-1",

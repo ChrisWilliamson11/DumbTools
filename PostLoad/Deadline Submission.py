@@ -13,7 +13,7 @@ def get_deadline_path():
         return getattr(prefs, 'deadline_path', "\\DeadlineRepository10\\bin\\Windows\\64bit\\deadlinecommand.exe")
     except:
         # Fallback to hardcoded path if preferences aren't available
-        return "\\DeadlineRepository\\bin\\Windows\\64bit\\deadlinecommand.exe"
+        return "\\\\wlgsrvrnd\\DeadlineRepository10\\bin\\Windows\\64bit\\deadlinecommand.exe"
 
 def save_pools_to_cache(pools):
     """Save pools to JSON cache file"""
@@ -40,34 +40,110 @@ def load_pools_from_cache():
         print(f"DEBUG: Failed to load pools cache: {e}")
         return None
 
+def create_clean_deadline_environment():
+    """Create a clean environment for Deadline commands to avoid Python conflicts"""
+    env = os.environ.copy()
+
+    # Remove all Python-related environment variables that might conflict
+    python_vars_to_remove = [
+        'PYTHONPATH', 'PYTHONHOME', 'PYTHON', 'PYTHONSTARTUP', 'PYTHONIOENCODING',
+        'PYTHONEXECUTABLE', 'PYTHONDONTWRITEBYTECODE', 'PYTHONUNBUFFERED',
+        'PYTHONOPTIMIZE', 'PYTHONDEBUG', 'PYTHONVERBOSE', 'PYTHONCASEOK',
+        'PYTHONUSERBASE', 'PYTHONUSERSITE', 'PYTHONHASHSEED', 'PYTHONMALLOCSTATS',
+        'PYTHONASYNCIODEBUG', 'PYTHONTRACEMALLOC', 'PYTHONFAULTHANDLER',
+        'PYTHONLEGACYWINDOWSFSENCODING', 'PYTHONLEGACYWINDOWSSTDIO',
+        'PYTHONCOERCECLOCALE', 'PYTHONDEVMODE', 'PYTHONWARNINGS'
+    ]
+
+    for var in python_vars_to_remove:
+        env.pop(var, None)
+
+    # Also remove any Blender-specific Python paths that might interfere
+    blender_vars_to_remove = [
+        'BLENDER_SYSTEM_PYTHON', 'BLENDER_USER_SCRIPTS', 'BLENDER_SYSTEM_SCRIPTS'
+    ]
+
+    for var in blender_vars_to_remove:
+        env.pop(var, None)
+
+    return env
+
 def get_deadline_pools_from_server():
     """Get available pools directly from Deadline server"""
     try:
         deadline_cmd = get_deadline_path()
+        print(f"DEBUG: Using Deadline command: {deadline_cmd}")
 
         # Create clean environment
-        env = os.environ.copy()
-        python_vars_to_remove = ['PYTHONPATH', 'PYTHONHOME', 'PYTHON', 'PYTHONSTARTUP', 'PYTHONIOENCODING']
-        for var in python_vars_to_remove:
-            env.pop(var, None)
+        env = create_clean_deadline_environment()
 
-        # Get pools using deadline command
-        result = subprocess.run(
-            [deadline_cmd, "-GetPoolNames"],
-            shell=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env
-        )
+        # Try multiple approaches to work around Python environment issues
+        approaches = [
+            # Approach 1: Use clean environment with shell=False
+            {
+                'cmd': [deadline_cmd, "-GetPoolNames"],
+                'shell': False,
+                'env': env,
+                'description': 'Clean environment, no shell'
+            },
+            # Approach 2: Use clean environment with shell=True
+            {
+                'cmd': f'"{deadline_cmd}" -GetPoolNames',
+                'shell': True,
+                'env': env,
+                'description': 'Clean environment, with shell'
+            },
+            # Approach 3: Use minimal environment (only keep essential Windows vars)
+            {
+                'cmd': [deadline_cmd, "-GetPoolNames"],
+                'shell': False,
+                'env': {
+                    'PATH': env.get('PATH', ''),
+                    'SYSTEMROOT': env.get('SYSTEMROOT', ''),
+                    'WINDIR': env.get('WINDIR', ''),
+                    'TEMP': env.get('TEMP', ''),
+                    'TMP': env.get('TMP', ''),
+                    'USERNAME': env.get('USERNAME', ''),
+                    'USERPROFILE': env.get('USERPROFILE', ''),
+                    'COMPUTERNAME': env.get('COMPUTERNAME', ''),
+                },
+                'description': 'Minimal environment'
+            }
+        ]
 
-        if result.returncode == 0:
-            pools = [pool.strip() for pool in result.stdout.strip().split('\n') if pool.strip()]
-            print(f"DEBUG: Found pools from server: {pools}")
-            return pools
-        else:
-            print(f"DEBUG: Failed to get pools from server: {result.stderr}")
-            return ["blendergpu"]  # Fallback to your current hardcoded pool
+        for i, approach in enumerate(approaches, 1):
+            print(f"DEBUG: Trying approach {i}: {approach['description']}")
+
+            try:
+                result = subprocess.run(
+                    approach['cmd'],
+                    shell=approach['shell'],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=approach['env'],
+                    timeout=30  # Add timeout to prevent hanging
+                )
+
+                print(f"DEBUG: Approach {i} - Return code: {result.returncode}")
+                if result.stderr:
+                    print(f"DEBUG: Approach {i} - Stderr: {result.stderr}")
+
+                if result.returncode == 0:
+                    pools = [pool.strip() for pool in result.stdout.strip().split('\n') if pool.strip()]
+                    print(f"DEBUG: Approach {i} succeeded - Found pools: {pools}")
+                    return pools
+                else:
+                    print(f"DEBUG: Approach {i} failed with return code {result.returncode}")
+
+            except subprocess.TimeoutExpired:
+                print(f"DEBUG: Approach {i} timed out")
+            except Exception as e:
+                print(f"DEBUG: Approach {i} exception: {e}")
+
+        # If all approaches failed, return fallback
+        print("DEBUG: All approaches failed, using fallback pools")
+        return ["blendergpu"]  # Fallback to your current hardcoded pool
 
     except Exception as e:
         print(f"DEBUG: Error getting pools from server: {e}")
@@ -108,6 +184,7 @@ import sys
 
 def setup_sample_subset():
     """Setup sample subset parameters from command line arguments"""
+    print("=== SAMPLE SUBSET SETUP SCRIPT STARTED ===")
     # Find arguments after '--'
     try:
         dash_index = sys.argv.index('--')
@@ -135,11 +212,25 @@ def setup_sample_subset():
 
         scene = bpy.context.scene
 
+        # Log current state before changes
+        print(f"BEFORE: use_sample_subset={scene.cycles.use_sample_subset}, samples={scene.cycles.samples}")
+        print(f"BEFORE: sample_offset={scene.cycles.sample_offset}, sample_subset_length={scene.cycles.sample_subset_length}")
+        print(f"Render engine: {scene.render.engine}")
+
         # Set sample subset parameters
         scene.cycles.use_sample_subset = True
         scene.cycles.sample_offset = offset
         scene.cycles.sample_subset_length = length
-        scene.cycles.samples = total_samples  # Set total samples for proper noise calculation
+        # DO NOT set scene.cycles.samples - let Blender use the subset length for actual rendering
+
+        # Log state after changes to verify they were applied
+        print(f"AFTER: use_sample_subset={scene.cycles.use_sample_subset}, samples={scene.cycles.samples}")
+        print(f"AFTER: sample_offset={scene.cycles.sample_offset}, sample_subset_length={scene.cycles.sample_subset_length}")
+
+        # Verify the render engine is Cycles
+        if scene.render.engine != 'CYCLES':
+            print("WARNING: Render engine is not CYCLES - sample subset feature only works with Cycles!")
+            return False
 
         # Set output path
         scene.render.filepath = output_path
@@ -218,78 +309,137 @@ def submit_split_frame_jobs(scene, filename, context):
         print(f"MAXIMUM: You can split into at most {total_samples} jobs (1 sample per job).")
         return []
 
-    # Create the sample subset setup script
-    setup_script_path = create_sample_subset_script()
+    # Store original scene settings to restore later
+    original_use_sample_subset = scene.cycles.use_sample_subset
+    original_sample_offset = scene.cycles.sample_offset
+    original_sample_subset_length = scene.cycles.sample_subset_length
+    original_use_denoising = scene.cycles.use_denoising
+    original_use_adaptive_sampling = scene.cycles.use_adaptive_sampling
+    original_file_format = scene.render.image_settings.file_format
+    original_filepath = scene.render.filepath
 
     # Get original output path
-    original_filepath = scene.render.filepath
     if original_filepath.startswith("//"):
         original_filepath = bpy.path.abspath(original_filepath)
 
     subset_job_ids = []
 
-    # Submit jobs for each sample subset
-    for job_index in range(job_count):
-        # Calculate offset and length for this job
-        offset = job_index * samples_per_job
-        length = samples_per_job
+    try:
+        # Submit jobs for each sample subset
+        for job_index in range(job_count):
+            # Calculate offset and length for this job
+            offset = job_index * samples_per_job
+            length = samples_per_job
 
-        # Add remaining samples to the last job
-        if job_index == job_count - 1:
-            length += remaining_samples
+            # Add remaining samples to the last job
+            if job_index == job_count - 1:
+                length += remaining_samples
 
-        # Create subset output filename
-        path_without_ext, extension = os.path.splitext(original_filepath)
-        subset_filepath = f"{path_without_ext}_subset_{job_index + 1:02d}_of_{job_count:02d}.exr"
+            # Create subset output filename
+            path_without_ext, extension = os.path.splitext(original_filepath)
+            subset_filepath = f"{path_without_ext}_subset_{job_index + 1:02d}_of_{job_count:02d}.exr"
 
-        print(f"DEBUG: Subset job {job_index + 1}: offset={offset}, length={length}, output={subset_filepath}")
+            print(f"DEBUG: Subset job {job_index + 1}: offset={offset}, length={length}, output={subset_filepath}")
 
-        # Create job info for this subset
-        subset_filename = f"{filename}_subset_{job_index + 1:02d}_of_{job_count:02d}"
-        write_split_frame_job_info(scene, subset_filename, current_frame, subset_filepath)
-        write_split_frame_plugin_info(scene.name, setup_script_path, offset, length, total_samples, subset_filepath)
+            # Modify scene settings for this subset
+            scene.cycles.use_sample_subset = True
+            scene.cycles.sample_offset = offset
+            scene.cycles.sample_subset_length = length
+            scene.cycles.use_denoising = False  # Disable denoising for subset rendering
+            scene.cycles.use_adaptive_sampling = False  # Disable adaptive sampling
+            scene.render.image_settings.file_format = 'OPEN_EXR'  # Force EXR format
+            scene.render.filepath = subset_filepath
 
-        # Submit the subset job
-        cmd_list = [get_deadline_path(), "-SubmitJob", JOB_INFO_PATH, PLUGIN_INFO_PATH]
+            # Create temporary scene file with subset settings
+            temp_scene_path = create_temp_scene_file(job_index, job_count)
 
-        # Add the original scene file and setup script as auxiliary files
-        if bpy.data.filepath:
-            cmd_list.extend([bpy.data.filepath, setup_script_path])
+            # Create job info for this subset
+            subset_filename = f"{filename}_subset_{job_index + 1:02d}_of_{job_count:02d}"
+            write_split_frame_job_info(scene, subset_filename, current_frame, subset_filepath)
+            write_split_frame_plugin_info_with_temp_scene(scene.name, temp_scene_path, subset_filepath)
 
-        # Execute submission
-        env = os.environ.copy()
-        python_vars_to_remove = ['PYTHONPATH', 'PYTHONHOME', 'PYTHON', 'PYTHONSTARTUP', 'PYTHONIOENCODING']
-        for var in python_vars_to_remove:
-            env.pop(var, None)
+            # Submit the subset job
+            cmd_list = [get_deadline_path(), "-SubmitJob", JOB_INFO_PATH, PLUGIN_INFO_PATH]
 
-        result = subprocess.run(
-            cmd_list,
-            shell=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env
-        )
+            # Add the temporary scene file as auxiliary file
+            cmd_list.append(temp_scene_path)
 
-        print(f"Subset job {job_index + 1} - Return code: {result.returncode}")
-        print(f"Subset job {job_index + 1} - Output: {result.stdout}")
-        if result.stderr:
-            print(f"Subset job {job_index + 1} - Errors: {result.stderr}")
+            # Execute submission
+            env = os.environ.copy()
+            python_vars_to_remove = ['PYTHONPATH', 'PYTHONHOME', 'PYTHON', 'PYTHONSTARTUP', 'PYTHONIOENCODING']
+            for var in python_vars_to_remove:
+                env.pop(var, None)
 
-        # Get job ID for dependency tracking
-        job_id = None
-        for line in result.stdout.splitlines():
-            if "JobID=" in line:
-                job_id = line.split("JobID=")[1].strip()
-                break
+            cmd = " ".join(f'"{arg}"' for arg in cmd_list)
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env
+            )
 
-        if job_id:
-            subset_job_ids.append(job_id)
-            print(f"DEBUG: Subset job {job_index + 1} submitted with ID: {job_id}")
-        else:
-            print(f"WARNING: Failed to get job ID for subset job {job_index + 1}")
+            if result.returncode == 0:
+                # Extract job ID from output
+                job_id = None
+                for line in result.stdout.split('\n'):
+                    if "JobID=" in line:
+                        job_id = line.split("JobID=")[1].strip()
+                        break
+
+                if job_id:
+                    subset_job_ids.append(job_id)
+                    print(f"DEBUG: Subset job {job_index + 1} submitted with ID: {job_id}")
+                else:
+                    print(f"WARNING: Failed to get job ID for subset job {job_index + 1}")
+            else:
+                print(f"ERROR: Failed to submit subset job {job_index + 1}")
+                print(f"STDERR: {result.stderr}")
+
+    finally:
+        # Restore original scene settings
+        scene.cycles.use_sample_subset = original_use_sample_subset
+        scene.cycles.sample_offset = original_sample_offset
+        scene.cycles.sample_subset_length = original_sample_subset_length
+        scene.cycles.use_denoising = original_use_denoising
+        scene.cycles.use_adaptive_sampling = original_use_adaptive_sampling
+        scene.render.image_settings.file_format = original_file_format
+        scene.render.filepath = original_filepath
+        print("DEBUG: Restored original scene settings")
 
     return subset_job_ids
+
+def create_temp_scene_file(job_index, job_count):
+    """Create a temporary scene file with current settings for this subset job"""
+    # Get the original scene file path
+    original_scene_path = bpy.data.filepath
+    if not original_scene_path:
+        raise ValueError("Scene must be saved before submitting split frame jobs")
+
+    # Create temporary file path
+    scene_dir = os.path.dirname(original_scene_path)
+    scene_name = os.path.splitext(os.path.basename(original_scene_path))[0]
+    temp_scene_path = os.path.join(temp_dir, f"{scene_name}_subset_{job_index + 1:02d}_of_{job_count:02d}.blend")
+
+    # Save the current scene with subset settings to the temporary file
+    bpy.ops.wm.save_as_mainfile(filepath=temp_scene_path, copy=True)
+
+    print(f"DEBUG: Created temporary scene file: {temp_scene_path}")
+    return temp_scene_path
+
+def write_split_frame_plugin_info_with_temp_scene(scene_name, temp_scene_path, output_path):
+    """Write plugin info for split frame subset jobs using temporary scene file"""
+    with open(PLUGIN_INFO_PATH, "w") as f:
+        # Use the temporary scene file with subset settings already applied
+        f.write(f"SceneFile={os.path.normpath(temp_scene_path)}\n")
+        f.write(f"Scene={scene_name}\n")
+        f.write(f"OutputFile={output_path}\n")
+        f.write("Threads=0\n")
+
+        # Disable progress tracking to avoid issues with sample subset rendering
+        f.write("EnableProgressReports=false\n")
+        f.write("StrictErrorChecking=false\n")
 
 def write_split_frame_job_info(scene, filename, frame_number, output_path):
     """Write job info for split frame subset jobs - use same format as normal jobs"""
@@ -479,6 +629,9 @@ def submit_merge_job(scene, filename, job_count, subset_job_ids, context):
     # Create the merge-only script (no rendering)
     script_path = create_merge_only_script(scene, filename, job_count, subset_job_ids)
 
+    # Create an empty Blender scene for merge job to avoid any rendering
+    empty_scene_path = create_empty_scene_for_merge()
+
     # Create job info for merge job
     merge_job_info_path = os.path.join(temp_dir, "merge_job_info.job")
     merge_plugin_info_path = os.path.join(temp_dir, "merge_plugin_info.plugin")
@@ -505,17 +658,16 @@ def submit_merge_job(scene, filename, job_count, subset_job_ids, context):
 
     # Write merge plugin info
     with open(merge_plugin_info_path, "w") as f:
-        # Use the original scene file but with merge-only script
-        scene_filepath = bpy.data.filepath
-        if scene_filepath.startswith("//"):
-            scene_filepath = bpy.path.abspath(scene_filepath)
-
-        file_path = os.path.normpath(scene_filepath)
+        # Use the empty scene file to avoid any rendering
         script_filename = os.path.basename(script_path)
 
-        f.write(f"SceneFile={file_path}\n")
+        f.write(f"SceneFile={os.path.normpath(empty_scene_path)}\n")
         f.write(f"Arguments=-P {script_filename}\n")  # Run the merge-only script
         f.write("Threads=0\n")
+
+        # Explicitly disable rendering
+        f.write("EnableProgressReports=false\n")
+        f.write("StrictErrorChecking=false\n")
 
     # Submit the merge job
     cmd_list = [get_deadline_path(), "-SubmitJob", merge_job_info_path, merge_plugin_info_path]

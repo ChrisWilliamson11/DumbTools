@@ -12,48 +12,6 @@ DumbTools is a comprehensive Blender addon that provides a dynamic script execut
 - **Script Auto-Discovery**: Automatically detects and registers Python scripts from organized folders
 - **Startup & Post-Load Scripts**: Execute scripts automatically when Blender starts or loads files
 
-## 📁 Script Categories
-
-### 🎬 Animation
-- **Spring Bones**: Create realistic spring physics for bone chains
-- **Blocking to Transition**: Convert blocking animation to smooth transitions
-- **NLA Tools**: Advanced Non-Linear Animation utilities
-- **Keyframe Management**: Delete, offset, and manipulate keyframes
-- **Animation Storage**: Save and load animation data
-
-### 🤖 Rigging
-- **Robot Parents**: Auto-parent objects to closest bones
-- **Constraint Tools**: Copy and manage bone constraints
-- **Weight Management**: Clean up and transfer vertex weights
-- **Driver Utilities**: Manage and rename driver variables
-
-### 🎨 Texturing & Materials
-- **Projection Pal**: Advanced projection painting system
-- **Krita Link**: Seamless integration with Krita for texture editing
-- **Photoshop Integration**: Import layers and sync with Photoshop
-- **Material Utilities**: Batch material operations and baking
-
-### 🏗️ Modeling & Layout
-- **Mesh Utilities**: Reduce polygons, transfer UV data
-- **Distribution Tools**: Arrange objects in patterns
-- **Aspect Ratio Fixes**: Correct image proportions
-
-### 🎭 Scene Management
-- **Batch Operations**: Set render settings across multiple scenes
-- **File Management**: Find missing files, manage collections
-- **Watch Folders**: Auto-import files from monitored directories
-
-### 🔬 Visualization
-- **Dimension Display**: Add measurement overlays to objects
-- **Tension Analysis**: Visualize mesh stress and compression
-- **Technical Drawing**: Generate dimensional annotations
-
-### 🧪 Experimental
-- **MIDI Input**: Control Blender with MIDI devices
-- **OSC Communication**: Network communication protocols
-- **OpenCV Integration**: Computer vision tools
-- **Audio2Face**: Facial animation from audio
-
 ## 🛠️ Installation
 
 ### Method 1: Addon Installation (Recommended)

@@ -10,6 +10,7 @@ def remove_blender_suffix(name):
     """
     # Pattern to match exactly .001, .002, or .003 at the end
     pattern = r'\.00[123]$'
+    pattern = r'\.00[1234]$'
     return re.sub(pattern, '', name)
 
 def main():

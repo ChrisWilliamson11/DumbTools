@@ -38,7 +38,7 @@ class DUMBTOOLS_OT_BatchRenameBones(bpy.types.Operator):
         default='REMOVE'
     )
 
-    # Properties for the REMOVE mode (still supported if called programmatically)
+    # Properties for the REMOVE mode
     substring: bpy.props.StringProperty(
         name="Text to remove",
         description=(
@@ -58,20 +58,6 @@ class DUMBTOOLS_OT_BatchRenameBones(bpy.types.Operator):
         default='PREFIX'
     )
 
-    # Dialog action buttons
-    dialog_action: bpy.props.EnumProperty(
-        name="Action",
-        description="Action chosen from the popup buttons",
-        items=[
-            ('NONE', "None", "No dialog action"),
-            ('SYMMETRIZE', "Symmetrise", "Symmetrize names to core + .L/.R"),
-            ('RESTORE', "Restore", "Restore previous names from last mapping"),
-            ('CANCEL', "Cancel", "Cancel and close"),
-        ],
-        default='NONE',
-        options={'HIDDEN'}
-    )
-
     @classmethod
     def poll(cls, context):
         obj = context.active_object
@@ -79,53 +65,39 @@ class DUMBTOOLS_OT_BatchRenameBones(bpy.types.Operator):
 
     def draw(self, context):
         layout = self.layout
-        # Focus this popup on symmetrizing/restoring as requested
-        col = layout.column(align=True)
-        col.label(text="Symmetrize names to core + .L/.R")
-        col.label(text="Pairs detected via Left/Right or .L/.R, _L/_R, -L/-R")
-
+        layout.prop(self, "mode", expand=True)
+        if self.mode == 'REMOVE':
+            layout.prop(self, "substring")
+            layout.prop(self, "position", expand=True)
+        else:
+            col = layout.column(align=True)
+            col.label(text="Symmetrize names to core + .L/.R")
+            col.label(text="Pairs detected via Left/Right or .L/.R, _L/_R, -L/-R")
         layout.separator()
-        row = layout.row(align=True)
-        op1 = row.operator(self.bl_idname, text="Symmetrise", icon='ARROW_LEFTRIGHT')
-        op1.dialog_action = 'SYMMETRIZE'
-        op2 = row.operator(self.bl_idname, text="Restore Names", icon='RECOVER_LAST')
-        op2.dialog_action = 'RESTORE'
-        op3 = row.operator(self.bl_idname, text="Cancel", icon='CANCEL')
-        op3.dialog_action = 'CANCEL'
+        layout.operator("dumbtools.restore_last_bone_names", text="Restore Previous Names", icon='RECOVER_LAST')
 
 
     def invoke(self, context, event):
-        # Open a custom popup with our buttons (no default OK/Cancel)
-        context.window_manager.invoke_popup(self, width=380)
-        return {'RUNNING_MODAL'}
+        # Open a dialog to enter the substring and choose prefix/suffix
+        return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
         obj = context.active_object
         arm = obj.data
 
-        # Handle dialog actions first
-        if self.dialog_action == 'CANCEL':
-            return {'CANCELLED'}
-        if self.dialog_action == 'RESTORE':
-            # Call the restore operator and close this popup
-            bpy.ops.dumbtools.restore_last_bone_names()
-            return {'FINISHED'}
-        # Default or Symmetrise action proceeds to symmetrize logic
-
         # Collect selected bone names first (stable list before renaming)
         selected_names = [b.name for b in arm.bones if b.select]
+        if not selected_names:
+            self.report({'WARNING'}, "No bones selected")
+            return {'CANCELLED'}
 
         if self.mode == 'REMOVE':
-            if not selected_names:
-                self.report({'WARNING'}, "No bones selected")
-                return {'CANCELLED'}
             if not self.substring:
                 self.report({'WARNING'}, "No text specified to remove")
                 return {'CANCELLED'}
             return self._do_remove_prefix_suffix(context, arm, selected_names)
-
-        # SYMMETRIZE path (allow empty selection to operate on all pairs)
-        return self._do_symmetrize(context, arm, selected_names)
+        else:
+            return self._do_symmetrize(context, arm, selected_names)
 
     # --- REMOVE mode implementation ---
     def _store_last_mapping(self, obj, renames):

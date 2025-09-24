@@ -648,13 +648,37 @@ def import_usd_collect_all(file_path):
     return imported_objects, mesh_objects
 
 
+
+
+def import_obj_collect_all(file_path):
+    """Import OBJ and return (all_imported_objects, mesh_objects)."""
+    print(f"\nImporting OBJ (collect all): {file_path}")
+    pre_objects = set(bpy.data.objects)
+    try:
+        try:
+            # Newer OBJ importer
+            bpy.ops.wm.obj_import(filepath=file_path)
+        except AttributeError:
+            # Fallback to legacy OBJ importer
+            bpy.ops.import_scene.obj(filepath=file_path)
+    except Exception as e:
+        print(f"OBJ import failed for {file_path}: {e}")
+        return [], []
+
+    imported_objects = [obj for obj in bpy.data.objects if obj not in pre_objects]
+    mesh_objects = [obj for obj in imported_objects if obj.type == 'MESH']
+    print(f"Imported {len(imported_objects)} object(s), {len(mesh_objects)} mesh(es)")
+    return imported_objects, mesh_objects
+
 def import_source_collect_all(file_path):
-    """Dispatch importer based on source extension (FBX/USD)."""
+    """Dispatch importer based on source extension (FBX/USD/OBJ)."""
     ext = os.path.splitext(file_path)[1].lower()
     if ext == '.fbx':
         return import_fbx_collect_all(file_path)
     if ext in ('.usd', '.usda', '.usdc', '.usdz'):
         return import_usd_collect_all(file_path)
+    if ext == '.obj':
+        return import_obj_collect_all(file_path)
     print(f"Unsupported source extension '{ext}' for {file_path}")
     return [], []
 
@@ -711,6 +735,43 @@ def save_blend_for_source(src_path: str):
     return blend_path
 
 # Main execution
+# --- Progress log controls ---
+CONTINUE_FROM_LOG = True  # Skip sources already listed in the log
+CLEAR_LOG_ON_START = False  # Delete the log at startup
+
+
+def _parse_log_line(line: str) -> str:
+    line = line.strip()
+    if not line:
+        return ""
+    parts = line.split("|", 2)
+    if len(parts) >= 2:
+        return parts[1]
+    return line
+
+
+def load_processed_sources(log_path: str) -> set:
+    processed = set()
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+            for ln in f:
+                src = _parse_log_line(ln)
+                if src:
+                    processed.add(src)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"Warning: could not read log '{log_path}': {e}")
+    return processed
+
+
+def log_progress(log_path: str, path: str, status: str, message: str = "") -> None:
+    try:
+        with open(log_path, "a", encoding="utf-8", errors="ignore") as f:
+            f.write(f"{status}|{path}|{message}\n")
+    except Exception as e:
+        print(f"Warning: could not write progress log: {e}")
+
 
 def get_all_assets_in_file():
     """Return a list of IDs in the current file that are marked as assets."""
@@ -795,20 +856,39 @@ def main():
     - generate previews for assets,
     - save one .blend next to the source file.
     """
-    root_folder = r"H:\000_Projects\Goliath\00_Assets\Game"
+    root_folder = r"H:\000_Projects\Goliath\00_Assets\Game\World Drops"
     print(f"Processing asset library at: {root_folder}")
+
+    log_path = os.path.join(root_folder, "_CreateMegascans3D.log")
+    if CLEAR_LOG_ON_START:
+        try:
+            os.remove(log_path)
+            print(f"Cleared progress log: {log_path}")
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Warning: could not clear log '{log_path}': {e}")
 
     # First pass: collect source files missing .blend
     to_process = []
     for dirpath, _, filenames in os.walk(root_folder):
         for name in filenames:
             lower = name.lower()
-            if not lower.endswith(('.fbx', '.usd', '.usda', '.usdc', '.usdz')):
+            if not lower.endswith(('.fbx', '.usd', '.usda', '.usdc', '.usdz', '.obj')):
                 continue
             src_path = os.path.join(dirpath, name)
             blend_path = get_target_blend_path(src_path)
             if not os.path.exists(blend_path):
                 to_process.append(src_path)
+
+    # Apply continue-from-log filtering
+    if CONTINUE_FROM_LOG:
+        processed = load_processed_sources(log_path)
+        if processed:
+            before = len(to_process)
+            to_process = [p for p in to_process if p not in processed]
+            skipped = before - len(to_process)
+            print(f"Continue-from-log: {skipped} already listed; {len(to_process)} pending")
 
     if not to_process:
         print("\n==============================")
@@ -834,6 +914,7 @@ def main():
         if not meshes:
             print(f"No meshes imported from {src_path}; skipping.")
             zero_mesh_sources.append(src_path)
+            log_progress(log_path, src_path, "ZERO_MESH", "no meshes imported")
             continue
 
         # Mark asset(s)
@@ -849,10 +930,12 @@ def main():
         generate_previews_for_current_file()
 
         try:
-            save_blend_for_source(src_path)
+            saved_path = save_blend_for_source(src_path)
             print(f"Successfully saved .blend for {src_path}")
+            log_progress(log_path, src_path, "OK", f"saved={saved_path}")
         except Exception as e:
             print(f"Failed to save blend for {src_path}: {e}")
+            log_progress(log_path, src_path, "SAVE_FAIL", str(e))
 
         # Clean up before next source
         clear_scene()

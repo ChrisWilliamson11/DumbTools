@@ -6,72 +6,85 @@ from typing import List, Optional, Tuple
 ROOT_FOLDER = r"H:\000_Projects\Goliath\00_Assets\Game"
 
 # Files that trigger special naming behavior
+# Progress log settings
+CONTINUE_FROM_LOG = True  # When True, skip sources already listed in the log
+CLEAR_LOG_ON_START = False  # When True, delete the existing log at start
+LOG_PATH = os.path.join(ROOT_FOLDER, "_FixSpecialCollectionNames.log")
+
 SPECIAL_SUFFIXES = {"base_mesh", "render", "raycast", "render_only", "shadowproxy", "working"}
 SUPPORTED_EXTS = (".fbx", ".usd", ".usda", ".usdc", ".usdz")
 
 
-def compute_blend_basename(src_path: str) -> str:
-    """Return the base filename for the .blend using the same rule as CreateMegascans3D.
+# --- Progress log helpers ---
 
-    If the source base name is a utility (SPECIAL_SUFFIXES) and the folder is named
-    'model' or 'models', use the parent folder name.
-    """
-    directory = os.path.dirname(src_path)
-    folder = os.path.basename(directory)
-    base = os.path.splitext(os.path.basename(src_path))[0]
-
-    if base.lower() in SPECIAL_SUFFIXES:
-        if folder.lower() in {"model", "models"}:
-            parent_dir = os.path.dirname(directory)
-            parent_name = os.path.basename(parent_dir) or folder
-            folder = parent_name
-        return f"{folder}-{base}"
-    return base
+def _parse_log_line(line: str) -> str:
+    line = line.strip()
+    if not line:
+        return ""
+    # Expected formats: "STATUS|<src>|..." or just "<src>"
+    parts = line.split("|", 2)
+    if len(parts) >= 2:
+        return parts[1]
+    return line
 
 
-def get_target_blend_path(src_path: str) -> str:
-    directory = os.path.dirname(src_path)
-    base_for_blend = compute_blend_basename(src_path)
-    return os.path.join(directory, f"{base_for_blend}.blend")
+def load_processed_sources(log_path: str) -> set:
+    processed = set()
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+            for ln in f:
+                src = _parse_log_line(ln)
+                if src:
+                    processed.add(src)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"Warning: could not read log '{log_path}': {e}")
+    return processed
 
 
-def find_special_imports(root: str) -> List[str]:
+def log_progress(src: str, status: str, message: str = "") -> None:
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8", errors="ignore") as f:
+            f.write(f"{status}|{src}|{message}\n")
+    except Exception as e:
+        print(f"Warning: could not write progress log: {e}")
+
+
+def _prefixed(name: str, prefix: str) -> bool:
+    return name.lower().startswith((prefix + "-").lower())
+
+
+def _ensure_prefix(name: str, prefix: str) -> str:
+    return name if _prefixed(name, prefix) else f"{prefix}-{name}"
+
+
+def get_prefix_for_blend(blend_path: str) -> Optional[str]:
+    """Return the folder name two directories above the .blend file."""
+    try:
+        d1 = os.path.dirname(blend_path)
+        d2 = os.path.dirname(d1)
+        pref = os.path.basename(d2)
+        return pref or None
+    except Exception:
+        return None
+
+
+def find_model_blends(root: str) -> List[str]:
+    """Find .blend files whose immediate parent folder is 'model' or 'models'."""
     matches: List[str] = []
-    for dirpath, _dirs, files in os.walk(root):
+    for dirpath, _, files in os.walk(root):
+        folder = os.path.basename(dirpath).lower()
+        if folder not in {"model", "models"}:
+            continue
         for name in files:
-            lower = name.lower()
-            ext = os.path.splitext(lower)[1]
-            base = os.path.splitext(lower)[0]
-            if ext in SUPPORTED_EXTS and base in SPECIAL_SUFFIXES:
+            if name.lower().endswith(".blend"):
                 matches.append(os.path.join(dirpath, name))
     return matches
 
 
-def pick_asset_collection(target_name: str) -> Optional[bpy.types.Collection]:
-    """Pick the collection to rename.
-    Preference order:
-      1) Asset-marked collection whose name is one of the special suffixes
-      2) Single asset-marked collection (if only one)
-      3) Asset-marked collection with the most objects
-    """
-    asset_colls = [c for c in bpy.data.collections if getattr(c, "asset_data", None)]
-    if not asset_colls:
-        return None
-
-    special_named = [c for c in asset_colls if c.name.lower() in SPECIAL_SUFFIXES]
-    if special_named:
-        return special_named[0]
-
-    if len(asset_colls) == 1:
-        return asset_colls[0]
-
-    # Fallback: pick the one with the most objects
-    asset_colls.sort(key=lambda c: len(getattr(c, "objects", [])), reverse=True)
-    return asset_colls[0]
-
-
-def rename_collection_in_blend(blend_path: str, new_name: str) -> Tuple[bool, str]:
-    """Open the blend, rename the chosen asset collection to new_name, and save.
+def rename_assets_in_blend(blend_path: str, prefix: str) -> Tuple[bool, str]:
+    """Open the blend, prefix asset-marked collections and mesh objects with '<prefix>-', and save.
     Returns (changed, message).
     """
     try:
@@ -79,54 +92,81 @@ def rename_collection_in_blend(blend_path: str, new_name: str) -> Tuple[bool, st
     except Exception as e:
         return False, f"Failed to open {blend_path}: {e}"
 
-    coll = pick_asset_collection(new_name)
-    if coll is None:
-        return False, f"No asset-marked collection found in {blend_path}"
-
-    if coll.name == new_name:
-        # Already correct
-        return False, f"Collection already named '{new_name}' in {blend_path}"
-
-    # Try the rename
+    changed = 0
     try:
-        coll.name = new_name
+        # Collections
+        for coll in bpy.data.collections:
+            if getattr(coll, "asset_data", None):
+                new_name = _ensure_prefix(coll.name, prefix)
+                if new_name != coll.name:
+                    coll.name = new_name
+                    changed += 1
+        # Mesh objects
+        for obj in bpy.data.objects:
+            if obj.type == "MESH" and getattr(obj, "asset_data", None):
+                new_name = _ensure_prefix(obj.name, prefix)
+                if new_name != obj.name:
+                    obj.name = new_name
+                    changed += 1
     except Exception as e:
-        return False, f"Could not rename collection in {blend_path}: {e}"
+        return False, f"Error while renaming in {blend_path}: {e}"
 
-    # Save in place
-    try:
-        bpy.ops.wm.save_mainfile()
-    except Exception as e:
-        return False, f"Renamed but failed to save {blend_path}: {e}"
-
-    return True, f"Renamed collection to '{new_name}' in {blend_path}"
+    if changed > 0:
+        try:
+            bpy.ops.wm.save_mainfile()
+        except Exception as e:
+            return False, f"Renamed {changed} but failed to save {blend_path}: {e}"
+        return True, f"Prefixed {changed} asset(s) with '{prefix}-' in {blend_path}"
+    else:
+        return False, f"No rename needed in {blend_path}"
 
 
 def main():
     root = ROOT_FOLDER
-    print(f"Scanning for special-name imports under: {root}")
+    print(f"Scanning for .blend files under: {root}")
 
-    special_sources = find_special_imports(root)
-    if not special_sources:
-        print("No special-name import files found.")
+    # Handle progress log controls
+    if CLEAR_LOG_ON_START:
+        try:
+            os.remove(LOG_PATH)
+            print(f"Cleared progress log: {LOG_PATH}")
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            print(f"Warning: could not clear log '{LOG_PATH}': {e}")
+
+    processed = set()
+    if CONTINUE_FROM_LOG:
+        processed = load_processed_sources(LOG_PATH)
+        if processed:
+            print(f"Continue-from-log: will skip {len(processed)} already-listed source(s)")
+
+    blends = find_model_blends(root)
+    if not blends:
+        print("No .blend files found under model/models folders.")
         return
 
-    print(f"Found {len(special_sources)} special import file(s). Processing...")
+    print(f"Found {len(blends)} .blend file(s) in model/models. Processing...")
     changed = 0
     skipped = 0
     errors: List[str] = []
 
-    for src in special_sources:
-        target_blend = get_target_blend_path(src)
-        if not os.path.exists(target_blend):
-            msg = f"Blend not found for {src} -> {target_blend}"
-            print(msg)
-            errors.append(msg)
+    for blend_path in blends:
+        if CONTINUE_FROM_LOG and blend_path in processed:
+            print(f"Skipping (already in log): {blend_path}")
             continue
 
-        desired_name = compute_blend_basename(src)
-        did_change, msg = rename_collection_in_blend(target_blend, desired_name)
+        prefix = get_prefix_for_blend(blend_path)
+        if not prefix:
+            msg = f"Could not compute prefix for {blend_path}"
+            print(msg)
+            errors.append(msg)
+            log_progress(blend_path, "MISS", msg)
+            continue
+
+        did_change, msg = rename_assets_in_blend(blend_path, prefix)
         print(msg)
+        log_progress(blend_path, "CHANGED" if did_change else "SKIP", msg)
         if did_change:
             changed += 1
         else:

@@ -28,10 +28,10 @@ class ANIM_OT_keyframe_range_scaler(bpy.types.Operator):
 
     def get_selected_keyframes(self, context):
         keyframes = {}
-        
+
         # Get the active action based on context
         active_action = None
-        
+
         if context.area.type == 'DOPESHEET_EDITOR':
             # Handle different modes in dopesheet
             dopesheet = context.space_data
@@ -45,9 +45,9 @@ class ANIM_OT_keyframe_range_scaler(bpy.types.Operator):
         elif context.area.type == 'GRAPH_EDITOR':
             active_action = context.space_data.action
         elif context.area.type == 'TIMELINE':
-            if context.object and context.object.animation_data: 
+            if context.object and context.object.animation_data:
                 active_action = context.object.animation_data.action
-        
+
         # Only process keyframes from the active action
         if active_action:
             for fcurve in active_action.fcurves:
@@ -65,26 +65,26 @@ class ANIM_OT_keyframe_range_scaler(bpy.types.Operator):
                 # Get the correct region for coordinate conversion
                 region = context.region
                 view = region.view2d
-                
+
                 # Convert mouse position to frame value, accounting for region size
                 mouse_x_frame, _ = view.region_to_view(
                     event.mouse_region_x,  # Use region_x instead of mouse_x
                     event.mouse_region_y   # Use region_y instead of mouse_y
                 )
-                
+
                 # Calculate distances to first and last keyframes
                 dist_to_first = abs(self.first_frame - mouse_x_frame)
                 dist_to_last = abs(self.last_frame - mouse_x_frame)
-                
+
                 # Use the further keyframe as pivot (origin)
                 self.use_first_as_pivot = dist_to_last < dist_to_first
                 self.pivot_frame = self.first_frame if self.use_first_as_pivot else self.last_frame
                 self.handle_frame = self.last_frame if self.use_first_as_pivot else self.first_frame
-                
+
                 # Store the initial relative position
                 pivot_to_handle = self.handle_frame - self.pivot_frame
                 pivot_to_mouse = mouse_x_frame - self.pivot_frame
-                
+
                 if event.alt and pivot_to_handle != 0:
                     # In alt mode, directly calculate scale to snap handle to mouse
                     self.scale_factor = pivot_to_mouse / pivot_to_handle
@@ -92,33 +92,33 @@ class ANIM_OT_keyframe_range_scaler(bpy.types.Operator):
                     # Store relative position for normal mode
                     self.initial_relative_pos = pivot_to_mouse / pivot_to_handle if pivot_to_handle != 0 else 0.0
                     self.scale_factor = 1.0
-                
+
                 self.initial_mouse_x = event.mouse_x
                 self.has_started = True
-                
+
                 # Apply initial scaling
                 self.apply_scale(context, event)
-                        
+
             elif event.type == 'RIGHTMOUSE':
                 self.restore_original_positions(context)
                 return {'CANCELLED'}
-            
+
             return {'RUNNING_MODAL'}
-        
+
         if event.type == 'MOUSEMOVE':
             # Get the correct region for coordinate conversion
             region = context.region
             view = region.view2d
-            
+
             # Convert mouse position to frame value, accounting for region size
             current_frame, _ = view.region_to_view(
                 event.mouse_region_x,  # Use region_x instead of mouse_x
                 event.mouse_region_y   # Use region_y instead of mouse_y
             )
-            
+
             # Apply shift precision mode
             sensitivity = 0.2 if event.shift else 1.0
-            
+
             if event.alt:
                 # Handle snapping mode
                 pivot_to_handle = self.handle_frame - self.pivot_frame
@@ -128,10 +128,10 @@ class ANIM_OT_keyframe_range_scaler(bpy.types.Operator):
             else:
                 # Default: Maintain relative position mode
                 pivot_to_handle = self.handle_frame - self.pivot_frame
-                
+
                 # Calculate where the mouse is relative to the pivot
                 current_relative_pos = (current_frame - self.pivot_frame) / pivot_to_handle
-                
+
                 # Scale factor is the ratio of current position to initial position
                 if self.initial_relative_pos != 0:
                     self.scale_factor = current_relative_pos / self.initial_relative_pos
@@ -140,14 +140,14 @@ class ANIM_OT_keyframe_range_scaler(bpy.types.Operator):
                         # Adjust scale factor based on sensitivity
                         delta = (self.scale_factor - 1.0) * sensitivity
                         self.scale_factor = 1.0 + delta
-            
+
             # Apply scaling to keyframes
             self.apply_scale(context, event)
 
         elif event.type == 'LEFTMOUSE' and event.value == 'RELEASE':
             context.area.header_text_set(None)
             return {'FINISHED'}
-            
+
         elif event.type in {'ESC'} or (event.type == 'RIGHTMOUSE' and event.value == 'PRESS'):
             self.restore_original_positions(context)
             context.area.header_text_set(None)
@@ -169,7 +169,7 @@ class ANIM_OT_keyframe_range_scaler(bpy.types.Operator):
         self.original_handles = {}  # Store original handle positions
         min_frame = float('inf')
         max_frame = float('-inf')
-        
+
         for fcurve, keyframes in self.keyframes.items():
             for keyframe in keyframes:
                 frame = keyframe.co.x
@@ -181,7 +181,7 @@ class ANIM_OT_keyframe_range_scaler(bpy.types.Operator):
 
         self.first_frame = min_frame
         self.last_frame = max_frame
-        
+
         # Initialize variables
         self.initial_mouse_x = event.mouse_x
         self.scale_factor = 1.0
@@ -196,29 +196,29 @@ class ANIM_OT_keyframe_range_scaler(bpy.types.Operator):
                 original_frame = self.original_positions[keyframe]
                 offset = original_frame - self.pivot_frame
                 new_frame = self.pivot_frame + (offset * self.scale_factor)
-                
+
                 # Snap to nearest frame if ctrl is held
                 if event.ctrl:
                     new_frame = round(new_frame)
-                
+
                 # Get original handle positions
                 original_left, original_right = self.original_handles[keyframe]
-                
+
                 # Calculate the distances of handles from their original keyframe
                 left_handle_distance = original_left - original_frame
                 right_handle_distance = original_right - original_frame
-                
+
                 # Scale these distances by the scale factor
                 scaled_left_distance = left_handle_distance * self.scale_factor
                 scaled_right_distance = right_handle_distance * self.scale_factor
-                
+
                 # Update keyframe position
                 keyframe.co.x = new_frame
-                
+
                 # Apply the scaled distances to the new keyframe position
                 keyframe.handle_left[0] = new_frame + scaled_left_distance
                 keyframe.handle_right[0] = new_frame + scaled_right_distance
-        
+
         context.area.header_text_set(f"Scale: {self.scale_factor:.2f}")
         context.scene.frame_current = context.scene.frame_current  # Force update
 
@@ -233,7 +233,7 @@ class ANIM_OT_keyframe_range_scaler(bpy.types.Operator):
                 keyframe.handle_right[0] = original_right
             # Update the FCurve after modifying its keyframes
             fcurve.update()
-            
+
         context.area.header_text_set(None)
         context.scene.frame_current = context.scene.frame_current  # Force update
 
@@ -241,6 +241,12 @@ def menu_func(self, context):
     self.layout.operator(ANIM_OT_keyframe_range_scaler.bl_idname)
 
 def register():
+    # Preemptively unregister to avoid Blender 'registered before' info
+    try:
+        bpy.utils.unregister_class(ANIM_OT_keyframe_range_scaler)
+    except Exception:
+        pass
+
     bpy.utils.register_class(ANIM_OT_keyframe_range_scaler)
     bpy.types.DOPESHEET_MT_key.append(menu_func)
     bpy.types.GRAPH_MT_key.append(menu_func)

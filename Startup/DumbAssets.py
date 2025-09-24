@@ -60,13 +60,16 @@ except ImportError:
         except ImportError as e:
             # print(f"✗ Shapely import failed after installation: {e}")
             # print("This can happen with Windows Store Blender - please restart Blender")
+            pass
 
     except subprocess.CalledProcessError as e:
         # print(f"✗ Failed to install Shapely: {e}")
         # print("NFP packing will be disabled")
+        pass
     except Exception as e:
         # print(f"✗ Error installing Shapely: {e}")
         # print("NFP packing will be disabled")
+        pass
 
 
 # Global positioning function that both operators can use
@@ -2231,7 +2234,7 @@ def unregister():
     del bpy.types.Scene.dumbtools_props
     bpy.utils.unregister_class(DumbToolsSceneProperties)
 
-    print("DumbAssets Two-Operator System unregistered successfully!")
+    # print("DumbAssets Two-Operator System unregistered successfully!")
 
 
 register()

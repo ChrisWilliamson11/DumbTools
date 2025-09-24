@@ -132,7 +132,7 @@ def main():
     """Recurse the root; for each .blend file, generate previews for assets and save the file.
     Supports "continue from log" so interrupted runs can resume.
     """
-    root_folder = r"H:\000_Projects\Goliath\00_Assets\Game\World Drops"
+    root_folder = r"H:\000_Projects\Goliath\00_Assets\Game\01_Environment\Palette_RAW"
     print(f"Scanning for .blend files at: {root_folder}")
 
     log_path = os.path.join(root_folder, "_GenerateAssetPreviews.log")

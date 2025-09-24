@@ -19,7 +19,7 @@ def update_presets_collection(scene):
         preset_item = scene.my_presets.add()
         preset_item.name = preset_name
         # Set the default state of 'enabled' here if needed
-        
+
 class SetActiveCameraOperator(bpy.types.Operator):
     """Set the selected camera as the active camera for the scene."""
     bl_idname = "scene.set_active_camera"
@@ -54,7 +54,7 @@ def update_display_json_list(self, context):
         update_presets_collection(context.scene)
 
 
-        
+
 def find_associated_camera(snapshot):
     if snapshot.object_name in bpy.data.objects:
         return bpy.data.objects[snapshot.object_name]
@@ -89,7 +89,7 @@ def save_space_data_settings(context):
     shading_settings = {attr: getattr(space.shading, attr) for attr in dir(space.shading)
                         if not attr.startswith("__") and not callable(getattr(space.shading, attr))
                         and is_serializable(getattr(space.shading, attr))}
-    
+
     if shading_settings:
         settings['shading'] = shading_settings
 
@@ -162,7 +162,7 @@ def load_viewport_settings(context, settings):
                         print(f"Could not set shading attribute {attr}: {e}")
                     except TypeError as e:
                         print(f"Invalid type for shading attribute {attr}: {e}")
-      
+
 class PresetItem(bpy.types.PropertyGroup):
     enabled: bpy.props.BoolProperty(name="Enabled", default=False)
 
@@ -188,7 +188,7 @@ class RenderSnapshotsOperator(bpy.types.Operator):
         name="Output Directory",
         subtype='DIR_PATH'
     )
-    
+
     file_format: bpy.props.EnumProperty(
         name="File Format",
         items=(
@@ -211,7 +211,7 @@ class RenderSnapshotsOperator(bpy.types.Operator):
         subtype='FILE_PATH',
         default="",
     )
-    
+
     def execute(self, context):
         scene = context.scene
 
@@ -233,7 +233,7 @@ class RenderSnapshotsOperator(bpy.types.Operator):
         try:
             # Load presets from the JSON file
             presets = load_presets()
-            
+
             # Store original area type
             original_area_type = context.area.type
 
@@ -241,15 +241,15 @@ class RenderSnapshotsOperator(bpy.types.Operator):
             for obj in bpy.data.objects:
                 if obj.type == 'CAMERA':
                     scene.camera = obj
-                                      
+
                     # Set the context to the current camera
-                    bpy.context.view_layer.update() 
+                    bpy.context.view_layer.update()
                     # Ensure the camera is the active object
                     bpy.context.view_layer.objects.active = obj
-                    
+
                     # Set the active object as the camera for the view
                     bpy.ops.view3d.object_as_camera()
-                
+
 
                     # Iterate over each preset
                     for preset_name, preset_settings in presets.items():
@@ -265,11 +265,11 @@ class RenderSnapshotsOperator(bpy.types.Operator):
                             file_extension = 'exr' if self.file_format == 'OPEN_EXR' else self.file_format.lower()
                             render_filepath = os.path.join(self.directory, obj.name + "___" + preset_name + "." + file_extension)
                             bpy.data.images['Render Result'].save_render(filepath=render_filepath)
-                            
+
                     # Reset the context to the original area type
                     context.area.type = original_area_type
-                    
-            
+
+
             # Iterate over each camera
             snapshot_cameras_collection = bpy.data.collections.get('SnapshotCameras')
 
@@ -278,13 +278,13 @@ class RenderSnapshotsOperator(bpy.types.Operator):
 
                     if obj.type == 'CAMERA':
                         scene.camera = obj
-                        
+
                         # Your existing logic for standard rendering
                         file_extension = 'exr' if self.file_format == 'OPEN_EXR' else self.file_format.lower()
                         scene.render.filepath = os.path.join(self.directory, obj.name + "." + file_extension)
                         scene.render.image_settings.file_format = self.file_format
                         bpy.ops.render.render(write_still=True)
-                    
+
         finally:
             # Revert to the original viewport settings
             load_viewport_settings(context, original_viewport_settings)
@@ -305,7 +305,7 @@ class CustomTransformPanel(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'View'
-    
+
     def draw(self, context):
         layout = self.layout
         scene = context.scene
@@ -336,7 +336,7 @@ class CustomTransformPanel(bpy.types.Panel):
         layout.operator("scene.save_transform_snapshot", text="Take Snapshot", icon='CAMERA_DATA')
         layout.separator()
         layout.operator("scene.render_snapshots", text="Render Snapshots", icon='RENDERLAYERS')
-        
+
 
         # Checkbox to toggle the display of the JSON list
         layout.prop(scene.render_snapshots, "display_json_list", text="Render Passes")
@@ -345,7 +345,7 @@ class CustomTransformPanel(bpy.types.Panel):
             for preset in scene.my_presets:
                 row = layout.row()
                 row.prop(preset, "enabled", text=preset.name)
-                            
+
 class SaveTransformSnapshotOperator(bpy.types.Operator):
     bl_idname = "scene.save_transform_snapshot"
     bl_label = "Save Snapshot"
@@ -396,7 +396,7 @@ class SaveTransformSnapshotOperator(bpy.types.Operator):
             # Use the custom name provided by the user, or a default name
             duplicated_camera.name = self.custom_name if self.custom_name else "Viewport_Snapshot"
            # Unlink the new camera from all collections it's linked to
-           
+
         for collection in duplicated_camera.users_collection:
             collection.objects.unlink(duplicated_camera)
 
@@ -442,6 +442,18 @@ class CUSTOM_UL_transform_snapshots(bpy.types.UIList):
             layout.prop(item, "name", text="", emboss=False, icon_value=icon)
 
 def register():
+    # Preemptively unregister to avoid Blender 'registered before' info
+    for cls in [CustomTransformPanel,
+                SaveTransformSnapshotOperator,
+                RenderSnapshotsOperator,
+                SetActiveCameraOperator,
+                CUSTOM_UL_transform_snapshots,
+                RenderSnapshotsProperties]:
+        try:
+            bpy.utils.unregister_class(cls)
+        except Exception:
+            pass
+
     #print("Registering CameraSnapshot operators and panel.")
     bpy.utils.register_class(CustomTransformPanel)
     bpy.utils.register_class(SaveTransformSnapshotOperator)

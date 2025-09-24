@@ -21,7 +21,7 @@ def ensure_user_site_packages():
     # Add to sys.path if not already there
     if user_site not in sys.path:
         sys.path.insert(0, user_site)
-        print(f"Added user site-packages to path: {user_site}")
+        # print(f"Added user site-packages to path: {user_site}")
 
 # Ensure user site-packages is in path (needed for Windows Store Blender)
 ensure_user_site_packages()
@@ -30,9 +30,9 @@ try:
     from shapely.geometry import Polygon, Point, LineString
     from shapely.ops import unary_union
     SHAPELY_AVAILABLE = True
-    print("✓ Shapely available - NFP packing enabled")
+    # print("✓ Shapely available - NFP packing enabled")
 except ImportError:
-    print("⚠ Shapely not found - attempting to install...")
+    # print("⚠ Shapely not found - attempting to install...")
 
     # Auto-install Shapely
     import subprocess
@@ -41,12 +41,12 @@ except ImportError:
     try:
         # Get Blender's Python executable path
         python_exe = sys.executable
-        print(f"Installing Shapely using: {python_exe}")
+        # print(f"Installing Shapely using: {python_exe}")
 
         # Install shapely using pip (force user install for Windows Store Blender)
         subprocess.check_call([python_exe, "-m", "pip", "install", "--user", "shapely"])
 
-        print("✓ Shapely installed successfully!")
+        # print("✓ Shapely installed successfully!")
 
         # Ensure user site-packages is in path again
         ensure_user_site_packages()
@@ -56,17 +56,17 @@ except ImportError:
             from shapely.geometry import Polygon, Point, LineString
             from shapely.ops import unary_union
             SHAPELY_AVAILABLE = True
-            print("✓ Shapely import successful - NFP packing enabled")
+            # print("✓ Shapely import successful - NFP packing enabled")
         except ImportError as e:
-            print(f"✗ Shapely import failed after installation: {e}")
-            print("This can happen with Windows Store Blender - please restart Blender")
+            # print(f"✗ Shapely import failed after installation: {e}")
+            # print("This can happen with Windows Store Blender - please restart Blender")
 
     except subprocess.CalledProcessError as e:
-        print(f"✗ Failed to install Shapely: {e}")
-        print("NFP packing will be disabled")
+        # print(f"✗ Failed to install Shapely: {e}")
+        # print("NFP packing will be disabled")
     except Exception as e:
-        print(f"✗ Error installing Shapely: {e}")
-        print("NFP packing will be disabled")
+        # print(f"✗ Error installing Shapely: {e}")
+        # print("NFP packing will be disabled")
 
 
 # Global positioning function that both operators can use
@@ -1564,16 +1564,16 @@ class DUMBTOOLS_OT_browse_asset_folder(Operator, ImportHelper):
     """Select a folder to use as an asset library"""
     bl_idname = "dumbtools.browse_asset_folder"
     bl_label = "Browse Asset Folder"
-    
+
     # Set up the file browser to select directories only
     directory: bpy.props.StringProperty(
         name="Directory",
         subtype='DIR_PATH'
     )
-    
+
     filename_ext = ""
     use_filter_folder = True
-    
+
     def execute(self, context):
         # Check if 'DumbAssets' library already exists
         if 'DumbAssets' not in bpy.context.preferences.filepaths.asset_libraries:
@@ -1582,16 +1582,16 @@ class DUMBTOOLS_OT_browse_asset_folder(Operator, ImportHelper):
             # Get reference to the newly added library
             new_lib = bpy.context.preferences.filepaths.asset_libraries[-1]
             new_lib.name = 'DumbAssets'
-        
+
         # Get the library (either existing or newly created)
         lib = bpy.context.preferences.filepaths.asset_libraries['DumbAssets']
-        
+
         # Set the path
         lib.path = self.directory
-        
+
         # Switch the asset browser to the DumbAssets library
         context.space_data.params.asset_library_reference = 'DumbAssets'
-        
+
         return {'FINISHED'}
 
 
@@ -1621,7 +1621,7 @@ class DUMBTOOLS_OT_import_assets(Operator):
             # In Asset Browser, only when assets are selected
             return True
         return False
-    
+
     def invoke(self, context, event):
         # Detect modifier key combinations for different scattering methods
         # Only override scene properties if modifier keys are pressed
@@ -1738,7 +1738,7 @@ class DUMBTOOLS_OT_import_assets(Operator):
                 # print(f"Importing asset: {asset.name} from {blend_file_path}")
                 # print(f"Asset ID type: {asset.id_type}")
                 # print(f"Import method: {import_method}")
-                
+
                 # Import the asset based on the import method
                 imported_obj = None
                 if asset_import_method == 'LINK':
@@ -1747,18 +1747,18 @@ class DUMBTOOLS_OT_import_assets(Operator):
                     imported_obj = self.append_asset(blend_file_path, asset, reuse_data=True)
                 else:  # 'APPEND' or default
                     imported_obj = self.append_asset(blend_file_path, asset, reuse_data=False)
-                
+
                 if imported_obj:
                     imported_objects.append(imported_obj)
                     imported_count += 1
                     asset_index += 1  # Only increment if successful
                 else:
                     failed_count += 1
-                    
+
             except Exception as e:
                 self.report({'WARNING'}, f"Failed to import asset {asset.name}: {str(e)}")
                 failed_count += 1
-        
+
         # Store objects and enhanced data in scene properties
         if imported_objects:
             # Reset all imported objects to origin before scattering
@@ -2196,6 +2196,17 @@ class DUMBTOOLS_PT_asset_browser_tools(Panel):
 
 
 def register():
+    # Preemptively unregister classes to avoid Blender re-register info spam
+    for cls in [DUMBTOOLS_PT_asset_browser_tools,
+                DUMBTOOLS_OT_rescatter_selected,
+                DUMBTOOLS_OT_import_assets,
+                DUMBTOOLS_OT_browse_asset_folder,
+                DumbToolsSceneProperties]:
+        try:
+            bpy.utils.unregister_class(cls)
+        except Exception:
+            pass
+
     # Register scene properties first
     bpy.utils.register_class(DumbToolsSceneProperties)
     bpy.types.Scene.dumbtools_props = bpy.props.PointerProperty(type=DumbToolsSceneProperties)
@@ -2206,7 +2217,7 @@ def register():
     bpy.utils.register_class(DUMBTOOLS_OT_rescatter_selected)
     bpy.utils.register_class(DUMBTOOLS_PT_asset_browser_tools)
 
-    print("DumbAssets Asset Browser Panel System registered successfully!")
+    # print("DumbAssets Asset Browser Panel System registered successfully!")
 
 
 def unregister():

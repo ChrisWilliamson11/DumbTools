@@ -518,59 +518,58 @@ def register():
 def unregister():
     bpy.utils.unregister_class(ResolveTexturesFromMayaOperator)
 
-# CLI support when run with -- and args
-if __name__ == "__main__":
-    # If Blender passes control here, allow CLI usage with --root and --max-depth
-    argv = sys.argv
-    if '--' in argv:
-        argv = argv[argv.index('--') + 1:]
-    else:
-        argv = []
-    arg_root = None
-    arg_depth = -1
-    arg_log = None
-    arg_resume = False
-    arg_resume_log = None
-    i = 0
-    while i < len(argv):
-        if argv[i] in ('--root', '--root-dir') and i + 1 < len(argv):
-            arg_root = argv[i + 1]
-            i += 2
-        elif argv[i] in ('--max-depth', '--depth') and i + 1 < len(argv):
-            try:
-                arg_depth = int(argv[i + 1])
-            except Exception:
-                arg_depth = -1
-            i += 2
-        elif argv[i] in ('--log', '--log-file') and i + 1 < len(argv):
-            arg_log = argv[i + 1]
-            i += 2
-        elif argv[i] in ('--resume',):
-            arg_resume = True
-            i += 1
-        elif argv[i] in ('--resume-log',) and i + 1 < len(argv):
-            arg_resume_log = argv[i + 1]
-            i += 2
-        else:
-            i += 1
-    register()
-    if arg_root:
-        # Execute operator in EXEC mode with properties instead of instantiating the class
-        kwargs = dict(root_directory=arg_root, recursion_depth=arg_depth)
-        if arg_log:
-            kwargs['log_path'] = arg_log
-        if arg_resume:
-            kwargs['resume_from_log'] = True
-        if arg_resume_log:
-            kwargs['resume_log_path'] = arg_resume_log
+
+# If Blender passes control here, allow CLI usage with --root and --max-depth
+argv = sys.argv
+if '--' in argv:
+    argv = argv[argv.index('--') + 1:]
+else:
+    argv = []
+arg_root = None
+arg_depth = -1
+arg_log = None
+arg_resume = False
+arg_resume_log = None
+i = 0
+while i < len(argv):
+    if argv[i] in ('--root', '--root-dir') and i + 1 < len(argv):
+        arg_root = argv[i + 1]
+        i += 2
+    elif argv[i] in ('--max-depth', '--depth') and i + 1 < len(argv):
         try:
-            bpy.ops.file.resolve_textures_from_maya('EXEC_DEFAULT', **kwargs)
-        except Exception as e:
-            print(f"[ERROR] Failed to execute operator: {e}")
+            arg_depth = int(argv[i + 1])
+        except Exception:
+            arg_depth = -1
+        i += 2
+    elif argv[i] in ('--log', '--log-file') and i + 1 < len(argv):
+        arg_log = argv[i + 1]
+        i += 2
+    elif argv[i] in ('--resume',):
+        arg_resume = True
+        i += 1
+    elif argv[i] in ('--resume-log',) and i + 1 < len(argv):
+        arg_resume_log = argv[i + 1]
+        i += 2
     else:
-        # Launch UI in foreground sessions
-        try:
-            bpy.ops.file.resolve_textures_from_maya('INVOKE_DEFAULT')
-        except Exception as e:
-            print(f"[INFO] Register complete. In background mode, supply -- --root <dir>. Error: {e}")
+        i += 1
+register()
+if arg_root:
+    # Execute operator in EXEC mode with properties instead of instantiating the class
+    kwargs = dict(root_directory=arg_root, recursion_depth=arg_depth)
+    if arg_log:
+        kwargs['log_path'] = arg_log
+    if arg_resume:
+        kwargs['resume_from_log'] = True
+    if arg_resume_log:
+        kwargs['resume_log_path'] = arg_resume_log
+    try:
+        bpy.ops.file.resolve_textures_from_maya('EXEC_DEFAULT', **kwargs)
+    except Exception as e:
+        print(f"[ERROR] Failed to execute operator: {e}")
+else:
+    # Launch UI in foreground sessions
+    try:
+        bpy.ops.file.resolve_textures_from_maya('INVOKE_DEFAULT')
+    except Exception as e:
+        print(f"[INFO] Register complete. In background mode, supply -- --root <dir>. Error: {e}")
 

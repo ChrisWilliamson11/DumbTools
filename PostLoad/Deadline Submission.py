@@ -31,13 +31,13 @@ def load_pools_from_cache():
             with open(POOLS_CACHE_PATH, 'r') as f:
                 data = json.load(f)
                 pools = data.get("pools", ["blendergpu"])
-                print(f"DEBUG: Loaded pools from cache: {pools}")
+                # print(f"DEBUG: Loaded pools from cache: {pools}")
                 return pools
         else:
-            print("DEBUG: No pools cache file found")
+            # print("DEBUG: No pools cache file found")
             return None
     except Exception as e:
-        print(f"DEBUG: Failed to load pools cache: {e}")
+        # print(f"DEBUG: Failed to load pools cache: {e}")
         return None
 
 def create_clean_deadline_environment():
@@ -869,11 +869,11 @@ def get_filename():
 class GetFilesFromNetworkOperator(bpy.types.Operator):
     bl_idname = "scene.get_files_from_network"
     bl_label = "Copy Files from Network"
-    
+
     def invoke(self, context, event):
         network_folder = context.scene.network_folder
         local_folder = context.scene.local_folder
-        
+
         # Get the list of duplicates
         duplicates = sync_files(network_folder, local_folder)
 
@@ -886,16 +886,16 @@ class GetFilesFromNetworkOperator(bpy.types.Operator):
 
             # Clear the existing list
             context.window_manager.duplicate_files.clear()
-            
+
             # Populate the list with the summary
             for ext, count in duplicates_summary.items():
                 item = context.window_manager.duplicate_files.add()
                 item.name = f"{count} {ext} files"
-            
+
             # Show the DuplicateFilesPopup
             bpy.ops.scene.duplicate_files_popup('INVOKE_DEFAULT')
             return {'CANCELLED'}
-        
+
         # If no duplicates, proceed with the original invoke logic
         return context.window_manager.invoke_props_dialog(self, width=600)
 
@@ -971,7 +971,7 @@ def write_draft_job_info(scene, local_folder, network_folder, filename, render_j
     # Generate a temporary path for the Draft job info
     draft_job_info_path = os.path.join(temp_dir, "draft_job_info.job")
     draft_plugin_info_path = os.path.join(temp_dir, "draft_plugin_info.plugin")
-    
+
     # Get the output path from the render job - convert relative path first
     render_filepath = scene.render.filepath
     if render_filepath.startswith("//"):
@@ -980,7 +980,7 @@ def write_draft_job_info(scene, local_folder, network_folder, filename, render_j
 
     output_path = render_filepath.replace(local_folder, network_folder)
     output_directory = os.path.dirname(output_path)
-    
+
     # Setup a pattern that matches the rendered frames
     if "#" in output_path:
         # Replace # with * for wildcard matching
@@ -991,11 +991,11 @@ def write_draft_job_info(scene, local_folder, network_folder, filename, render_j
         prefix = os.path.splitext(os.path.basename(output_path))[0]
         extension = os.path.splitext(output_path)[1]
         input_pattern = os.path.join(directory, prefix + "*" + extension)
-    
+
     # Determine the output movie filename
     mp4_filename = f"{os.path.splitext(os.path.basename(bpy.data.filepath))[0]}_{scene.name}.mp4"
     mp4_output_path = os.path.join(output_directory, mp4_filename)
-    
+
     # Write the job info file for Draft
     with open(draft_job_info_path, "w") as f:
         f.write("Plugin=DraftPlugin\n")
@@ -1005,7 +1005,7 @@ def write_draft_job_info(scene, local_folder, network_folder, filename, render_j
         f.write(f"OutputDirectory0={output_directory}\n")
         f.write(f"OutputFilename0={mp4_output_path}\n")
         f.write(f"JobDependencies={render_job_id}\n")
-    
+
     # Write the plugin info file for Draft
     with open(draft_plugin_info_path, "w") as f:
         f.write("InputFile0=%s\n" % input_pattern)
@@ -1016,7 +1016,7 @@ def write_draft_job_info(scene, local_folder, network_folder, filename, render_j
         f.write("Quality=High\n")
         f.write("FrameRate=24\n")  # Could be extended to get this from scene settings
         f.write("Resolution=Same As Input\n")
-    
+
     return draft_job_info_path, draft_plugin_info_path
 
 def write_ffmpeg_job_info(scene, filename, render_job_id):
@@ -1039,7 +1039,7 @@ def write_ffmpeg_job_info(scene, filename, render_job_id):
     print(f"  Absolute render_filepath: {render_filepath}")
     print(f"  Output path: {output_path}")
     print(f"  Output directory: {output_directory}")
-    
+
     # Get the file extension from render settings
     format_extension_map = {
         'BMP': '.bmp',
@@ -1059,7 +1059,7 @@ def write_ffmpeg_job_info(scene, filename, render_job_id):
     }
     render_format = scene.render.image_settings.file_format
     extension = format_extension_map.get(render_format, '.png')  # Default to .png if format not found
-    
+
     # Setup a pattern that matches the rendered frames
     if "#" in output_path:
         # Replace Blender's # padding with FFmpeg's %04d format
@@ -1080,11 +1080,11 @@ def write_ffmpeg_job_info(scene, filename, render_job_id):
             input_pattern = os.path.join(directory, prefix + "%04d" + extension)
 
         print(f"DEBUG: Created FFmpeg input pattern: {input_pattern}")
-    
+
     # Determine the output movie filename
     mp4_filename = f"{os.path.splitext(os.path.basename(bpy.data.filepath))[0]}_{scene.name}.mp4"
     mp4_output_path = os.path.join(output_directory, mp4_filename)
-    
+
     # Get frame rate from scene or use default
     frame_rate = scene.render.fps if hasattr(scene.render, 'fps') else 24
 
@@ -1107,7 +1107,7 @@ def write_ffmpeg_job_info(scene, filename, render_job_id):
         start_frame = scene.frame_start
 
     print(f"DEBUG: FFmpeg start frame: {start_frame}")
-    
+
     # Write the job info file for FFmpeg
     with open(ffmpeg_job_info_path, "w") as f:
         f.write("Plugin=FFmpeg\n")
@@ -1117,24 +1117,24 @@ def write_ffmpeg_job_info(scene, filename, render_job_id):
         f.write(f"OutputDirectory0={output_directory}\n")
         f.write(f"OutputFilename0={mp4_output_path}\n")
         f.write(f"JobDependencies={render_job_id}\n")
-    
+
     # Write the plugin info file for FFmpeg
     with open(ffmpeg_plugin_info_path, "w") as f:
         # Input file and settings
         f.write(f"InputFile0={input_pattern}\n")
         f.write(f"InputArgs0=-framerate {frame_rate} -start_number {start_frame}\n")
         f.write("ReplacePadding0=False\n")  # We're using %04d format directly
-        
+
         # Output file and settings
         f.write(f"OutputFile={mp4_output_path}\n")
         f.write(f"OutputArgs=-c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -r {frame_rate}\n")
-        
+
         # Additional arguments if needed
         f.write("AdditionalArgs=\n")
-        
+
         # Use same input args for all inputs (if we had multiple)
         f.write("UseSameInputArgs=True\n")
-    
+
     return ffmpeg_job_info_path, ffmpeg_plugin_info_path
 
 def convert_to_network_path(path, local_root, network_root):
@@ -1218,7 +1218,7 @@ def repath_external_references(local_root, network_root, to_network=True):
         if is_local_path(library.filepath, local_root) == to_network:
             library.filepath = repath_function(library.filepath, local_root, network_root)
             paths_were_changed = True
-            
+
     # Adjust scene output paths
     for scene in bpy.data.scenes:
         if is_local_path(scene.render.filepath, local_root) == to_network:
@@ -1232,11 +1232,11 @@ def repath_external_references(local_root, network_root, to_network=True):
 class SubmitToDeadlineOperator(bpy.types.Operator):
     bl_idname = "scene.submit_to_deadline"
     bl_label = "Submit to Deadline"
-    
+
     def execute(self, context):
         # Get the latest filename
         filename = get_filename()
-        
+
         # Save the folders to history
         save_folder_history("local", context.scene.local_folder)
         save_folder_history("network", context.scene.network_folder)
@@ -1403,7 +1403,7 @@ class BrowseLocalFolder(bpy.types.Operator):
     bl_idname = "scene.browse_local_folder"
     bl_label = "Browse Local Folder"
     bl_description = "Browse for a local folder"
-    
+
     directory: bpy.props.StringProperty(subtype='DIR_PATH')
 
     def execute(self, context):
@@ -1419,7 +1419,7 @@ class BrowseNetworkFolder(bpy.types.Operator):
     bl_idname = "scene.browse_network_folder"
     bl_label = "Browse Network Folder"
     bl_description = "Browse for a network folder"
-    
+
     directory: bpy.props.StringProperty(subtype='DIR_PATH')
 
     def execute(self, context):
@@ -1437,13 +1437,13 @@ class DeadlineSubmissionPanel(bpy.types.Panel):
     bl_space_type = 'PROPERTIES'
     bl_region_type = 'WINDOW'
     bl_context = "render"
-    
+
     def draw(self, context):
         layout = self.layout
 
         # Get the active scene
         active_scene = context.scene
-        
+
         # Check if active scene's output is video format
         is_video = is_video_output(active_scene)
 
@@ -1616,7 +1616,7 @@ class LocalizeReferencesOperator(bpy.types.Operator):
             repath_external_references(local_folder, network_folder, to_network=False)
 
         return {'FINISHED'}
-    
+
 class SyncFilesOperator(bpy.types.Operator):
     bl_idname = "scene.sync_files"
     bl_label = "Copy Local Files to Network"
@@ -1624,23 +1624,23 @@ class SyncFilesOperator(bpy.types.Operator):
     def invoke(self, context, event):
         local_folder = context.scene.local_folder
         network_folder = context.scene.network_folder
-        
+
         # Get the summary of duplicates
         duplicates_summary = sync_files(local_folder, network_folder)
-                
+
         if duplicates_summary:
             # Clear the existing list
             context.window_manager.duplicate_files.clear()
-            
+
             # Populate the list with the summary
             for ext, count in duplicates_summary.items():
                 item = context.window_manager.duplicate_files.add()
                 item.name = f"{count} {ext} files"
-            
+
             # Show the DuplicateFilesPopup
             bpy.ops.scene.duplicate_files_popup('INVOKE_DEFAULT')
             return {'CANCELLED'}
-        
+
         return context.window_manager.invoke_props_dialog(self, width=600)
 
     def execute(self, context):
@@ -1693,12 +1693,12 @@ def is_local_path(path, local_root):
 def save_folder_history(folder_type, new_folder):
     if not new_folder:  # Prevent saving empty strings
         return
-    
+
     # Check if the file exists, if not, create an empty one
     if not os.path.exists(FOLDER_HISTORY_PATH):
         with open(FOLDER_HISTORY_PATH, 'w') as f:
             json.dump({"local": [], "network": []}, f)
-    
+
     # Load existing folders
     with open(FOLDER_HISTORY_PATH, 'r') as f:
         data = json.load(f)
@@ -1722,10 +1722,10 @@ def delete_folder_history(folder_type, folder_to_remove):
     if os.path.exists(FOLDER_HISTORY_PATH):
         with open(FOLDER_HISTORY_PATH, 'r') as f:
             data = json.load(f)
-        
+
         if folder_to_remove in data[folder_type]:
             data[folder_type].remove(folder_to_remove)
-        
+
         with open(FOLDER_HISTORY_PATH, 'w') as f:
             json.dump(data, f)
 
@@ -1733,7 +1733,7 @@ def is_video_output(scene):
     """Check if the output is a video format that requires single-machine rendering"""
     # Common video formats that should be processed on a single machine
     video_formats = ['FFMPEG', 'AVI_JPEG', 'AVI_RAW']
-    
+
     # Check if the output format is a video format
     return scene.render.image_settings.file_format in video_formats
 
@@ -1741,7 +1741,7 @@ def write_job_info(scene, filename):
     with open(JOB_INFO_PATH, "w") as f:
         f.write("Plugin=Blender\n")
         f.write(f"Name={filename}_{scene.name}\n")
-        
+
         # Handle frame range logic
         if bpy.context.window_manager.render_current_frame:
             # Render current frame only (takes priority over other settings)
@@ -1756,7 +1756,7 @@ def write_job_info(scene, filename):
         else:
             # Use scene's default frame range
             f.write(f"Frames={scene.frame_start}-{scene.frame_end}\n")
-        
+
         # Calculate chunk size - determine if this is a video output that needs single-machine rendering
         if is_video_output(scene):
             # For video output, use frame count + 1 as chunk size to ensure it's rendered on one machine
@@ -1782,7 +1782,7 @@ def write_job_info(scene, filename):
                 chunk_size = 1  # Let Deadline handle frame distribution for custom lists
             else:
                 chunk_size = bpy.context.window_manager.chunk_size
-        
+
         f.write(f"ChunkSize={chunk_size}\n")
         f.write(f"Priority={bpy.context.window_manager.job_priority}\n")
 
@@ -1793,7 +1793,7 @@ def write_job_info(scene, filename):
         # Add suspended state if selected
         if bpy.context.window_manager.submit_suspended:
             f.write("InitialStatus=Suspended\n")
-        
+
         # Convert Blender relative path to absolute path
         render_filepath = scene.render.filepath
         if render_filepath.startswith("//"):
@@ -1813,14 +1813,14 @@ def write_job_info(scene, filename):
 
         # Use the absolute path for output filename
         output_filename = output_path
-        
+
         # Ensure padding is consistent
         if "#" not in output_filename:
             directory = os.path.dirname(output_filename)
             prefix = os.path.splitext(os.path.basename(output_filename))[0]
             extension = os.path.splitext(output_filename)[1]
             output_filename = os.path.join(directory, prefix + "####" + extension)
-        
+
         f.write(f"OutputFilename0={output_filename}\n")
 
 def write_plugin_info(scene_name):
@@ -1855,7 +1855,7 @@ def write_plugin_info(scene_name):
             prefix = os.path.splitext(os.path.basename(output_filename))[0]
             extension = os.path.splitext(output_filename)[1]
             output_filename = os.path.join(directory, prefix + "####" + extension)
-        
+
         f.write(f"OutputFile={output_filename}\n")
         # Specify the OutputFormat based on the render settings of the scene
         output_format = bpy.data.scenes[scene_name].render.image_settings.file_format
@@ -1864,6 +1864,20 @@ def write_plugin_info(scene_name):
         f.write("Threads=0\n")
 
 def register():
+    # Preemptively unregister key panels to avoid Blender info spam on re-register
+    try:
+        bpy.utils.unregister_class(DeadlineSubmissionPanel)
+    except Exception:
+        pass
+    try:
+        bpy.utils.unregister_class(PROPERTIES_PT_DeadlineScenesToRenderSubPanel)
+    except Exception:
+        pass
+    try:
+        bpy.utils.unregister_class(PROPERTIES_PT_DeadlineSubmissionOptionsSubPanel)
+    except Exception:
+        pass
+
     bpy.utils.register_class(SubmitToDeadlineOperator)
     bpy.utils.register_class(DeadlineSubmissionPanel)  # Register main panel first
     bpy.utils.register_class(PROPERTIES_PT_DeadlineScenesToRenderSubPanel)
@@ -1881,7 +1895,7 @@ def register():
     bpy.utils.register_class(GetFilesFromNetworkOperator)
     bpy.types.WindowManager.duplicate_files = bpy.props.CollectionProperty(type=DuplicateFileItem)
     bpy.utils.register_class(DuplicateFilesPopup)
-    bpy.types.Scene.duplicate_files_index = bpy.props.IntProperty()    
+    bpy.types.Scene.duplicate_files_index = bpy.props.IntProperty()
     bpy.types.WindowManager.selected_scenes_index = bpy.props.IntProperty(name="Selected Scene Index")
     bpy.types.Scene.local_folder = bpy.props.StringProperty(name="Local Folder", update=lambda s, c: save_folder_history("local", s.local_folder))
     bpy.types.Scene.network_folder = bpy.props.StringProperty(name="Network Folder", update=lambda s, c: save_folder_history("network", s.network_folder))
@@ -1892,13 +1906,13 @@ def register():
         description="Only render the current frame from the active scene",
         default=False
     )
-    
+
     bpy.types.WindowManager.create_mp4 = bpy.props.BoolProperty(
         name="Also Create MP4",
         description="Create an MP4 movie from rendered frames using Deadline Draft",
         default=False
     )
-        
+
     bpy.types.WindowManager.job_priority = bpy.props.IntProperty(
         name="Job Priority",
         description="Priority of the job in Deadline",
@@ -1963,7 +1977,7 @@ def register():
             if cached_pools:
                 for i, pool in enumerate(cached_pools):
                     if pool.lower() != 'none':
-                        print(f"DEBUG: Setting default pool index to {i} (pool: {pool})")
+                        # print(f"DEBUG: Setting default pool index to {i} (pool: {pool})")
                         return i
             return 0  # Fallback to first pool
         except:
@@ -1976,9 +1990,9 @@ def register():
             items=get_pool_items,
             default=get_default_pool_index()  # Only uses cache, no server call
         )
-        print("DEBUG: Successfully registered deadline_pool property")
-    except Exception as e:
-        print(f"DEBUG: Failed to register deadline_pool: {e}")
+        # print("DEBUG: Successfully registered deadline_pool property")
+    except Exception:
+        pass
 
     try:
         bpy.types.WindowManager.submit_suspended = bpy.props.BoolProperty(
@@ -1986,9 +2000,9 @@ def register():
             description="Submit the job in suspended state (won't start rendering until resumed)",
             default=False
         )
-        print("DEBUG: Successfully registered submit_suspended property")
-    except Exception as e:
-        print(f"DEBUG: Failed to register submit_suspended: {e}")
+        # print("DEBUG: Successfully registered submit_suspended property")
+    except Exception:
+        pass
 
     try:
         bpy.types.WindowManager.submit_scene_file = bpy.props.BoolProperty(
@@ -1996,9 +2010,9 @@ def register():
             description="Copy the Blender scene file to the repository and submit it with the job",
             default=False
         )
-        print("DEBUG: Successfully registered submit_scene_file property")
-    except Exception as e:
-        print(f"DEBUG: Failed to register submit_scene_file: {e}")
+        # print("DEBUG: Successfully registered submit_scene_file property")
+    except Exception:
+        pass
 
     try:
         bpy.types.WindowManager.render_all_cameras = bpy.props.BoolProperty(
@@ -2006,9 +2020,9 @@ def register():
             description="Render from all selected cameras, creating separate jobs for each camera view",
             default=False
         )
-        print("DEBUG: Successfully registered render_all_cameras property")
-    except Exception as e:
-        print(f"DEBUG: Failed to register render_all_cameras: {e}")
+        # print("DEBUG: Successfully registered render_all_cameras property")
+    except Exception:
+        pass
 
     try:
         bpy.types.WindowManager.split_still_frame = bpy.props.BoolProperty(
@@ -2016,9 +2030,9 @@ def register():
             description="Split a single frame render across multiple machines using sample subsets",
             default=False
         )
-        print("DEBUG: Successfully registered split_still_frame property")
-    except Exception as e:
-        print(f"DEBUG: Failed to register split_still_frame: {e}")
+        # print("DEBUG: Successfully registered split_still_frame property")
+    except Exception:
+        pass
 
     try:
         bpy.types.WindowManager.split_frame_jobs = bpy.props.IntProperty(
@@ -2028,10 +2042,10 @@ def register():
             min=2,
             max=999  # Allow any reasonable number, with warnings for poor sample distribution
         )
-        print("DEBUG: Successfully registered split_frame_jobs property")
-    except Exception as e:
-        print(f"DEBUG: Failed to register split_frame_jobs: {e}")
-    
+        # print("DEBUG: Successfully registered split_frame_jobs property")
+    except Exception:
+        pass
+
     # Clear any existing items
     bpy.context.scene.LocalFolders.clear()
     bpy.context.scene.NetworkFolders.clear()
@@ -2061,12 +2075,12 @@ def unregister():
     bpy.utils.unregister_class(DuplicateFilesPopup)
 
     bpy.utils.unregister_class(GetFilesFromNetworkOperator)
-    
+
     del bpy.types.WindowManager.duplicate_files
     bpy.utils.unregister_class(DuplicateFileItem)
-    
+
     del bpy.types.Scene.duplicate_files
-    del bpy.types.Scene.duplicate_files_index    
+    del bpy.types.Scene.duplicate_files_index
     del bpy.types.WindowManager.render_current_frame
     del bpy.types.WindowManager.create_mp4
     del bpy.types.Scene.override_frame_range

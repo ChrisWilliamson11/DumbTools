@@ -87,7 +87,7 @@ class VSESetDurationToSelected(bpy.types.Operator):
 
     def execute(self, context):
         selected_clips = [seq for seq in context.scene.sequence_editor.sequences if seq.select]
-        
+
         if not selected_clips:
             self.report({'WARNING'}, "No clips selected")
             return {'CANCELLED'}
@@ -95,7 +95,7 @@ class VSESetDurationToSelected(bpy.types.Operator):
         # Set scene start and end based on the selected clip
         first_clip = min(selected_clips, key=lambda s: s.frame_final_start)
         last_clip = max(selected_clips, key=lambda s: s.frame_final_end)
-        
+
         context.scene.frame_start = first_clip.frame_final_start
         context.scene.frame_end = last_clip.frame_final_end
 
@@ -155,6 +155,20 @@ def sequencer_menu_func(self, context):
     self.layout.menu("SEQUENCER_MT_dumbtools")
 
 def register():
+    # Preemptively unregister to avoid re-register info spam on reloads
+    for cls in [VSEGoToNextClipStart,
+                VSEGoToPreviousClipStart,
+                VSESelectClipsAfterCurrentFrame,
+                VSESetClipToCurrentFrame,
+                VSESetDurationToSelected,
+                VSEMoveSelectedToStart,
+                VSEMoveSelectedToEnd,
+                VSEDumbToolsMenu]:
+        try:
+            bpy.utils.unregister_class(cls)
+        except Exception:
+            pass
+
     bpy.utils.register_class(VSEGoToNextClipStart)
     bpy.utils.register_class(VSEGoToPreviousClipStart)
     bpy.utils.register_class(VSESelectClipsAfterCurrentFrame)

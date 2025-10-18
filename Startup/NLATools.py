@@ -74,11 +74,11 @@ class SetStripToCurrentFrame(bpy.types.Operator):
     def execute(self, context):
         current_frame = context.scene.frame_current
         strips = [strip for track in context.object.animation_data.nla_tracks for strip in track.strips if strip.select]
-        
+
         if not strips:
             self.report({'WARNING'}, "No strips selected")
             return {'CANCELLED'}
-        
+
         # Find the earliest strip among the selected
         first_strip = min(strips, key=lambda s: s.frame_start)
         offset = current_frame - first_strip.frame_start
@@ -105,6 +105,17 @@ def nla_menu_func(self, context):
     self.layout.menu("NLA_MT_NLAdumbtools")
 
 def register():
+    # Preemptively unregister to avoid re-register info messages on reloads
+    for cls in [SelectStripsOperator,
+                NLAGoToNextStrip,
+                NLAGoToPreviousStrip,
+                SetStripToCurrentFrame,
+                NLADumbToolsMenu]:
+        try:
+            bpy.utils.unregister_class(cls)
+        except Exception:
+            pass
+
     bpy.utils.register_class(SelectStripsOperator)
     bpy.utils.register_class(NLAGoToNextStrip)
     bpy.utils.register_class(NLAGoToPreviousStrip)

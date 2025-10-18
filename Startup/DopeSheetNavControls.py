@@ -140,12 +140,23 @@ class ANIM_PT_keyframe_type_options(bpy.types.Panel):
         layout.prop(tool_settings, "keyframe_type", text="")
 
 def register():
+    # Preemptively unregister to avoid Blender 'registered before' info on reload
+    for cls in [ANIM_MT_keyframe_options,
+                ANIM_PT_keyframe_type_options,
+                TIME_PT_auto_keyframing,
+                SetStartFrameOperator,
+                SetEndFrameOperator]:
+        try:
+            bpy.utils.unregister_class(cls)
+        except Exception:
+            pass
+
     bpy.utils.register_class(ANIM_MT_keyframe_options)
     bpy.utils.register_class(ANIM_PT_keyframe_type_options)
     bpy.utils.register_class(TIME_PT_auto_keyframing)  # Register the new panel
     bpy.utils.register_class(SetStartFrameOperator)  # Register the new operator
     bpy.utils.register_class(SetEndFrameOperator)    # Register the new operator
-    
+
     # Extend existing headers
     bpy.types.DOPESHEET_HT_header.append(draw_navigation_controls)
     bpy.types.GRAPH_HT_header.append(draw_navigation_controls)
@@ -156,7 +167,7 @@ def unregister():
     bpy.utils.unregister_class(TIME_PT_auto_keyframing)  # Unregister the new panel
     bpy.utils.unregister_class(SetStartFrameOperator)  # Unregister the new operator
     bpy.utils.unregister_class(SetEndFrameOperator)    # Unregister the new operator
-    
+
     # Remove our additions from the headers
     bpy.types.DOPESHEET_HT_header.remove(draw_navigation_controls)
     bpy.types.GRAPH_HT_header.remove(draw_navigation_controls)

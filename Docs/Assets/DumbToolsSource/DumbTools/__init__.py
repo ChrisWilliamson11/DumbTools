@@ -134,7 +134,7 @@ def get_operator_idname_from_path(path):
     if op_class:
         return op_class.bl_idname
     else:
-        print(f"No operator found for script: {path}")
+        # print(f"No operator found for script: {path}")
         return ""
     
 def create_script_operator(filepath, tooltip):
@@ -168,7 +168,7 @@ def create_submenus(base_path=None, parent_menu_idname=None):
         base_path = CUSTOM_SCRIPTS_FOLDER
 
     if not os.path.isdir(base_path):
-        print(f"Invalid base path: {base_path}")
+        # print(f"Invalid base path: {base_path}")
         return
 
     exclude_folders = {"Startup", "PostLoad", ".git", "Docs", ".vscode", "assets", "lib"}
@@ -219,15 +219,16 @@ def create_submenus(base_path=None, parent_menu_idname=None):
 
 def execute_script(filepath):
     if not filepath or not os.path.exists(filepath):
-        print(f"Invalid script path: {filepath}")
+        # print(f"Invalid script path: {filepath}")
         return
         
     try:
         with open(filepath, 'r') as file:
             exec(compile(file.read(), filepath, 'exec'), {})
-        print(f"Executed '{filepath}' successfully.")
+        # print(f"Executed '{filepath}' successfully.")
     except Exception as e:
-        print(f"Failed to execute '{filepath}': {e}")
+        # print(f"Failed to execute '{filepath}': {e}")
+        pass
 
 class DumbToolsMenu(bpy.types.Menu):
     bl_idname = "DUMBTOOLS_MT_menu"
@@ -318,10 +319,11 @@ def register():
 
     # Check if the folders actually exist before proceeding
     if os.path.isdir(CUSTOM_SCRIPTS_FOLDER):
-        print(f"Custom scripts folder found: {CUSTOM_SCRIPTS_FOLDER}")
+        # print(f"Custom scripts folder found: {CUSTOM_SCRIPTS_FOLDER}")
         register_properties(CUSTOM_SCRIPTS_FOLDER, CUSTOM_STARTUP_FOLDER, CUSTOM_POSTLOAD_FOLDER)
     else:
-        print(f"Custom scripts folder does not exist: {CUSTOM_SCRIPTS_FOLDER}. Please check its path in DumbToolsPreferences.")
+        # print(f"Custom scripts folder does not exist: {CUSTOM_SCRIPTS_FOLDER}. Please check its path in DumbToolsPreferences.")
+        pass
 
     bpy.utils.register_class(BaseScriptOperator)
     bpy.utils.register_class(DumbToolsMenu)
@@ -337,11 +339,18 @@ def register():
 
 
 def unregister():
-    bpy.utils.unregister_class(DumbToolsPreferences)
-    for prop_name in DumbToolsPreferences.__annotations__.keys():
+    # Clean up dynamic properties added via annotations
+    for prop_name in list(DumbToolsPreferences.__annotations__.keys()):
         if prop_name.startswith("enable_"):
-            delattr(DumbToolsPreferences, prop_name)
-    bpy.utils.unregister_class(DumbToolsPreferences)
+            try:
+                DumbToolsPreferences.__annotations__.pop(prop_name, None)
+            except Exception:
+                pass
+    # Unregister the preferences class (ignore if already unregistered)
+    try:
+        bpy.utils.unregister_class(DumbToolsPreferences)
+    except Exception:
+        pass
     if load_handler in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(load_handler)
     # If the addon is disabled, remove the menu from the editor

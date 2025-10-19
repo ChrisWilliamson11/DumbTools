@@ -101,8 +101,17 @@ class OffsetBitmapsOperator(bpy.types.Operator):
         nodes = material.node_tree.nodes
         links = material.node_tree.links
 
-        # Find all image texture nodes with 'color' in the material name or 'colony_simpleMaterialSG'
-        if 'color' not in material.name.lower() and material.name != 'colony_simpleMaterialSG':
+        # Check if material should be processed
+        # Include if: has 'color' in name, OR starts with 'colony_simpleMaterialSG', OR ends with 'aMaterialSG'
+        # Exclude anything with 'graphics' in the name
+        mat_name_lower = material.name.lower()
+        has_graphics = 'graphics' in mat_name_lower
+
+        is_color_material = 'color' in mat_name_lower
+        is_colony_material = material.name.startswith('colony_simpleMaterialSG')
+        is_a_material = 'aMaterialSG' in material.name
+
+        if has_graphics or not (is_color_material or is_colony_material or is_a_material):
             return False
 
         image_nodes = [node for node in nodes if node.type == 'TEX_IMAGE']

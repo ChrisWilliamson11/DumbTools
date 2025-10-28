@@ -2,13 +2,19 @@ import bpy
 import json
 import os
 
+
 # Function to get the Blender appdata folder
 def get_appdata_folder():
-    return bpy.utils.user_resource('CONFIG')
+    return bpy.utils.user_resource("CONFIG")
+
 
 def is_serializable(v):
     # Treat tuples of three floats (likely representing RGB colors) as non-serializable
-    if isinstance(v, tuple) and len(v) == 3 and all(isinstance(element, float) for element in v):
+    if (
+        isinstance(v, tuple)
+        and len(v) == 3
+        and all(isinstance(element, float) for element in v)
+    ):
         return False
     return isinstance(v, (str, int, float, bool, list, dict, tuple))
 
@@ -19,76 +25,92 @@ def convert_color_to_tuple(color):
         return color
     return color
 
+
 def convert_tuple_to_color(value):
     # Simply return the value as color properties are already tuples
     return value
 
 
-
 def save_space_data_settings(context):
     space = context.space_data
-    settings = {attr: getattr(space, attr) for attr in dir(space)
-                if not attr.startswith("__") and not callable(getattr(space, attr))
-                and is_serializable(getattr(space, attr))}
+    settings = {
+        attr: getattr(space, attr)
+        for attr in dir(space)
+        if not attr.startswith("__")
+        and not callable(getattr(space, attr))
+        and is_serializable(getattr(space, attr))
+    }
 
     # Special handling for nested property groups like 'shading'
-    shading_settings = {attr: getattr(space.shading, attr) for attr in dir(space.shading)
-                        if not attr.startswith("__") and not callable(getattr(space.shading, attr))
-                        and is_serializable(getattr(space.shading, attr))}
-    
+    shading_settings = {
+        attr: getattr(space.shading, attr)
+        for attr in dir(space.shading)
+        if not attr.startswith("__")
+        and not callable(getattr(space.shading, attr))
+        and is_serializable(getattr(space.shading, attr))
+    }
+
     if shading_settings:
-        settings['shading'] = shading_settings
+        settings["shading"] = shading_settings
 
     return settings
+
 
 def load_space_data_settings(context, settings):
     space = context.space_data
     for attr, value in settings.items():
-        if attr == 'shading':
+        if attr == "shading":
             for shading_attr, shading_value in value.items():
                 setattr(space.shading, shading_attr, shading_value)
         elif hasattr(space, attr) and not callable(getattr(space, attr)):
             setattr(space, attr, value)
 
+
 def save_preset(preset_name, context, save_space, save_shading, save_overlay):
-    viewport_settings = save_viewport_settings(context, save_space, save_shading, save_overlay)
+    viewport_settings = save_viewport_settings(
+        context, save_space, save_shading, save_overlay
+    )
     file_path = os.path.join(get_appdata_folder(), "overlay_presets.json")
-    
+
     try:
-        with open(file_path, 'r') as file:
+        with open(file_path, "r") as file:
             presets = json.load(file)
     except FileNotFoundError:
         presets = {}
-    
+
     presets[preset_name] = viewport_settings
-    with open(file_path, 'w') as file:
+    with open(file_path, "w") as file:
         json.dump(presets, file, indent=4)
+
 
 def save_viewport_settings(context, save_space, save_shading, save_overlay):
     space = context.space_data
     settings = {}
-    if space.type == 'VIEW_3D':
+    if space.type == "VIEW_3D":
         # Save overlay settings
         if save_overlay:
             overlay = space.overlay
-            settings['overlay'] = serialize_settings(overlay)
+            settings["overlay"] = serialize_settings(overlay)
 
         # Save space settings
         if save_space:
-            settings['space'] = serialize_settings(space)
+            settings["space"] = serialize_settings(space)
 
         # Save shading settings
         if save_shading:
             shading = space.shading
-            settings['shading'] = serialize_settings(shading)
+            settings["shading"] = serialize_settings(shading)
 
             # Explicitly handle the color properties
-            if hasattr(shading, 'single_color'):
-                settings['shading']['single_color'] = tuple(shading.single_color)
-            if hasattr(shading, 'background_color'):
-                settings['shading']['background_color'] = tuple(shading.background_color)
+            if hasattr(shading, "single_color"):
+                settings["shading"]["single_color"] = tuple(shading.single_color)
+            if hasattr(shading, "background_color"):
+                settings["shading"]["background_color"] = tuple(
+                    shading.background_color
+                )
 
     return settings
+
 
 def serialize_settings(obj):
     data = {}
@@ -96,17 +118,20 @@ def serialize_settings(obj):
         value = getattr(obj, attr)
         # Serialize only JSON compatible data
         if not attr.startswith("__") and not callable(value):
-            if isinstance(value, (str, int, float, bool, list, dict)) or (isinstance(value, tuple) and len(value) == 3):
+            if isinstance(value, (str, int, float, bool, list, dict)) or (
+                isinstance(value, tuple) and len(value) == 3
+            ):
                 data[attr] = value
     return data
 
+
 def load_viewport_settings(context, settings):
     space = context.space_data
-    if space.type == 'VIEW_3D':
+    if space.type == "VIEW_3D":
         # Apply overlay settings
-        if 'overlay' in settings:
+        if "overlay" in settings:
             overlay = space.overlay
-            for attr, value in settings['overlay'].items():
+            for attr, value in settings["overlay"].items():
                 if hasattr(overlay, attr) and not callable(getattr(overlay, attr)):
                     try:
                         setattr(overlay, attr, value)
@@ -114,8 +139,8 @@ def load_viewport_settings(context, settings):
                         print(f"Could not set overlay attribute {attr}: {e}")
 
         # Apply space settings
-        if 'space' in settings:
-            for attr, value in settings['space'].items():
+        if "space" in settings:
+            for attr, value in settings["space"].items():
                 if hasattr(space, attr) and not callable(getattr(space, attr)):
                     try:
                         setattr(space, attr, value)
@@ -123,13 +148,13 @@ def load_viewport_settings(context, settings):
                         print(f"Could not set space attribute {attr}: {e}")
 
         # Apply shading settings
-        if 'shading' in settings:
+        if "shading" in settings:
             shading = space.shading
-            for attr, value in settings['shading'].items():
+            for attr, value in settings["shading"].items():
                 if hasattr(shading, attr) and not callable(getattr(shading, attr)):
                     try:
                         # Convert list to tuple for color properties
-                        if attr in ['single_color', 'background_color']:
+                        if attr in ["single_color", "background_color"]:
                             setattr(shading, attr, tuple(value))
                         else:
                             setattr(shading, attr, value)
@@ -152,29 +177,29 @@ def apply_settings(obj, settings):
                 print(f"Could not set attribute {attr}: {e}")
 
 
-
-
 def delete_viewportpreset(preset_name):
     file_path = os.path.join(get_appdata_folder(), "overlay_presets.json")
     try:
-        with open(file_path, 'r') as file:
+        with open(file_path, "r") as file:
             presets = json.load(file)
     except FileNotFoundError:
         return
-    
+
     if preset_name in presets:
         del presets[preset_name]
-    
-    with open(file_path, 'w') as file:
+
+    with open(file_path, "w") as file:
         json.dump(presets, file, indent=4)
+
 
 def load_presets():
     file_path = os.path.join(get_appdata_folder(), "overlay_presets.json")
     try:
-        with open(file_path, 'r') as file:
+        with open(file_path, "r") as file:
             return json.load(file)
     except FileNotFoundError:
         return {}
+
 
 class DeletePresetOperator(bpy.types.Operator):
     bl_idname = "view3d.delete_viewportpreset"
@@ -183,13 +208,16 @@ class DeletePresetOperator(bpy.types.Operator):
 
     def execute(self, context):
         delete_viewportpreset(self.preset_name)
-        return {'FINISHED'}
+        return {"FINISHED"}
+
 
 class ApplyPresetOperator(bpy.types.Operator):
     bl_idname = "view3d.apply_preset"
     bl_label = "Apply or Delete Overlay Preset"
     preset_name: bpy.props.StringProperty()
-    is_delete: bpy.props.BoolProperty(default=False, options={'HIDDEN'})  # Add a hidden property to handle deletion
+    is_delete: bpy.props.BoolProperty(
+        default=False, options={"HIDDEN"}
+    )  # Add a hidden property to handle deletion
 
     def execute(self, context):
         if self.is_delete:
@@ -197,16 +225,18 @@ class ApplyPresetOperator(bpy.types.Operator):
             # Refresh the menu
             bpy.utils.unregister_class(VIEW3D_MT_OverlayPresetsMenu)
             bpy.utils.register_class(VIEW3D_MT_OverlayPresetsMenu)
-            self.report({'INFO'}, f"Preset '{self.preset_name}' deleted")
+            self.report({"INFO"}, f"Preset '{self.preset_name}' deleted")
         else:
             presets = load_presets()
             if self.preset_name in presets:
                 settings = presets[self.preset_name]
-                load_viewport_settings(context, settings)  # Call the function to apply all settings
-                self.report({'INFO'}, f"Preset '{self.preset_name}' applied")
+                load_viewport_settings(
+                    context, settings
+                )  # Call the function to apply all settings
+                self.report({"INFO"}, f"Preset '{self.preset_name}' applied")
             else:
-                self.report({'WARNING'}, f"Preset '{self.preset_name}' not found")
-        return {'FINISHED'}
+                self.report({"WARNING"}, f"Preset '{self.preset_name}' not found")
+        return {"FINISHED"}
 
     def invoke(self, context, event):
         if event.alt:
@@ -218,6 +248,7 @@ class ApplyPresetOperator(bpy.types.Operator):
             self.is_delete = False
             return self.execute(context)
 
+
 class SavePresetOperator(bpy.types.Operator):
     bl_idname = "view3d.save_preset"
     bl_label = "Save Overlay Preset"
@@ -225,27 +256,33 @@ class SavePresetOperator(bpy.types.Operator):
     save_space: bpy.props.BoolProperty(name="Save Space Settings", default=True)
     save_shading: bpy.props.BoolProperty(name="Save Shading Settings", default=True)
     save_overlay: bpy.props.BoolProperty(name="Save Overlay Settings", default=True)
-    has_confirmed_overwrite: bpy.props.BoolProperty(default=False, options={'HIDDEN'})  # Track confirmation
+    has_confirmed_overwrite: bpy.props.BoolProperty(
+        default=False, options={"HIDDEN"}
+    )  # Track confirmation
 
     def execute(self, context):
         presets = load_presets()
 
         if self.preset_name in presets and not context.scene.confirm_overwrite:
-            return bpy.ops.view3d.confirm_overwrite('INVOKE_DEFAULT')
+            return bpy.ops.view3d.confirm_overwrite("INVOKE_DEFAULT")
 
         # If overwrite is confirmed or the preset is new, save it
         if context.scene.confirm_overwrite:
             context.scene.confirm_overwrite = False
 
-        save_preset(self.preset_name, context, self.save_space, self.save_shading, self.save_overlay)
-        self.report({'INFO'}, f"Preset '{self.preset_name}' saved")
-        return {'FINISHED'}
+        save_preset(
+            self.preset_name,
+            context,
+            self.save_space,
+            self.save_shading,
+            self.save_overlay,
+        )
+        self.report({"INFO"}, f"Preset '{self.preset_name}' saved")
+        return {"FINISHED"}
 
     def invoke(self, context, event):
         wm = context.window_manager
         invoke_response = wm.invoke_props_dialog(self, width=300)
-        # This line will set the focus on the preset_name text field
-        wm.event_timer_add(0.1, window=context.window)
         return invoke_response
 
     def draw(self, context):
@@ -254,6 +291,7 @@ class SavePresetOperator(bpy.types.Operator):
         row.prop(self, "save_space", text="Space")
         row.prop(self, "save_shading", text="Shading")
         row.prop(self, "save_overlay", text="Overlay")
+
 
 # This is a new operator to handle the confirmation
 class ConfirmOverwriteOperator(bpy.types.Operator):
@@ -267,14 +305,14 @@ class ConfirmOverwriteOperator(bpy.types.Operator):
         # Find the save preset operator and re-invoke it
         for op in reversed(bpy.context.window_manager.operators):
             if op.bl_idname == "view3d.save_preset":
-                bpy.ops.view3d.save_preset('INVOKE_DEFAULT')
+                bpy.ops.view3d.save_preset("INVOKE_DEFAULT")
                 break
 
-        return {'FINISHED'}
-
+        return {"FINISHED"}
 
     def invoke(self, context, event):
         return context.window_manager.invoke_confirm(self, event)
+
 
 class VIEW3D_MT_OverlayPresetsMenu(bpy.types.Menu):
     bl_label = "Overlay Presets"
@@ -291,10 +329,11 @@ class VIEW3D_MT_OverlayPresetsMenu(bpy.types.Menu):
             apply_op = layout.operator("view3d.apply_preset", text=preset_name)
             apply_op.preset_name = preset_name
 
+
 def draw_header(self, context):
     layout = self.layout
     row = layout.row(align=True)
-    row.menu("VIEW3D_MT_overlay_presets_menu", text="", icon='DESKTOP')
+    row.menu("VIEW3D_MT_overlay_presets_menu", text="", icon="DESKTOP")
 
 
 def register():
@@ -307,6 +346,7 @@ def register():
     bpy.utils.register_class(VIEW3D_MT_OverlayPresetsMenu)
     bpy.types.VIEW3D_HT_header.append(draw_header)
 
+
 def unregister():
     bpy.utils.unregister_class(ApplyPresetOperator)
     bpy.utils.unregister_class(SavePresetOperator)
@@ -316,5 +356,6 @@ def unregister():
 
     bpy.utils.unregister_class(VIEW3D_MT_OverlayPresetsMenu)
     bpy.types.VIEW3D_HT_header.remove(draw_header)
+
 
 register()

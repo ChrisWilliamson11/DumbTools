@@ -645,10 +645,10 @@ class OffsetBitmapsOperator(bpy.types.Operator):
             try:
                 with bpy.data.libraries.load(blend_path, link=False) as (data_from, data_to):
                     for ng_name in data_from.node_groups:
-                        # Only add if the prefix matches a known channel
+                        # Only add if the prefix matches a known channel or is a 'shader' mod
                         if '_' in ng_name:
                             channel_prefix = ng_name.split('_')[0]
-                            if channel_prefix in CHANNEL_MAPPING:
+                            if channel_prefix in CHANNEL_MAPPING or channel_prefix.lower() == 'shader':
                                 mod = context.scene.offset_bitmaps_mods.add()
                                 mod.name = ng_name
                                 mod.blend_file = blend_path
@@ -806,79 +806,132 @@ class AddMaterialModsOperator(bpy.types.Operator):
         return True
 
     def add_mod_to_material(self, material, nodegroup_name):
-        """Add a material mod nodegroup to a material"""
+        """Add a material mod nodegroup to a material.
+        - If the nodegroup name starts with 'shader_', insert it before the Material Output:
+          group's SHADER output -> Material Output Surface; previous Surface source -> group's SHADER input.
+        - Otherwise, connect it to the mapped shader input from CHANNEL_MAPPING (as before).
+        """
         nodes = material.node_tree.nodes
         links = material.node_tree.links
 
-        # Parse the channel from the nodegroup name (e.g., "BaseColor_DiffuseImperfections")
+        # Parse the channel from the nodegroup name (e.g., "BaseColor_DiffuseImperfections" or "shader_Mask")
         if '_' not in nodegroup_name:
-            # print(f"Skipping {nodegroup_name} - no underscore")
             return False
 
         channel_prefix = nodegroup_name.split('_')[0]
-        shader_input_name = CHANNEL_MAPPING.get(channel_prefix)
 
-        if not shader_input_name:
-            # print(f"Skipping {nodegroup_name} - channel {channel_prefix} not in mapping")
+        # Special case: 'shader' prefix -> insert before Material Output
+        if channel_prefix.lower() == 'shader':
+            # Already present?
+            for n in nodes:
+                if n.type == 'GROUP' and n.node_tree and n.node_tree.name == nodegroup_name:
+                    return False
+
+            if nodegroup_name not in bpy.data.node_groups:
+                return False
+
+            # Find active Material Output
+            output = None
+            for n in nodes:
+                if n.type == 'OUTPUT_MATERIAL' and getattr(n, 'is_active_output', False):
+                    output = n; break
+            if not output:
+                for n in nodes:
+                    if n.type == 'OUTPUT_MATERIAL':
+                        output = n; break
+            if not output:
+                return False
+
+            surface_input = output.inputs.get('Surface', None)
+            if not surface_input:
+                return False
+
+            # Create the nodegroup
+            mod_node = nodes.new('ShaderNodeGroup')
+            mod_node.node_tree = bpy.data.node_groups[nodegroup_name]
+            mod_node.location = (output.location.x - 240, output.location.y)
+
+            # Helper to pick SHADER sockets if available
+            def pick_output_socket(node):
+                for s in node.outputs:
+                    if s.type == 'SHADER':
+                        return s
+                return node.outputs[0] if node.outputs else None
+
+            def pick_input_socket(node):
+                for s in node.inputs:
+                    if s.type == 'SHADER':
+                        return s
+                return node.inputs[0] if node.inputs else None
+
+            mod_out = pick_output_socket(mod_node)
+            mod_in = pick_input_socket(mod_node)
+
+            # Rewire: previous Surface source -> mod input; mod output -> Surface
+            prev_from_socket = None
+            if surface_input.is_linked:
+                old_link = surface_input.links[0]
+                prev_from_socket = old_link.from_socket
+                links.remove(old_link)
+
+            if prev_from_socket and mod_in:
+                try:
+                    links.new(prev_from_socket, mod_in)
+                except Exception:
+                    pass
+
+            if mod_out:
+                links.new(mod_out, surface_input)
+                return True
+            # Fallback if no outputs
             return False
 
-        # Find the principled BSDF or other shader node
-        # Try Principled BSDF first, then any BSDF, then any shader group
+        # Default path: channel-based mapping into shader input
+        shader_input_name = CHANNEL_MAPPING.get(channel_prefix)
+        if not shader_input_name:
+            return False
+
+        # Find a shader node to accept the input
         shader_node = None
         for node in nodes:
             if node.type == 'BSDF_PRINCIPLED':
                 shader_node = node
                 break
-
-        # If no Principled BSDF, try other BSDF types
         if not shader_node:
             for node in nodes:
                 if node.type.startswith('BSDF_'):
                     shader_node = node
                     break
-
-        # If still no shader, try shader groups
         if not shader_node:
             for node in nodes:
                 if node.type == 'GROUP' and node.node_tree:
-                    # Check if this group has the input we need
                     if shader_input_name in node.inputs:
                         shader_node = node
                         break
-
         if not shader_node:
-            # print(f"Material {material.name} - no shader node found")
             return False
-
         if shader_input_name not in shader_node.inputs:
-            # print(f"Material {material.name} - input {shader_input_name} not found in shader")
             return False
 
-        # Check if this nodegroup already exists
+        # Already present?
         for node in nodes:
             if node.type == 'GROUP' and node.node_tree and node.node_tree.name == nodegroup_name:
-                # print(f"Material {material.name} - already has {nodegroup_name}")
-                return False  # Already has this mod
+                return False
 
-        # Create the nodegroup
+        # Create and connect
         mod_node = nodes.new('ShaderNodeGroup')
         mod_node.node_tree = bpy.data.node_groups[nodegroup_name]
         mod_node.location = (shader_node.location.x - 300, shader_node.location.y)
 
-        # Get the shader input
         shader_input = shader_node.inputs[shader_input_name]
-
-        # If something is connected to the shader input, connect it to the mod input
         if shader_input.is_linked:
             existing_link = shader_input.links[0]
             existing_socket = existing_link.from_socket
             links.remove(existing_link)
-            links.new(existing_socket, mod_node.inputs[0])
-
-        # Connect mod output to shader input
-        links.new(mod_node.outputs[0], shader_input)
-
-        # print(f"Material {material.name} - added {nodegroup_name} to {shader_input_name}")
+            if mod_node.inputs:
+                links.new(existing_socket, mod_node.inputs[0])
+        if mod_node.outputs:
+            links.new(mod_node.outputs[0], shader_input)
         return True
 
 

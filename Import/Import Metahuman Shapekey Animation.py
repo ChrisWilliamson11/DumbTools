@@ -408,6 +408,324 @@ def insert_curve_on_shapekey(
     return fc
 
 
+def find_driver_source_for_shapekey(obj, shapekey_name):
+    """
+
+    For a given object's shapekey name, try to locate a driver that feeds
+
+    key_blocks["<name>"].value and return (target_id, target_data_path, transform_type).
+
+    - If the driver uses an object transform variable, transform_type will be non-None
+      (e.g., 'LOC_Y', 'ROT_X', 'SCALE_Z') and data_path may be None.
+    - Otherwise, data_path will be populated (e.g., 'pose.bones["CTRL_x"].location', or a property path)
+    """
+    key_data = getattr(obj.data, "shape_keys", None)
+
+    if not key_data or not key_data.animation_data:
+        return None
+
+    data_path = f'key_blocks["{shapekey_name}"].value'
+
+    for fcu in key_data.animation_data.drivers:
+        if fcu.data_path != data_path:
+            continue
+
+        drv = fcu.driver
+
+        if not drv or not drv.variables:
+            continue
+
+        for var in drv.variables:
+            for t in var.targets:
+                if not t or not t.id:
+                    continue
+                # Prefer transforms-style targets (object transform drivers)
+                if getattr(var, "type", None) == "TRANSFORMS" and getattr(
+                    t, "transform_type", None
+                ):
+                    return (t.id, None, t.transform_type)
+                # Fallback to explicit property path targets
+                dp = getattr(t, "data_path", None)
+
+                if dp:
+                    return (t.id, dp, None)
+    return None
+
+
+def ensure_action_for_id(id_block, action_name):
+    """
+    Ensure an Action exists and is assigned on the given ID datablock.
+    Works for Object (including Armature objects for pose bone FCurves),
+    NodeTree, etc.
+    """
+    if id_block.animation_data is None:
+        id_block.animation_data_create()
+    action = bpy.data.actions.get(action_name)
+    if action is None:
+        action = bpy.data.actions.new(action_name)
+    action.use_fake_user = True
+    id_block.animation_data.action = action
+    return action
+
+
+def insert_curve_on_id(
+    action,
+    data_path,
+    frames,
+    values,
+    group_name="CTRL",
+    clear_existing=True,
+    interpolation="BEZIER",
+    clamp_01=False,
+    log_spikes=False,
+    despike=False,
+    median_window=5,
+    spike_threshold=1.2,
+    quantized=False,
+    q_epsilon=0.0003,
+    q_den=8192,
+    q_min_abs=1.2,
+    channel_index=None,
+):
+    """Insert an FCurve on an arbitrary data_path for the given action.
+    Mirrors insert_curve_on_shapekey behavior for filtering, clamping, interpolation, etc.
+    """
+    if clear_existing:
+        to_remove = [
+            fcu
+            for fcu in action.fcurves
+            if fcu.data_path == data_path
+            and (
+                channel_index is None
+                or getattr(fcu, "array_index", -1) == channel_index
+            )
+        ]
+        for fcu in to_remove:
+            action.fcurves.remove(fcu)
+    fc = action.fcurves.new(
+        data_path=data_path,
+        index=(channel_index if channel_index is not None else -1),
+        action_group=group_name,
+    )
+
+    values_local = list(values)
+
+    # Optional despike using a sliding median
+    if despike and len(values_local) >= 3:
+        w = (
+            int(median_window)
+            if int(median_window) % 2 == 1
+            else max(3, int(median_window) + 1)
+        )
+        half = w // 2
+        filtered_vals = []
+        for i, v in enumerate(values_local):
+            left = max(0, i - half)
+            right = min(len(values_local), i + half + 1)
+            neighborhood = values_local[left:i] + values_local[i + 1 : right]
+            if neighborhood:
+                med = statistics.median([float(x) for x in neighborhood])
+                if abs(float(v) - float(med)) > float(spike_threshold):
+                    v = med
+            filtered_vals.append(v)
+        values_local = filtered_vals
+
+    # Optional quantized-outlier suppression snapped to k/den if near and large
+    if quantized and len(values_local) > 0:
+        processed_vals = []
+        nvals = len(values_local)
+        for i, v in enumerate(values_local):
+            try:
+                vf = float(v)
+            except Exception:
+                processed_vals.append(v)
+                continue
+            if abs(vf) > float(q_min_abs):
+                k = round(vf * float(q_den))
+                quant = k / float(q_den)
+                if abs(vf - quant) <= float(q_epsilon):
+                    neigh = []
+                    if i > 0:
+                        try:
+                            neigh.append(float(values_local[i - 1]))
+                        except Exception:
+                            pass
+                    if i + 1 < nvals:
+                        try:
+                            neigh.append(float(values_local[i + 1]))
+                        except Exception:
+                            pass
+                    vf = statistics.median(neigh) if neigh else 0.0
+            processed_vals.append(vf)
+        values_local = processed_vals
+
+    # Deduplicate and sort frames
+    frame_map = {}
+    for fr, val in zip(frames, values_local):
+        try:
+            fr_f = float(fr)
+            val_f = float(val)
+            if clamp_01:
+                if val_f < 0.0:
+                    val_f = 0.0
+                elif val_f > 1.0:
+                    val_f = 1.0
+        except Exception:
+            continue
+        frame_map[fr_f] = val_f  # last value for duplicate frames
+
+    sorted_frames = sorted(frame_map.keys())
+    count = len(sorted_frames)
+
+    # Optional spike logging
+    if log_spikes and count > 1:
+        prev_f = sorted_frames[0]
+        prev_v = frame_map[prev_f]
+        for fr in sorted_frames[1:]:
+            v = frame_map[fr]
+            if abs(v - prev_v) > 0.25:
+                print(
+                    f"[CTRL Import] Spike on {data_path}: frame {prev_f}->{fr} delta {v - prev_v:.3f}"
+                )
+            prev_v = v
+            prev_f = fr
+
+    if count > 0:
+        kps = fc.keyframe_points
+        kps.add(count)
+        for i, fr in enumerate(sorted_frames):
+            kp = kps[i]
+            kp.co = (fr, frame_map[fr])
+            kp.interpolation = interpolation
+            if interpolation == "BEZIER":
+                kp.handle_left_type = "AUTO_CLAMPED"
+                kp.handle_right_type = "AUTO_CLAMPED"
+
+    fc.update()
+    return fc
+
+    """
+    Try to resolve the Face Board (armature) and a pose-bone transform data_path (location/rotation_euler/scale)
+    for a given CTRL_* shapekey. Returns (face_board_object, data_path, axis_index) or (None, None, None).
+    """
+
+    axis_index = {"X": 0, "Y": 1, "Z": 2}.get(str(axis).upper(), 2)
+
+    src = find_driver_source_for_shapekey(obj, shapekey_name)
+
+    if src:
+        target_id, target_dp, transform_type = src
+
+        # Object transform target via transform_type (e.g., LOC_Y, ROT_X, SCALE_Z)
+        if transform_type and hasattr(target_id, "type"):
+            tt = str(transform_type).upper()
+            mapping = {
+                "LOC": "location",
+                "ROT": "rotation_euler",
+                "SCALE": "scale",
+            }
+            axis_map = {"X": 0, "Y": 1, "Z": 2}
+            for prefix, dp_name in mapping.items():
+                if tt.startswith(prefix):
+                    axis_char = tt.split("_")[-1] if "_" in tt else ""
+                    idx = axis_map.get(axis_char, axis_index)
+                    return target_id, dp_name, idx
+        # Pose-bone location target via data_path
+        if (
+            target_dp
+            and isinstance(target_id, bpy.types.ID)
+            and "pose.bones[" in target_dp
+            and ".location" in target_dp
+        ):
+            base_dp = target_dp
+
+            det_axis_index = axis_index
+
+            if base_dp.endswith(".x"):
+                base_dp = base_dp[:-2]
+
+                det_axis_index = 0
+
+            elif base_dp.endswith(".y"):
+                base_dp = base_dp[:-2]
+
+                det_axis_index = 1
+
+            elif base_dp.endswith(".z"):
+                base_dp = base_dp[:-2]
+
+                det_axis_index = 2
+
+        if target_dp and hasattr(target_id, "type"):
+            if target_dp.endswith(".location") or target_dp.endswith("location"):
+                return target_id, "location", axis_index
+
+            if target_dp.endswith(".rotation_euler") or target_dp.endswith(
+                "rotation_euler"
+            ):
+                return target_id, "rotation_euler", axis_index
+            if target_dp.endswith(".scale") or target_dp.endswith("scale"):
+                return target_id, "scale", axis_index
+
+    # 2) Use MetaHuman DNA addon's scene data if available to find a face_board
+    face_obj = None
+    try:
+        scene = context.scene
+        mh = getattr(scene, "meta_human_dna", None)
+        inst_list = getattr(mh, "rig_logic_instance_list", None) if mh else None
+        if inst_list:
+            cand = None
+            for inst in inst_list:
+                fb = getattr(inst, "face_board", None)
+                if not fb:
+                    continue
+                # Prefer the instance that references this mesh as its head_mesh
+                if getattr(inst, "head_mesh", None) == obj:
+                    cand = fb
+                    break
+                cand = cand or fb
+            face_obj = cand
+    except Exception:
+        face_obj = None
+
+    # 3) Fallback: heuristic search for a likely face_gui armature
+    if not face_obj:
+        for o in bpy.data.objects:
+            if getattr(o, "type", None) == "ARMATURE":
+                name_l = o.name.lower()
+                if "face_gui" in name_l or name_l.endswith("_face_gui"):
+                    face_obj = o
+                    break
+
+    if not face_obj or not getattr(face_obj, "pose", None):
+        return None, None, None
+
+    # Candidate bone names: prefer exact CTRL_* name
+    candidates = [shapekey_name]
+    if not shapekey_name.startswith("CTRL"):
+        candidates.append(f"CTRL_{shapekey_name}")
+
+    for bn in candidates:
+        pb = face_obj.pose.bones.get(bn)
+
+        if pb:
+            return face_obj, f'pose.bones["{bn}"].location', axis_index
+
+    # Object-control fallback: map CTRL_* name to object control if present (no drivers)
+    # Try exact object name match, then names with numeric suffixes (.001, etc.)
+    for name in candidates:
+        ob = bpy.data.objects.get(name)
+        if ob:
+            return ob, "location", axis_index
+    # Try suffix variants (name.###)
+    for ob in bpy.data.objects:
+        for name in candidates:
+            if ob.name.startswith(name + "."):
+                return ob, "location", axis_index
+
+    return None, None, None
+
+
 class IMPORT_OT_ascii_fbx_shapekeys(bpy.types.Operator, ImportHelper):
     bl_idname = "import_scene.ascii_fbx_shapekeys_ctrl"
     bl_label = "Import Shapekeys from ASCII FBX"
@@ -512,6 +830,23 @@ class IMPORT_OT_ascii_fbx_shapekeys(bpy.types.Operator, ImportHelper):
         min=0.0,
     )
 
+    apply_to_face_board: BoolProperty(
+        name="Apply to Face Board",
+        description="Insert keyframes on the Face Board (pose bone location) instead of shapekey values",
+        default=True,
+    )
+
+    face_board_axis: bpy.props.EnumProperty(
+        name="Face Board Axis",
+        description="Axis on the Face Board control location to key (X/Y/Z). Default Z",
+        items=[
+            ("X", "X", "Use X axis"),
+            ("Y", "Y", "Use Y axis"),
+            ("Z", "Z", "Use Z axis"),
+        ],
+        default="Y",
+    )
+
     stagger_channels: BoolProperty(
         name="Stagger channels (offset frames per channel)",
         description="Offset frames per channel by a fixed amount to avoid overlapping frames across channels",
@@ -544,14 +879,16 @@ class IMPORT_OT_ascii_fbx_shapekeys(bpy.types.Operator, ImportHelper):
 
             return {"CANCELLED"}
 
-        # Ensure datablock exists on all targets so we can attach animation and clear drivers
-
-        for obj in sel_objs:
-            ensure_shape_key(obj, "Basis")
+        # Ensure datablock exists only when writing to shapekeys
+        id_to_action = {}
+        keyed_pairs = set()
+        if not self.apply_to_face_board:
+            for obj in sel_objs:
+                ensure_shape_key(obj, "Basis")
 
         # Optionally clear drivers on shapekey values for all targets
 
-        if self.clear_drivers:
+        if self.clear_drivers and not self.apply_to_face_board:
             prefix = "CTRL" if self.only_ctrl else None
 
             total_removed = 0
@@ -589,11 +926,17 @@ class IMPORT_OT_ascii_fbx_shapekeys(bpy.types.Operator, ImportHelper):
         objects_processed = 0
         global_min_frame = None
 
-        global_max_frame = None
+
+global_max_frame = None
+unresolved_targets = 0
+
 
         for obj in sel_objs:
-            action_name = f"FBX_CTRL_{base_name}__{obj.name}"
-            action = ensure_action_for_shape_keys(obj, action_name)
+            action = None
+            if not self.apply_to_face_board:
+                action_name = f"FBX_CTRL_{base_name}__{obj.name}"
+
+                action = ensure_action_for_shape_keys(obj, action_name)
 
             imported_count = 0
             min_frame = None
@@ -633,32 +976,82 @@ class IMPORT_OT_ascii_fbx_shapekeys(bpy.types.Operator, ImportHelper):
                 else:
                     frames = [fbx_ticks_to_frame(t, fps) + ch_off for t in ticks]
 
-                # Ensure the shapekey exists
+                if self.apply_to_face_board:
+                    # Resolve Face Board pose bone location path for this CTRL_* name
+                    face_obj, target_dp, axis_index = resolve_face_board_and_datapath(
+                        context, obj, prop_name, self.face_board_axis
+                    )
+                    if face_obj and target_dp:
+                        # Reuse or create an action on the Face Board object
+                        target_action = id_to_action.get(face_obj)
+                        if target_action is None:
+                            target_action = ensure_action_for_id(
+                                face_obj,
+                                f"FBX_CTRL_{base_name}__{getattr(face_obj, 'name', 'FaceBoard')}",
+                            )
+                            id_to_action[face_obj] = target_action
+                        # Avoid duplicating the same channel across multiple selected meshes
+                        pair_key = (id(face_obj), target_dp, axis_index)
+                        if pair_key not in keyed_pairs:
+                            insert_curve_on_id(
+                                target_action,
+                                target_dp,
+                                frames,
+                                values,
+                                group_name="CTRL",
+                                clear_existing=self.clear_existing_fcurves,
+                                interpolation="BEZIER"
+                                if self.bezier_auto_clamped
+                                else "LINEAR",
+                                clamp_01=self.clamp_values_01,
+                                log_spikes=self.log_spikes,
+                                despike=self.despike_filter,
+                                median_window=self.despike_window,
+                                spike_threshold=self.despike_threshold,
+                                quantized=self.quantized_filter,
+                                q_epsilon=self.quantized_epsilon,
+                                q_den=self.quantized_denominator,
+                                q_min_abs=self.quantized_min_abs,
+                                channel_index=axis_index,
+                            )
+                            keyed_pairs.add(pair_key)
+                            imported_count += 1
 
-                ensure_shape_key(obj, prop_name)
 
-                # Insert keys on Action
+                    else:
 
-                insert_curve_on_shapekey(
-                    action,
-                    prop_name,
-                    frames,
-                    values,
-                    group_name="CTRL",
-                    clear_existing=self.clear_existing_fcurves,
-                    interpolation="BEZIER" if self.bezier_auto_clamped else "LINEAR",
-                    clamp_01=self.clamp_values_01,
-                    log_spikes=self.log_spikes,
-                    despike=self.despike_filter,
-                    median_window=self.despike_window,
-                    spike_threshold=self.despike_threshold,
-                    quantized=self.quantized_filter,
-                    q_epsilon=self.quantized_epsilon,
-                    q_den=self.quantized_denominator,
-                    q_min_abs=self.quantized_min_abs,
-                )
+                        # No matching face board or control target found; track as unresolved and skip
+                        unresolved_targets += 1
+                        continue
 
-                imported_count += 1
+
+                else:
+                    # Ensure the shapekey exists
+                    ensure_shape_key(obj, prop_name)
+                    # Insert keys on Action
+                    insert_curve_on_shapekey(
+                        action,
+                        prop_name,
+                        frames,
+                        values,
+                        group_name="CTRL",
+                        clear_existing=self.clear_existing_fcurves,
+                        interpolation="BEZIER"
+                        if self.bezier_auto_clamped
+                        else "LINEAR",
+                        clamp_01=self.clamp_values_01,
+                        log_spikes=self.log_spikes,
+                        despike=self.despike_filter,
+                        median_window=self.despike_window,
+                        spike_threshold=self.despike_threshold,
+                        quantized=self.quantized_filter,
+                        q_epsilon=self.quantized_epsilon,
+                        q_den=self.quantized_denominator,
+                        q_min_abs=self.quantized_min_abs,
+                    )
+                    imported_count += 1
+
+                # removed duplicate increment to avoid inflated counts
 
                 if frames:
                     fmin = min(frames)
@@ -703,10 +1096,19 @@ class IMPORT_OT_ascii_fbx_shapekeys(bpy.types.Operator, ImportHelper):
 
             scene.frame_end = int(round(global_max_frame))
 
+
+        mode = "Face Board" if self.apply_to_face_board else "shapekeys"
+        extra = (
+            f" Unresolved targets: {unresolved_targets}."
+            if self.apply_to_face_board and unresolved_targets
+            else ""
+        )
         self.report(
             {"INFO"},
-            f"Imported {total_imported_tracks} CTRL shapekey tracks into {objects_processed} object(s). Actions named 'FBX_CTRL_{base_name}__<ObjectName>'",
+
+            f"Imported {total_imported_tracks} CTRL tracks into {objects_processed} object(s) ({mode}).{extra}",
         )
+
         return {"FINISHED"}
 
 

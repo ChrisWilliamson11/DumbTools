@@ -9,6 +9,8 @@ bl_info = {
     "category": "Import-Export",
 }
 
+
+import difflib
 import os
 import re
 import statistics
@@ -411,28 +413,22 @@ def insert_curve_on_shapekey(
 
 def find_driver_source_for_shapekey(obj, shapekey_name):
     """
-
     For a given object's shapekey name, try to locate a driver that feeds
+    key_blocks["<name>"].value and return (target_id, target_data_path, transform_type, bone_target).
 
-    key_blocks["<name>"].value and return (target_id, target_data_path, transform_type).
-
-    - If the driver uses an object transform variable, transform_type will be non-None
-      (e.g., 'LOC_Y', 'ROT_X', 'SCALE_Z') and data_path may be None.
+    - If the driver uses an object or pose-bone transform variable, transform_type will be non-None
+      (e.g., 'LOC_Y', 'ROT_X', 'SCALE_Z'), and bone_target will be the pose bone name (or ''/None for object).
     - Otherwise, data_path will be populated (e.g., 'pose.bones["CTRL_x"].location', or a property path)
     """
     key_data = getattr(obj.data, "shape_keys", None)
-
     if not key_data or not key_data.animation_data:
         return None
 
     data_path = f'key_blocks["{shapekey_name}"].value'
-
     for fcu in key_data.animation_data.drivers:
         if fcu.data_path != data_path:
             continue
-
         drv = fcu.driver
-
         if not drv or not drv.variables:
             continue
 
@@ -440,16 +436,20 @@ def find_driver_source_for_shapekey(obj, shapekey_name):
             for t in var.targets:
                 if not t or not t.id:
                     continue
-                # Prefer transforms-style targets (object transform drivers)
+                # Prefer transforms-style targets (object or pose-bone transform drivers)
                 if getattr(var, "type", None) == "TRANSFORMS" and getattr(
                     t, "transform_type", None
                 ):
-                    return (t.id, None, t.transform_type)
+                    return (
+                        t.id,
+                        None,
+                        t.transform_type,
+                        getattr(t, "bone_target", None) or None,
+                    )
                 # Fallback to explicit property path targets
                 dp = getattr(t, "data_path", None)
-
                 if dp:
-                    return (t.id, dp, None)
+                    return (t.id, dp, None, None)
     return None
 
 
@@ -603,21 +603,112 @@ def insert_curve_on_id(
                 kp.handle_right_type = "AUTO_CLAMPED"
 
     fc.update()
+
     return fc
 
-    """
-    Try to resolve the Face Board (armature) and a pose-bone transform data_path (location/rotation_euler/scale)
-    for a given CTRL_* shapekey. Returns (face_board_object, data_path, axis_index) or (None, None, None).
-    """
 
+def best_match_shapekey_for_fbx_prop(obj, fbx_prop_name):
+    """
+    Try to map the FBX CTRL property name to the actual shapekey name on this mesh:
+    - Prefer exact match
+    - Otherwise, fuzzy match by token overlap and side (L/R/C)
+    Returns the shapekey name or None if no reasonable match is found.
+    """
+    try:
+        key_data = getattr(getattr(obj, "data", None), "shape_keys", None)
+        if not key_data:
+            return None
+        key_blocks = getattr(key_data, "key_blocks", None)
+        if not key_blocks:
+            return None
+        sk_names = [kb.name for kb in key_blocks]
+    except Exception:
+        return None
+
+    def camel_to_snake(s):
+        out = []
+        for ch in s:
+            if ch.isupper():
+                out.append("_")
+                out.append(ch.lower())
+            else:
+                out.append(ch)
+        return "".join(out)
+
+    def normalize(name):
+        n = name.strip()
+        n = camel_to_snake(n)
+        n = n.replace("__", "_").lower()
+        return n
+
+    fb = fbx_prop_name
+    fb_norm = normalize(fb)
+    # Common FBX prefixes we can drop for comparison
+    for prefix in ("ctrl_expressions_", "ctrl_", "frm_", "grp_", "text_"):
+        if fb_norm.startswith(prefix):
+            fb_norm = fb_norm[len(prefix) :]
+            break
+
+    # Detect side on FBX name
+    side = None
+    if fb_norm.endswith("_l") or "_l_" in fb_norm:
+        side = "l"
+    elif fb_norm.endswith("_r") or "_r_" in fb_norm:
+        side = "r"
+    elif fb_norm.endswith("_c") or "_c_" in fb_norm:
+        side = "c"
+
+    # Exact match first
+    if fbx_prop_name in sk_names:
+        return fbx_prop_name
+    # Try CTRL_ + fb_norm forms
+    for probe in (f"CTRL_{fb_norm}", f"ctrl_{fb_norm}"):
+        for sk in sk_names:
+            if normalize(sk) == normalize(probe):
+                return sk
+
+    # Fuzzy by token overlap
+    fb_tokens = set([t for t in fb_norm.split("_") if t])
+    best = None
+    best_score = 0.0
+    for sk in sk_names:
+        if not sk.startswith("CTRL"):
+            continue
+        sk_norm = normalize(sk)
+        sk_tokens = set([t for t in sk_norm.split("_") if t])
+        if not sk_tokens:
+            continue
+        inter = len(fb_tokens & sk_tokens)
+        union = len(fb_tokens | sk_tokens)
+        jacc = inter / union if union else 0.0
+        score = jacc
+        if side and f"_{side}_" in f"_{sk_norm}_":
+            score += 0.1
+        if score > best_score:
+            best_score = score
+            best = sk
+
+    # Require a reasonable score
+    if best and best_score >= 0.35:
+        return best
+    return None
+
+
+def resolve_face_board_and_datapath(context, obj, shapekey_name, axis="Z"):
+    """
+    Try to resolve the Face Board (armature) and a transform data_path for a given CTRL_* shapekey.
+    Returns (owner_id, data_path, axis_index, bone_target or None) or (None, None, None, None).
+    """
     axis_index = {"X": 0, "Y": 1, "Z": 2}.get(str(axis).upper(), 2)
 
-    src = find_driver_source_for_shapekey(obj, shapekey_name)
+    # Map FBX property name to the actual shapekey name on this mesh when names differ
+    sk_name = best_match_shapekey_for_fbx_prop(obj, shapekey_name) or shapekey_name
 
+    src = find_driver_source_for_shapekey(obj, sk_name)
     if src:
-        target_id, target_dp, transform_type = src
+        target_id, target_dp, transform_type, bone_target = src
 
-        # Object transform target via transform_type (e.g., LOC_Y, ROT_X, SCALE_Z)
+        # TRANSFORMS driver target: object or pose-bone
         if transform_type and hasattr(target_id, "type"):
             tt = str(transform_type).upper()
             mapping = {
@@ -630,43 +721,58 @@ def insert_curve_on_id(
                 if tt.startswith(prefix):
                     axis_char = tt.split("_")[-1] if "_" in tt else ""
                     idx = axis_map.get(axis_char, axis_index)
-                    return target_id, dp_name, idx
-        # Pose-bone location target via data_path
+                    # If a bone target is present, key the pose bone array on the armature
+                    if bone_target:
+                        return (
+                            target_id,
+                            f'pose.bones["{bone_target}"].{dp_name}',
+                            idx,
+                            bone_target,
+                        )
+                    # Else, key the object transform
+                    return target_id, dp_name, idx, None
+
+        # Pose-bone data_path target with explicit path
         if (
             target_dp
             and isinstance(target_id, bpy.types.ID)
             and "pose.bones[" in target_dp
-            and ".location" in target_dp
         ):
             base_dp = target_dp
-
             det_axis_index = axis_index
 
+            # Extract axis suffix if present
             if base_dp.endswith(".x"):
                 base_dp = base_dp[:-2]
-
                 det_axis_index = 0
-
             elif base_dp.endswith(".y"):
                 base_dp = base_dp[:-2]
-
                 det_axis_index = 1
-
             elif base_dp.endswith(".z"):
                 base_dp = base_dp[:-2]
-
                 det_axis_index = 2
 
+            # Extract bone name
+            m = re.search(r'pose\.bones\["([^"]+)"\]', base_dp)
+            bone_name = m.group(1) if m else None
+
+            if base_dp.endswith(".location"):
+                return target_id, base_dp, det_axis_index, bone_name
+            if base_dp.endswith(".rotation_euler"):
+                return target_id, base_dp, det_axis_index, bone_name
+            if base_dp.endswith(".scale"):
+                return target_id, base_dp, det_axis_index, bone_name
+
+        # Object direct data_path (rare)
         if target_dp and hasattr(target_id, "type"):
             if target_dp.endswith(".location") or target_dp.endswith("location"):
-                return target_id, "location", axis_index
-
+                return target_id, "location", axis_index, None
             if target_dp.endswith(".rotation_euler") or target_dp.endswith(
                 "rotation_euler"
             ):
-                return target_id, "rotation_euler", axis_index
+                return target_id, "rotation_euler", axis_index, None
             if target_dp.endswith(".scale") or target_dp.endswith("scale"):
-                return target_id, "scale", axis_index
+                return target_id, "scale", axis_index, None
 
     # 2) Use MetaHuman DNA addon's scene data if available to find a face_board
     face_obj = None
@@ -699,12 +805,13 @@ def insert_curve_on_id(
                     break
 
     if not face_obj or not getattr(face_obj, "pose", None):
-        return None, None, None
+        return None, None, None, None
 
     # Candidate bone names: prefer exact CTRL_* name
-    candidates = [shapekey_name]
-    if not shapekey_name.startswith("CTRL"):
-        candidates.append(f"CTRL_{shapekey_name}")
+    base_name = sk_name
+    candidates = [base_name]
+    if not base_name.startswith("CTRL"):
+        candidates.append(f"CTRL_{base_name}")
 
     for bn in candidates:
         pb = face_obj.pose.bones.get(bn)
@@ -712,19 +819,63 @@ def insert_curve_on_id(
         if pb:
             return face_obj, f'pose.bones["{bn}"].location', axis_index
 
+    # Fuzzy bone match if exact name not found
+    try:
+        # Prefer bones matching side when present in the shapekey name
+        sk_name_l = shapekey_name.lower()
+        side = None
+        if sk_name_l.endswith("l") or "_l" in sk_name_l:
+            side = "l"
+        elif sk_name_l.endswith("r") or "_r" in sk_name_l:
+            side = "r"
+
+        all_bone_names = [b.name for b in face_obj.pose.bones]
+        if side:
+            side_bones = [
+                n
+                for n in all_bone_names
+                if f"_{side}_" in n.lower()
+                or n.lower().startswith(f"ctrl_{side}_")
+                or n.lower().endswith(f"_{side}")
+            ]
+        else:
+            side_bones = all_bone_names
+
+        # Use difflib sequence ratio to pick closest CTRL_* bone
+        best_name = None
+        best_ratio = 0.0
+        for bn in side_bones:
+            ratio = difflib.SequenceMatcher(
+                None, shapekey_name.lower(), bn.lower()
+            ).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_name = bn
+
+        # Accept reasonable matches
+        if best_name and best_ratio >= 0.55:
+            return face_obj, f'pose.bones["{best_name}"].location', axis_index
+    except Exception:
+        pass
+
     # Object-control fallback: map CTRL_* name to object control if present (no drivers)
+
     # Try exact object name match, then names with numeric suffixes (.001, etc.)
     for name in candidates:
         ob = bpy.data.objects.get(name)
+
         if ob:
             return ob, "location", axis_index
     # Try suffix variants (name.###)
+
     for ob in bpy.data.objects:
         for name in candidates:
             if ob.name.startswith(name + "."):
                 return ob, "location", axis_index
 
     return None, None, None
+
+    return None, None, None, None
 
 
 class IMPORT_OT_ascii_fbx_shapekeys(bpy.types.Operator, ImportHelper):
@@ -978,20 +1129,28 @@ class IMPORT_OT_ascii_fbx_shapekeys(bpy.types.Operator, ImportHelper):
 
                 if self.apply_to_face_board:
                     # Resolve Face Board pose bone location path for this CTRL_* name
-                    face_obj, target_dp, axis_index = resolve_face_board_and_datapath(
-                        context, obj, prop_name, self.face_board_axis
+                    face_obj, target_dp, axis_index, bone_target = (
+                        resolve_face_board_and_datapath(
+                            context, obj, prop_name, self.face_board_axis
+                        )
                     )
                     if face_obj and target_dp:
-                        # Reuse or create an action on the Face Board object
-                        target_action = id_to_action.get(face_obj)
+                        # Reuse or create an action on the correct owner (armature for pose.bones, object for object controls)
+                        owner_id = face_obj
+                        target_action = id_to_action.get(owner_id)
                         if target_action is None:
                             target_action = ensure_action_for_id(
-                                face_obj,
-                                f"FBX_CTRL_{base_name}__{getattr(face_obj, 'name', 'FaceBoard')}",
+                                owner_id,
+                                f"FBX_CTRL_{base_name}__{getattr(owner_id, 'name', 'FaceBoard')}",
                             )
-                            id_to_action[face_obj] = target_action
-                        # Avoid duplicating the same channel across multiple selected meshes
-                        pair_key = (id(face_obj), target_dp, axis_index)
+                            id_to_action[owner_id] = target_action
+                        # Avoid duplicating the same channel across multiple selected meshes (include bone target in the key)
+                        pair_key = (
+                            id(owner_id),
+                            target_dp,
+                            axis_index,
+                            bone_target or "",
+                        )
                         if pair_key not in keyed_pairs:
                             insert_curve_on_id(
                                 target_action,

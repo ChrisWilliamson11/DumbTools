@@ -9,12 +9,13 @@ bl_info = {
     "category": "Import-Export",
 }
 
-import bpy
-from bpy.props import StringProperty, BoolProperty, IntProperty, FloatProperty
-from bpy_extras.io_utils import ImportHelper
-import re
 import os
+import re
 import statistics
+
+import bpy
+from bpy.props import BoolProperty, FloatProperty, IntProperty, StringProperty
+from bpy_extras.io_utils import ImportHelper
 
 # FBX time is in 1/46186158000 sec ticks
 FBX_TICKS_PER_SECOND = 46186158000.0
@@ -926,10 +927,9 @@ class IMPORT_OT_ascii_fbx_shapekeys(bpy.types.Operator, ImportHelper):
         objects_processed = 0
         global_min_frame = None
 
+        global_max_frame = None
 
-global_max_frame = None
-unresolved_targets = 0
-
+        unresolved_targets = 0
 
         for obj in sel_objs:
             action = None
@@ -1017,13 +1017,10 @@ unresolved_targets = 0
                             keyed_pairs.add(pair_key)
                             imported_count += 1
 
-
                     else:
-
                         # No matching face board or control target found; track as unresolved and skip
                         unresolved_targets += 1
                         continue
-
 
                 else:
                     # Ensure the shapekey exists
@@ -1096,7 +1093,6 @@ unresolved_targets = 0
 
             scene.frame_end = int(round(global_max_frame))
 
-
         mode = "Face Board" if self.apply_to_face_board else "shapekeys"
         extra = (
             f" Unresolved targets: {unresolved_targets}."
@@ -1105,7 +1101,6 @@ unresolved_targets = 0
         )
         self.report(
             {"INFO"},
-
             f"Imported {total_imported_tracks} CTRL tracks into {objects_processed} object(s) ({mode}).{extra}",
         )
 

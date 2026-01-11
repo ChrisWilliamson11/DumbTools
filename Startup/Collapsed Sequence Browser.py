@@ -303,7 +303,13 @@ class FILEBROWSER_OT_load_sequence(bpy.types.Operator):
                 
                 if target_area:
                     print("DEBUG: Targeting VSE Area")
-                    bpy.ops.file.cancel()
+                    
+                    # Only cancel if we are in a temporary popup (indicated by active_op_id)
+                    if active_op_id:
+                        try:
+                            bpy.ops.file.cancel()
+                        except Exception as e:
+                            print(f"DEBUG: Cancel failed (safe to ignore in standalone): {e}")
                     
                     # Create override
                     with context.temp_override(window=context.window, area=target_area):

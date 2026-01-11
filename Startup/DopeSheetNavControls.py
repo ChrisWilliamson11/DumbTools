@@ -13,75 +13,10 @@ class ANIM_MT_keyframe_options(Menu):
 
 def draw_navigation_controls(self, context):
     layout = self.layout
-    tool_settings = context.tool_settings
-    scene = context.scene
-
-    # Add spacer to push controls to the center
-    # Check if the current area is the Dope Sheet or Action Editor
-    if (context.space_data.type == 'DOPESHEET_EDITOR' and context.space_data.mode in {'DOPESHEET', 'ACTION'}) or context.space_data.type == 'GRAPH_EDITOR':
-        scene = context.scene
-        tool_settings = context.tool_settings
-        screen = context.screen
-
-
-
-        layout.separator_spacer()
-
-        row = layout.row(align=True)
-        row.prop(tool_settings, "use_keyframe_insert_auto", text="", toggle=True)
-        sub = row.row(align=True)
-        sub.active = tool_settings.use_keyframe_insert_auto
-        sub.popover(
-            panel="TIME_PT_auto_keyframing",
-            text="",
-        )
-
-        row = layout.row(align=True)
-        row.operator("screen.frame_jump", text="", icon='REW').end = False
-        row.operator("screen.keyframe_jump", text="", icon='PREV_KEYFRAME').next = False
-        if not screen.is_animation_playing:
-            # if using JACK and A/V sync:
-            #   hide the play-reversed button
-            #   since JACK transport doesn't support reversed playback
-            if scene.sync_mode == 'AUDIO_SYNC' and context.preferences.system.audio_device == 'JACK':
-                row.scale_x = 2
-                row.operator("screen.animation_play", text="", icon='PLAY')
-                row.scale_x = 1
-            else:
-                row.operator("screen.animation_play", text="", icon='PLAY_REVERSE').reverse = True
-                row.operator("screen.animation_play", text="", icon='PLAY')
-        else:
-            row.scale_x = 2
-            row.operator("screen.animation_play", text="", icon='PAUSE')
-            row.scale_x = 1
-        row.operator("screen.keyframe_jump", text="", icon='NEXT_KEYFRAME').next = True
-        row.operator("screen.frame_jump", text="", icon='FF').end = True
-
-        layout.separator_spacer()
-
-        row = layout.row()
-        if scene.show_subframe:
-            row.scale_x = 1.15
-            row.prop(scene, "frame_float", text="")
-        else:
-            row.scale_x = 0.95
-            row.prop(scene, "frame_current", text="")
-
-        row = layout.row(align=True)
-        row.prop(scene, "use_preview_range", text="", toggle=True)
-        sub = row.row(align=True)
-        sub.scale_x = 0.8
-        if not scene.use_preview_range:
-            sub.prop(scene, "frame_start", text="Start")
-            sub.prop(scene, "frame_end", text="End")
-        else:
-            sub.prop(scene, "frame_preview_start", text="Start")
-            sub.prop(scene, "frame_preview_end", text="End")
-
-    if (context.space_data.type == 'DOPESHEET_EDITOR'):
-        row = layout.row(align=True)
-        row.operator("scene.set_start_frame", text="Set Start", icon='TRIA_RIGHT')
-        row.operator("scene.set_end_frame", text="Set End", icon='TRIA_LEFT')
+    # Draw Set Start/Set End wherever this is appended (Timeline header, Dope Sheet footer)
+    row = layout.row(align=True)
+    row.operator("scene.set_start_frame", text="Set Start", icon='TRIA_RIGHT')
+    row.operator("scene.set_end_frame", text="Set End", icon='TRIA_LEFT')
 
 # Define operators for setting start and end frames
 class SetStartFrameOperator(bpy.types.Operator):
@@ -157,9 +92,17 @@ def register():
     bpy.utils.register_class(SetStartFrameOperator)  # Register the new operator
     bpy.utils.register_class(SetEndFrameOperator)    # Register the new operator
 
-    # Extend existing headers
-    bpy.types.DOPESHEET_HT_header.append(draw_navigation_controls)
-    bpy.types.GRAPH_HT_header.append(draw_navigation_controls)
+    # Add to Timeline header and footers for relevant editors (conditional on Blender 5.0+ footer classes)
+    if hasattr(bpy.types, "TIME_HT_header"):
+        bpy.types.TIME_HT_header.append(draw_navigation_controls)
+    if hasattr(bpy.types, "DOPESHEET_HT_footer"):
+        bpy.types.DOPESHEET_HT_footer.append(draw_navigation_controls)
+    if hasattr(bpy.types, "GRAPH_HT_footer"):
+        bpy.types.GRAPH_HT_footer.append(draw_navigation_controls)
+    if hasattr(bpy.types, "NLA_HT_footer"):
+        bpy.types.NLA_HT_footer.append(draw_navigation_controls)
+    if hasattr(bpy.types, "SEQUENCER_HT_footer"):
+        bpy.types.SEQUENCER_HT_footer.append(draw_navigation_controls)
 
 def unregister():
     bpy.utils.unregister_class(ANIM_MT_keyframe_options)
@@ -168,8 +111,16 @@ def unregister():
     bpy.utils.unregister_class(SetStartFrameOperator)  # Unregister the new operator
     bpy.utils.unregister_class(SetEndFrameOperator)    # Unregister the new operator
 
-    # Remove our additions from the headers
-    bpy.types.DOPESHEET_HT_header.remove(draw_navigation_controls)
-    bpy.types.GRAPH_HT_header.remove(draw_navigation_controls)
+    # Remove our additions from the headers/footers
+    if hasattr(bpy.types, "TIME_HT_header"):
+        bpy.types.TIME_HT_header.remove(draw_navigation_controls)
+    if hasattr(bpy.types, "DOPESHEET_HT_footer"):
+        bpy.types.DOPESHEET_HT_footer.remove(draw_navigation_controls)
+    if hasattr(bpy.types, "GRAPH_HT_footer"):
+        bpy.types.GRAPH_HT_footer.remove(draw_navigation_controls)
+    if hasattr(bpy.types, "NLA_HT_footer"):
+        bpy.types.NLA_HT_footer.remove(draw_navigation_controls)
+    if hasattr(bpy.types, "SEQUENCER_HT_footer"):
+        bpy.types.SEQUENCER_HT_footer.remove(draw_navigation_controls)
 
 register()

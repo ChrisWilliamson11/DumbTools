@@ -30,11 +30,11 @@ import difflib
 from collections import defaultdict
 
 # ------------- Configuration -------------
-ARMATURE_NAME = None  # e.g., "Faceboard"; if None, uses active or any selected armature
+ARMATURE_NAME = "Faceboard"  # e.g., "Faceboard"; if None, uses active or any selected armature
 CONTROL_ROOTS = []  # e.g., ["CTRL_faceGUI.001"]; if empty, use selected objects as roots
 
 # Where to write the mapping JSON (relative to the .blend by default)
-OUTPUT_PATH = bpy.path.abspath(r"D:\faceboard_mapping_auto.json")
+OUTPUT_PATH = bpy.path.abspath(r"G:\faceboard_mapping_auto.json")
 
 # Only CTRL_* objects will be mapped by default. You can extend this if needed.
 CONTROL_NAME_PREFIX = "CTRL_"

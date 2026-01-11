@@ -40,7 +40,7 @@ ARMATURE_NAME: Optional[str] = (
     "Faceboard"  # e.g. "Faceboard"; if None, uses active or any selected armature
 )
 MAPPING_PATH: str = bpy.path.abspath(
-    r"D:\faceboard_mapping_auto.json"
+    r"G:\faceboard_mapping_auto.json"
 )  # path to your mapping JSON
 ONLY_SELECTED: bool = (
     True  # True: process only selected meshes. False: process all meshes in the scene.

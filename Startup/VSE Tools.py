@@ -1,4 +1,7 @@
 import bpy
+import os
+import subprocess
+import struct
 
 # Blender 5+ VSE helpers and operators
 # - Uses SequenceEditor.strips instead of deprecated .sequences
@@ -207,6 +210,166 @@ class VSEMoveSelectedToEnd(bpy.types.Operator):
         return {"FINISHED"}
 
 
+
+
+def read_exr_metadata(filepath):
+    """
+    Minimal EXR header parser to extract metadata.
+    Returns a dict of key/value pairs found in the header.
+    """
+    if not os.path.exists(filepath):
+        return {}
+
+    metadata = {}
+    try:
+        with open(filepath, "rb") as f:
+            # Check Magic: 0x76, 0x2f, 0x31, 0x01
+            magic = f.read(4)
+            if magic != b"\x76\x2f\x31\x01":
+                return {}
+
+            f.read(4)  # Version and flags, skip
+
+            # Parse attributes
+            while True:
+                # Read Name
+                name_bytes = bytearray()
+                while True:
+                    b = f.read(1)
+                    if not b or b == b"\x00":
+                        break
+                    name_bytes.extend(b)
+
+                if not name_bytes:
+                    break  # End of header
+
+                attr_name = name_bytes.decode("utf-8", errors="ignore")
+
+                # Read Type
+                type_bytes = bytearray()
+                while True:
+                    b = f.read(1)
+                    if not b or b == b"\x00":
+                        break
+                    type_bytes.extend(b)
+                attr_type = type_bytes.decode("utf-8", errors="ignore")
+
+                # Read Size
+                size_data = f.read(4)
+                if len(size_data) < 4:
+                    break
+                attr_size = struct.unpack("<I", size_data)[0]
+
+                # Read Value
+                attr_value_raw = f.read(attr_size)
+
+                # Store value if it's likely a string, or just store raw bytes if wanted.
+                # For our purpose (finding blend file path), strictly looking for string attributes is safest,
+                # but sometimes "string" type isn't explicitly used if it's a known attribute?
+                # Actually, OpenEXR attributes generally use "string" type for text.
+                if attr_type == "string":
+                    try:
+                        # OpenEXR strings might be null terminated or just raw bytes.
+                        # Usually raw bytes of length 'attr_size'.
+                        val = attr_value_raw.decode("utf-8", errors="ignore")
+                        metadata[attr_name] = val
+                    except:
+                        pass
+                else:
+                    # Keep raw bytes just in case we need to debug other types,
+                    # but for now we only care about strings.
+                    pass
+
+    except Exception as e:
+        print(f"VSE Tools: Error parsing EXR header: {e}")
+
+    return metadata
+
+
+class VSEOpenSourceBlend(bpy.types.Operator):
+    """Open the source .blend file from strip metadata"""
+
+    bl_idname = "sequencer.open_source_blend"
+    bl_label = "Open Source Blend"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        strip = context.scene.sequence_editor.active_strip
+        if not strip:
+            self.report({"WARNING"}, "No active strip")
+            return {"CANCELLED"}
+
+        filepath = None
+        if strip.type == "IMAGE":
+            # Ensure directory is absolute
+            directory = bpy.path.abspath(strip.directory)
+            # Find first existing file in sequence (handle missing frames/phantom handles)
+            if strip.elements:
+                for elem in strip.elements:
+                    candidate = os.path.join(directory, elem.filename)
+                    if os.path.exists(candidate):
+                        filepath = candidate
+                        break
+                # Fallback to first element if none exist, for error reporting
+                if not filepath:
+                    filepath = os.path.join(directory, strip.elements[0].filename)
+
+        elif strip.type == "MOVIE":
+            filepath = bpy.path.abspath(strip.filepath)
+
+        if not filepath or not os.path.exists(filepath):
+            self.report({"WARNING"}, f"Could not find file: {filepath}")
+            return {"CANCELLED"}
+        
+        # Only try parsing if it looks like an EXR
+        if not filepath.lower().endswith(".exr"):
+             self.report({"WARNING"}, "Metadata parsing currently only supports EXR files.")
+             return {"CANCELLED"}
+
+        # Read metadata directly from file
+        metadata = read_exr_metadata(filepath)
+        
+        # Look for metadata
+        blend_path = None
+        keys_to_check = ["File", "Blender", "blender", "filename"]
+        for key in keys_to_check:
+            if key in metadata:
+                blend_path = metadata[key]
+                break
+        
+        if not blend_path:
+            # Fallback: Check if any value looks like a blend file path
+            for val in metadata.values():
+                if isinstance(val, str) and val.endswith(".blend"):
+                    blend_path = val
+                    break
+
+        if not blend_path:
+            self.report({"WARNING"}, f"No .blend file usage found in metadata (checked {keys_to_check})")
+            return {"CANCELLED"}
+
+        # Resolve path
+        final_path = bpy.path.abspath(blend_path)
+        if not os.path.exists(final_path):
+            # Try resolving relative to the image file
+            if blend_path.startswith("//"):
+                alt_path = os.path.normpath(
+                    os.path.join(os.path.dirname(filepath), blend_path[2:])
+                )
+                if os.path.exists(alt_path):
+                    final_path = alt_path
+
+        if not os.path.exists(final_path):
+            self.report({"ERROR"}, f"Blend file not found: {final_path}")
+            return {"CANCELLED"}
+
+        # Open Blender
+        self.report({"INFO"}, f"Opening {os.path.basename(final_path)}")
+        subprocess.Popen([bpy.app.binary_path, final_path])
+
+        return {"FINISHED"}
+
+
 # ---------- UI ----------
 
 
@@ -234,6 +397,8 @@ class VSEDumbToolsMenu(bpy.types.Menu):
             "sequencer.move_selected_to_start", text="Move Selected to Start"
         )
         layout.operator("sequencer.move_selected_to_end", text="Move Selected to End")
+        layout.separator()
+        layout.operator("sequencer.open_source_blend", text="Open Source Blend")
 
 
 def sequencer_menu_func(self, context):
@@ -250,6 +415,7 @@ _classes = (
     VSESetDurationToSelected,
     VSEMoveSelectedToStart,
     VSEMoveSelectedToEnd,
+    VSEOpenSourceBlend,
     VSEDumbToolsMenu,
 )
 

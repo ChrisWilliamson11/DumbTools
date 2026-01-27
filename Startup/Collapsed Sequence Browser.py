@@ -75,8 +75,8 @@ def scan_directory(wm, directory):
         files = os.listdir(directory)
         sequences = {}
         
-        # Pattern: Name + (./_/-) + Digits + .Ext
-        pattern = re.compile(r'^(.*?)(\.|_|-)(\d+)\.(\w+)$')
+        # Pattern: Name + [Optional Sep] + Digits + .Ext
+        pattern = re.compile(r'^(.*?)([\.|_|-]?)(\d+)\.(\w+)$')
         
         for f in files:
             match = pattern.match(f)
@@ -326,25 +326,109 @@ class FILEBROWSER_OT_load_sequence(bpy.types.Operator):
                 print("DEBUG: Manual Image Open Dispatch")
                 print(f"DEBUG: Directory: {directory}")
                 
-                # Context Inspection
+                # Context Inspection w/ Priority (Global Window Search)
                 found_node = None
-                try:
-                    obj = context.active_object or bpy.context.active_object
-                    if obj and obj.active_material and obj.active_material.node_tree:
-                        found_node = obj.active_material.node_tree.nodes.active
-                except:
-                    pass
+                target_tree = None
+                target_tree_type = None
+
+                print("DEBUG: Starting Global Context Search...")
                 
-                # If not found, search visible Node Editors
-                if not found_node:
-                    for screen in bpy.data.screens:
+                try:
+                    # Iterate ALL Windows (in case multi-monitor or separate window)
+                    for win in context.window_manager.windows:
+                        screen = win.screen
                         for area in screen.areas:
+                            # print(f"DEBUG: Checking Area: {area.type}") 
                             if area.type == 'NODE_EDITOR':
                                 for space in area.spaces:
+                                    # DEBUG API CHECK
+                                    # print(f"DEBUG: Space Type: {type(space)}")
+                                    
                                     if hasattr(space, "node_tree") and space.node_tree:
-                                        if space.node_tree.nodes.active:
-                                            found_node = space.node_tree.nodes.active
-                                            break
+                                        tree = space.node_tree
+                                        # print(f"DEBUG: Found Tree: {tree.name} ({tree.bl_idname})")
+                                        
+                                        # Check Active Node
+                                        candidates = []
+                                        if tree.nodes.active:
+                                            candidates.append(tree.nodes.active)
+                                        
+                                        # Fallback: Check Selected Nodes
+                                        selected = [n for n in tree.nodes if n.select and n not in candidates]
+                                        candidates.extend(selected)
+                                        
+                                        for node in candidates:
+                                            # Strong Match: Node accepts an image
+                                            if hasattr(node, "image"):
+                                                found_node = node
+                                                target_tree = tree
+                                                target_tree_type = space.tree_type
+                                                print(f"DEBUG: Found Strong Match in {area.type}: {node.name}")
+                                                break # Stop checking candidates
+                                        
+                                        # Weak Match logic (store tree but don't stop searching for strong)
+                                        if not target_tree:
+                                            target_tree = tree
+                                            target_tree_type = space.tree_type
+                                        
+                                        if found_node: break
+                                    else:
+                                         # If no node_tree, print props to see if API changed
+                                         if space.type == 'NODE_EDITOR':
+                                             print(f"DEBUG: No node_tree found in Node Editor. Space props: {dir(space)}")
+
+                                if found_node: break
+                        if found_node: break
+                except Exception as e:
+                    print(f"DEBUG: Context Search Error: {e}")
+
+                # Priority 2: Global Context (If no visible active node found AND no visible tree found)
+                # If we found a visible tree (target_tree) but no active node, we should SKIP this 
+                # and go straight to Auto-In creation in that visible tree.
+                if not found_node and not target_tree:
+                    try:
+                        obj = context.active_object or bpy.context.active_object
+                        # A. Object Material (Shader)
+                        if obj and obj.active_material and obj.active_material.node_tree:
+                            act_node = obj.active_material.node_tree.nodes.active
+                            if act_node and hasattr(act_node, "image"):
+                                found_node = act_node
+                        
+                        # B. Scene Node Tree (Compositor - Hidden)
+                        if not found_node and context.scene.node_tree:
+                            if context.scene.node_tree.nodes.active:
+                                 act_node = context.scene.node_tree.nodes.active
+                                 if act_node and hasattr(act_node, "image"):
+                                     found_node = act_node
+                    except:
+                        pass
+
+                # --- Auto-Create Node if Missing (using visible tree found in step 1) ---
+                if not found_node and target_tree:
+                    print(f"DEBUG: No active node found. Creating new node in {target_tree_type}...")
+                    try:
+                        new_node = None
+                        if target_tree_type == 'CompositorNodeTree':
+                            new_node = target_tree.nodes.new(type='CompositorNodeImage')
+                        elif target_tree_type == 'ShaderNodeTree':
+                            new_node = target_tree.nodes.new(type='ShaderNodeTexImage')
+                        elif target_tree_type == 'TextureNodeTree':
+                            new_node = target_tree.nodes.new(type='TextureNodeImage')
+                        
+                        if new_node:
+                            new_node.location = (0, 0)
+                            # Deselect all
+                            for n in target_tree.nodes: n.select = False
+                            # Select New
+                            new_node.select = True
+                            target_tree.nodes.active = new_node
+                            found_node = new_node
+                            print(f"DEBUG: Created New Node: {new_node.name}")
+                    except Exception as e:
+                        print(f"DEBUG: Node Creation Failed: {e}")
+
+                if found_node:
+                     print(f"DEBUG: Found/Created Node: {found_node.name} Type: {found_node.type}")
 
                 # We cancel the browser first
                 bpy.ops.file.cancel()
@@ -364,19 +448,26 @@ class FILEBROWSER_OT_load_sequence(bpy.types.Operator):
                         
                         # 2. Configure as Sequence
                         img.source = 'SEQUENCE'
-                        img.frame_duration = len(files)
-                        print(f"DEBUG: Set Frame Duration: {len(files)}")
+                        # img.frame_duration is Read-Only! We must set it on the USER (Node or Space)
+                        # img.frame_duration = len(files) 
                         
-                        # 3. Assign to Node
-                        if found_node and found_node.type == 'TEX_IMAGE':
+                        # 3. Assign to Node (Generic)
+                        if found_node and hasattr(found_node, "image"):
                             print(f"DEBUG: Assigning to Node: {found_node.name}")
                             found_node.image = img
+                            if hasattr(found_node, "image_user"):
+                                found_node.image_user.frame_duration = len(files)
+                                found_node.image_user.use_auto_refresh = True
+                                print(f"DEBUG: Node Frame Duration Set: {len(files)}")
                         
                         # 4. Assign to Image Editor if open?
                         for area in context.screen.areas:
                              if area.type == 'IMAGE_EDITOR':
                                  for space in area.spaces:
                                      space.image = img
+                                     if hasattr(space, "image_user"):
+                                         space.image_user.frame_duration = len(files)
+                                         space.image_user.use_auto_refresh = True
                                  
                     except Exception as e:
                          print(f"DEBUG: API Load Failed: {e}")
@@ -455,7 +546,7 @@ classes = (
 )
 
 def register():
-    print("\n\n!!! COLLAPSED SEQUENCE BROWSER V2 LOADED !!!\n\n")
+    #print("\n\n!!! COLLAPSED SEQUENCE BROWSER V2 LOADED !!!\n\n")
     for cls in classes:
         bpy.utils.register_class(cls)
         

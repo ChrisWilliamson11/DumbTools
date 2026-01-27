@@ -134,7 +134,7 @@ def get_operator_idname_from_path(path):
     if op_class:
         return op_class.bl_idname
     else:
-        # print(f"No operator found for script: {path}")
+        print(f"No operator found for script: {path}")
         return ""
     
 def create_script_operator(filepath, tooltip):
@@ -168,7 +168,7 @@ def create_submenus(base_path=None, parent_menu_idname=None):
         base_path = CUSTOM_SCRIPTS_FOLDER
 
     if not os.path.isdir(base_path):
-        # print(f"Invalid base path: {base_path}")
+        print(f"Invalid base path: {base_path}")
         return
 
     exclude_folders = {"Startup", "PostLoad", ".git", "Docs", ".vscode", "assets", "lib"}
@@ -219,7 +219,7 @@ def create_submenus(base_path=None, parent_menu_idname=None):
 
 def execute_script(filepath):
     if not filepath or not os.path.exists(filepath):
-        # print(f"Invalid script path: {filepath}")
+        print(f"Invalid script path: {filepath}")
         return
         
     try:
@@ -227,7 +227,7 @@ def execute_script(filepath):
             exec(compile(file.read(), filepath, 'exec'), {})
         # print(f"Executed '{filepath}' successfully.")
     except Exception as e:
-        # print(f"Failed to execute '{filepath}': {e}")
+        print(f"Failed to execute '{filepath}': {e}")
         pass
 
 class DumbToolsMenu(bpy.types.Menu):
@@ -322,7 +322,7 @@ def register():
         # print(f"Custom scripts folder found: {CUSTOM_SCRIPTS_FOLDER}")
         register_properties(CUSTOM_SCRIPTS_FOLDER, CUSTOM_STARTUP_FOLDER, CUSTOM_POSTLOAD_FOLDER)
     else:
-        # print(f"Custom scripts folder does not exist: {CUSTOM_SCRIPTS_FOLDER}. Please check its path in DumbToolsPreferences.")
+        print(f"Custom scripts folder does not exist: {CUSTOM_SCRIPTS_FOLDER}. Please check its path in DumbToolsPreferences.")
         pass
 
     bpy.utils.register_class(BaseScriptOperator)

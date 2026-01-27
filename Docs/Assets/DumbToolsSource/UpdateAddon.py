@@ -5,17 +5,18 @@ from shutil import copy2
 # Define the folder path
 source_folder = 'DumbTools'
 zip_name = 'DumbTools.zip'
-destination_path = os.path.join('..', '..', '..')
-
+destination_path = r'G:\DumbTools_Public\DumbTools'
+print('------------------------------   ')
+print(destination_path)
 # Full path of the zip to be created
-zip_file_path = os.path.join(zip_name)
-
+zip_file_path = os.path.join(destination_path, zip_name)
+print(zip_file_path)
 # Full destination path including the zip file name
 destination_file_path = os.path.join(destination_path, zip_name)
 
 # Ensure the source folder exists
-if not os.path.exists(source_folder):
-    raise FileNotFoundError(f"The folder {source_folder} does not exist.")
+if not os.path.exists(destination_path):
+    raise FileNotFoundError(f"The folder {destination_path} does not exist.")
 
 # Create a ZIP archive of the DumbTools folder
 with zipfile.ZipFile(zip_file_path, 'w', zipfile.ZIP_DEFLATED) as zipf:

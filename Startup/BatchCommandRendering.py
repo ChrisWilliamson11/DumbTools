@@ -1380,8 +1380,8 @@ def update_realign_chunks(self, context):
         # self is the job
         realign_job_chunks_logic(self, settings, batch_path)
         
-    # Ensure the new chunk size is saved
-    auto_save_batch(self, context)
+    # Manual Save Only: Do NOT auto-save here.
+    # auto_save_batch(self, context)
 
 class BatchRenderChunk(bpy.types.PropertyGroup):
     name: StringProperty(name="Range")
@@ -1396,16 +1396,16 @@ class BatchRenderJob(bpy.types.PropertyGroup):
     # Identity
     uuid: StringProperty(name="UUID", default="")
 
-    filepath: StringProperty(name="File Path", subtype='FILE_PATH', default="", update=auto_save_batch)
-    scene_name: StringProperty(name="Scene Name", default="", update=auto_save_batch)
+    filepath: StringProperty(name="File Path", subtype='FILE_PATH', default="")
+    scene_name: StringProperty(name="Scene Name", default="")
     is_saved: BoolProperty(name="Saved", default=False) # Internal, no update
-    enabled: BoolProperty(name="Enabled", default=True, update=auto_save_batch)
+    enabled: BoolProperty(name="Enabled", default=True)
     selected: BoolProperty(name="Selected", default=False)
     
     # Cached Scene Info
-    sc_frame_start: IntProperty(name="Start", default=0, update=auto_save_batch)
-    sc_frame_end: IntProperty(name="End", default=0, update=auto_save_batch)
-    sc_filepath: StringProperty(name="Scene Output Path", default="", update=auto_save_batch)
+    sc_frame_start: IntProperty(name="Start", default=0)
+    sc_frame_end: IntProperty(name="End", default=0)
+    sc_filepath: StringProperty(name="Scene Output Path", default="")
     
     # Progress Info
     frames_on_disk: StringProperty(name="Frames on Disk", default="")
@@ -1414,25 +1414,25 @@ class BatchRenderJob(bpy.types.PropertyGroup):
     cached_chunk_progress: FloatProperty(name="Chunk Progress", default=0.0)
     
     # Overrides
-    use_overrides: BoolProperty(name="Override Global Settings", default=False, update=auto_save_batch)
+    use_overrides: BoolProperty(name="Override Global Settings", default=False)
     
-    use_custom_frames: BoolProperty(name="Override Frame Range", default=False, update=auto_save_batch)
-    frame_start: IntProperty(name="Start", default=1, update=auto_save_batch)
-    frame_end: IntProperty(name="End", default=250, update=auto_save_batch)
+    use_custom_frames: BoolProperty(name="Override Frame Range", default=False)
+    frame_start: IntProperty(name="Start", default=1)
+    frame_end: IntProperty(name="End", default=250)
     
-    use_custom_samples: BoolProperty(name="Override Samples", default=False, update=auto_save_batch)
-    samples: IntProperty(name="Samples", default=128, min=1, update=auto_save_batch)
+    use_custom_samples: BoolProperty(name="Override Samples", default=False)
+    samples: IntProperty(name="Samples", default=128, min=1)
     
-    use_custom_output: BoolProperty(name="Override Output", default=False, update=auto_save_batch)
-    output_path: StringProperty(name="Output Path", subtype='DIR_PATH', default="//", update=auto_save_batch)
+    use_custom_output: BoolProperty(name="Override Output", default=False)
+    output_path: StringProperty(name="Output Path", subtype='DIR_PATH', default="//")
     
-    use_custom_persistent_data: BoolProperty(name="Override Persistent Data", default=False, update=auto_save_batch)
-    persistent_data: BoolProperty(name="Persistent Data", default=False, update=auto_save_batch)
+    use_custom_persistent_data: BoolProperty(name="Override Persistent Data", default=False)
+    persistent_data: BoolProperty(name="Persistent Data", default=False)
 
     # Simplify
-    use_custom_simplify: BoolProperty(name="Override Simplify", default=False, update=auto_save_batch)
-    simplify_use: BoolProperty(name="Simplify", default=True, update=auto_save_batch)
-    simplify_subdivision_render: IntProperty(name="Max Subdivision", default=6, min=0, update=auto_save_batch)
+    use_custom_simplify: BoolProperty(name="Override Simplify", default=False)
+    simplify_use: BoolProperty(name="Simplify", default=True)
+    simplify_subdivision_render: IntProperty(name="Max Subdivision", default=6, min=0)
     simplify_image_limit: EnumProperty(
         name="Texture Limit",
         items=[
@@ -1445,24 +1445,24 @@ class BatchRenderJob(bpy.types.PropertyGroup):
             ('4096', "4096", ""),
             ('8192', "8192", ""),
         ],
-        default='0', update=auto_save_batch
+        default='0'
     )
     
     # Volumetrics
-    use_custom_volumetrics: BoolProperty(name="Override Volumetrics", default=False, update=auto_save_batch)
-    volume_biased: BoolProperty(name="Biased", default=True, update=auto_save_batch)
-    volume_step_rate: FloatProperty(name="Max Step Size", default=1.0, precision=2, update=auto_save_batch)
+    use_custom_volumetrics: BoolProperty(name="Override Volumetrics", default=False)
+    volume_biased: BoolProperty(name="Biased", default=True)
+    volume_step_rate: FloatProperty(name="Max Step Size", default=1.0, precision=2)
 
     # Chunking
-    use_custom_chunking: BoolProperty(name="Override Chunking", default=False, update=auto_save_batch)
-    use_chunking: BoolProperty(name="Use Chunking", default=False, update=auto_save_batch)
+    use_custom_chunking: BoolProperty(name="Override Chunking", default=False)
+    use_chunking: BoolProperty(name="Use Chunking", default=False)
     chunk_size: IntProperty(name="Chunk Size", default=10, min=1, update=update_realign_chunks)
     
     chunks: CollectionProperty(type=BatchRenderChunk)
     
     # Block List
-    use_custom_block_list: BoolProperty(name="Override Block List", default=False, update=auto_save_batch)
-    blocked_computers: StringProperty(name="Blocked Computers", default="", description="Comma-separated list of PC names to block", update=auto_save_batch)
+    use_custom_block_list: BoolProperty(name="Override Block List", default=False)
+    blocked_computers: StringProperty(name="Blocked Computers", default="", description="Comma-separated list of PC names to block")
 
 
 
@@ -1488,15 +1488,8 @@ def batch_render_auto_refresh_timer():
         # Let's decouple Sync from Check Progress. 
         # Check Progress is expensive (disk IO). Sync Check (getmtime) is cheap.
         
-        # Refinement: Simply check mtime here.
-        if batch_path and os.path.exists(batch_path):
-            curr_mtime = os.path.getmtime(batch_path)
-            # Tolerance for float precision
-            if abs(curr_mtime - settings.last_known_mtime) > 0.01:
-                # File changed! Reload.
-                print("BatchRender: External change detected. Reloading...")
-                load_queue_from_file(context)
-                # load_queue updates last_known_mtime, stopping the loop
+        # 1. Sync Check REMOVED (Manual Save Only)
+        # We no longer check mtime or reload automatically.
         
         # 2. Progress Check (Only if enabled)
         if settings.use_auto_refresh:
@@ -1531,64 +1524,64 @@ def update_auto_refresh_timer(self, context):
     auto_save_batch(self, context)
 
 class BatchRenderSettings(bpy.types.PropertyGroup):
-    use_background: BoolProperty(name="Background (-b)", default=True, update=auto_save_batch)
+    use_background: BoolProperty(name="Background (-b)", default=True)
     
-    use_override_frames: BoolProperty(name="Override Frame Range", default=False, update=auto_save_batch)
-    frame_start: IntProperty(name="Start (-s)", default=1, update=auto_save_batch)
-    frame_end: IntProperty(name="End (-e)", default=250, update=auto_save_batch)
+    use_override_frames: BoolProperty(name="Override Frame Range", default=False)
+    frame_start: IntProperty(name="Start (-s)", default=1)
+    frame_end: IntProperty(name="End (-e)", default=250)
     
-    use_specific_frame: BoolProperty(name="Render Specific Frame (-f)", default=False, update=auto_save_batch)
-    specific_frame: IntProperty(name="Frame", default=1, update=auto_save_batch)
+    use_specific_frame: BoolProperty(name="Render Specific Frame (-f)", default=False)
+    specific_frame: IntProperty(name="Frame", default=1)
     
-    use_frame_jump: BoolProperty(name="Frame Jump (-j)", default=False, update=auto_save_batch)
-    frame_jump: IntProperty(name="Jump Step", default=1, update=auto_save_batch)
+    use_frame_jump: BoolProperty(name="Frame Jump (-j)", default=False)
+    frame_jump: IntProperty(name="Jump Step", default=1)
     
-    use_override_output: BoolProperty(name="Override Output (-o)", default=False, update=auto_save_batch)
-    output_path: StringProperty(name="Output Path", subtype='DIR_PATH', default="//render_out", update=auto_save_batch)
-    use_extension: BoolProperty(name="Use Extension (-x)", default=True, update=auto_save_batch)
-    use_pause_at_end: BoolProperty(name="Pause at End", default=False, update=auto_save_batch)
+    use_override_output: BoolProperty(name="Override Output (-o)", default=False)
+    output_path: StringProperty(name="Output Path", subtype='DIR_PATH', default="//render_out")
+    use_extension: BoolProperty(name="Use Extension (-x)", default=True)
+    use_pause_at_end: BoolProperty(name="Pause at End", default=False)
     
-    use_override_engine: BoolProperty(name="Override Engine (-E)", default=False, update=auto_save_batch)
+    use_override_engine: BoolProperty(name="Override Engine (-E)", default=False)
     engine_type: EnumProperty(
         items=[('CYCLES', "Cycles", ""), ('BLENDER_EEVEE', "Eevee", ""), ('BLENDER_WORKBENCH', "Workbench", "")],
-        default='CYCLES', update=auto_save_batch
+        default='CYCLES'
     )
     
-    use_threads: BoolProperty(name="Set Threads (-t)", default=False, update=auto_save_batch)
-    threads: IntProperty(name="Threads", default=0, min=0, max=1024, update=auto_save_batch)
+    use_threads: BoolProperty(name="Set Threads (-t)", default=False)
+    threads: IntProperty(name="Threads", default=0, min=0, max=1024)
     
-    use_cycles_device: BoolProperty(name="Set Cycles Device", default=False, update=auto_save_batch)
+    use_cycles_device: BoolProperty(name="Set Cycles Device", default=False)
     cycles_device: EnumProperty(
         items=[('CPU', "CPU", ""), ('CUDA', "CUDA", ""), ('OPTIX', "OPTIX", ""), ('HIP', "HIP", ""), ('ONEAPI', "ONEAPI", ""), ('METAL', "METAL", "")],
-        default='CUDA', update=auto_save_batch
+        default='CUDA'
     )
     
-    use_override_format: BoolProperty(name="Override Format (-F)", default=False, update=auto_save_batch)
+    use_override_format: BoolProperty(name="Override Format (-F)", default=False)
     render_format: EnumProperty(
         items=[('PNG', "PNG", ""), ('JPEG', "JPEG", ""), ('OPEN_EXR', "OpenEXR", ""), ('TIFF', "TIFF", ""), ('TGA', "Targa", "")],
-        default='PNG', update=auto_save_batch
+        default='PNG'
     )
 
-    use_override_samples: BoolProperty(name="Override Samples", default=False, update=auto_save_batch)
-    samples: IntProperty(name="Samples", default=128, min=1, update=auto_save_batch)
+    use_override_samples: BoolProperty(name="Override Samples", default=False)
+    samples: IntProperty(name="Samples", default=128, min=1)
     
-    use_override_denoising: BoolProperty(name="Override Denoising", default=False, update=auto_save_batch)
-    denoising_state: BoolProperty(name="Denoising", default=True, update=auto_save_batch)
-    denoiser_type: EnumProperty(items=[('OPTIX', "OptiX", ""), ('OPENIMAGEDENOISE', "OpenImageDenoise", "")], default='OPTIX', update=auto_save_batch)
+    use_override_denoising: BoolProperty(name="Override Denoising", default=False)
+    denoising_state: BoolProperty(name="Denoising", default=True)
+    denoiser_type: EnumProperty(items=[('OPTIX', "OptiX", ""), ('OPENIMAGEDENOISE', "OpenImageDenoise", "")], default='OPTIX')
     
-    use_override_color_mode: BoolProperty(name="Override Color Mode", default=False, update=auto_save_batch)
-    color_mode: EnumProperty(items=[('BW', "BW", ""), ('RGB', "RGB", ""), ('RGBA', "RGBA", "")], default='RGBA', update=auto_save_batch)
+    use_override_color_mode: BoolProperty(name="Override Color Mode", default=False)
+    color_mode: EnumProperty(items=[('BW', "BW", ""), ('RGB', "RGB", ""), ('RGBA', "RGBA", "")], default='RGBA')
     
-    use_override_overwrite: BoolProperty(name="Override Overwrite", default=False, update=auto_save_batch)
-    use_overwrite: BoolProperty(name="Overwrite Existing", default=True, update=auto_save_batch)
+    use_override_overwrite: BoolProperty(name="Override Overwrite", default=False)
+    use_overwrite: BoolProperty(name="Overwrite Existing", default=True)
     
-    use_override_persistent_data: BoolProperty(name="Override Persistent Data", default=False, update=auto_save_batch)
-    persistent_data: BoolProperty(name="Persistent Data", default=False, update=auto_save_batch)
+    use_override_persistent_data: BoolProperty(name="Override Persistent Data", default=False)
+    persistent_data: BoolProperty(name="Persistent Data", default=False)
     
     # Simplify
-    use_override_simplify: BoolProperty(name="Override Simplify", default=False, update=auto_save_batch)
-    simplify_use: BoolProperty(name="Simplify", default=True, update=auto_save_batch)
-    simplify_subdivision_render: IntProperty(name="Max Subdivision", default=6, min=0, update=auto_save_batch)
+    use_override_simplify: BoolProperty(name="Override Simplify", default=False)
+    simplify_use: BoolProperty(name="Simplify", default=True)
+    simplify_subdivision_render: IntProperty(name="Max Subdivision", default=6, min=0)
     simplify_image_limit: EnumProperty(
         name="Texture Limit",
         items=[
@@ -1601,20 +1594,20 @@ class BatchRenderSettings(bpy.types.PropertyGroup):
             ('4096', "4096", ""),
             ('8192', "8192", ""),
         ],
-        default='0', update=auto_save_batch
+        default='0'
     )
     
     # Volumetrics
-    use_override_volumetrics: BoolProperty(name="Override Volumetrics", default=False, update=auto_save_batch)
-    volume_biased: BoolProperty(name="Biased", default=True, update=auto_save_batch)
-    volume_step_rate: FloatProperty(name="Max Step Size", default=1.0, precision=2, update=auto_save_batch)
+    use_override_volumetrics: BoolProperty(name="Override Volumetrics", default=False)
+    volume_biased: BoolProperty(name="Biased", default=True)
+    volume_step_rate: FloatProperty(name="Max Step Size", default=1.0, precision=2)
     
-    use_override_placeholders: BoolProperty(name="Override Placeholders", default=False, update=auto_save_batch)
-    use_placeholders: BoolProperty(name="Placeholders", default=False, update=auto_save_batch)
+    use_override_placeholders: BoolProperty(name="Override Placeholders", default=False)
+    use_placeholders: BoolProperty(name="Placeholders", default=False)
     
     # Chunking
-    use_override_chunking: BoolProperty(name="Override Chunking", default=False, update=auto_save_batch)
-    use_chunking: BoolProperty(name="Use Chunking", default=False, update=auto_save_batch)
+    use_override_chunking: BoolProperty(name="Override Chunking", default=False)
+    use_chunking: BoolProperty(name="Use Chunking", default=False)
     # Default chunk size 10
     chunk_size: IntProperty(name="Chunk Size", default=10, min=1, update=update_realign_chunks)
     
@@ -1631,16 +1624,14 @@ class BatchRenderSettings(bpy.types.PropertyGroup):
     use_queue_loop: BoolProperty(
         name="Loop Queue", 
         description="Automatically restart the batch queue when finished (Ctrl+C to stop)", 
-        default=False, 
-        update=auto_save_batch
+        default=False
     )
     
     chunk_timeout: IntProperty(
         name="Chunk Timeout (min)", 
         description="Max time (minutes) since last heartbeat before a chunk is considered crashed and reset. 0 = Disabled", 
         default=0, 
-        min=0, 
-        update=auto_save_batch
+        min=0
     )
     
     # Auto-Refresh & Sync

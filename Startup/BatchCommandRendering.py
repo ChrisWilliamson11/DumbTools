@@ -636,14 +636,14 @@ def write_batch_file(context):
             lines.append("mkdir \"progress\" 2>nul")
             lines.append("mkdir \"chunks\" 2>nul")
         if is_windows:
-            lines.append("REM --- Lock Check ---")
-            lines.append("set LOCK_FILE=\"%~dp0%COMPUTERNAME%.lock\"")
-            lines.append("if exist %LOCK_FILE% (")
-            lines.append("    echo Lock file found: %LOCK_FILE%")
-            lines.append("    echo Another instance is running. Exiting.")
-            lines.append("    exit /b 1")
-            lines.append(")")
-            lines.append("echo Locked > %LOCK_FILE%")
+            lines.append("REM --- Lock Check (Disabled) ---")
+            # lines.append("set LOCK_FILE=\"%~dp0%COMPUTERNAME%.lock\"")
+            # lines.append("if exist %LOCK_FILE% (")
+            # lines.append("    echo Lock file found: %LOCK_FILE%")
+            # lines.append("    echo Another instance is running. Exiting.")
+            # lines.append("    exit /b 1")
+            # lines.append(")")
+            # lines.append("echo Locked > %LOCK_FILE%")
             lines.append("REM ------------------")
             lines.append("")
             
@@ -1056,7 +1056,7 @@ def write_batch_file(context):
         if is_windows: 
             # Only delete lock if NOT looping (since we stay alive)
             if not settings.use_queue_loop:
-                lines.append("if exist %LOCK_FILE% del %LOCK_FILE%")
+                pass # lines.append("if exist %LOCK_FILE% del %LOCK_FILE%")
             
             if settings.use_pause_at_end:
                  lines.append("pause")

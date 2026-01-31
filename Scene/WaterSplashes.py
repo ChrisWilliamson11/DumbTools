@@ -36,7 +36,9 @@ def find_templates():
         
         print(f"  Checking {col.name}: Empty={has_empty}, Volume={has_volume}, Alembics={alembic_count}")
         
-        if has_empty and has_volume and alembic_count > 0:
+        # Valid if: Empty exists AND (Volume exists OR Alembic exists)
+        # User requested: "valid template also be just a single alembic"
+        if has_empty and (has_volume or alembic_count > 0):
             valid_templates.append(col)
         else:
             print(f"    -> REJECTED {col.name}")
@@ -101,11 +103,12 @@ def copy_and_align(template_col, target_obj, current_frame):
             elif obj.type in ('MESH', 'POINTCLOUD'):
                 src_alembics.append(obj)
         
-        if not src_empty or not src_vdb or not src_alembics:
+        if not src_empty or (not src_vdb and not src_alembics):
             print(f"Skipping invalid template {template_col.name} (Missing components)")
             return
 
-        print(f"Step 2: Found Empty={src_empty.name}, VDB={src_vdb.name}, Alembics={len(src_alembics)}")
+        vdb_name = src_vdb.name if src_vdb else "None"
+        print(f"Step 2: Found Empty={src_empty.name}, VDB={vdb_name}, Alembics={len(src_alembics)}")
 
         # 3. Duplicate Objects (Deep Copy where needed)
         
@@ -113,17 +116,20 @@ def copy_and_align(template_col, target_obj, current_frame):
         new_empty = src_empty.copy()
         
         # VDB
-        new_vdb = src_vdb.copy()
-        if src_vdb.data:
-            # Deep copy data for unique settings
-            new_vdb.data = src_vdb.data.copy()
-            
+        new_vdb = None
+        if src_vdb:
+            new_vdb = src_vdb.copy()
+            if src_vdb.data:
+                # Deep copy data for unique settings
+                new_vdb.data = src_vdb.data.copy()
+        
         gen_col.objects.link(new_empty)
-        gen_col.objects.link(new_vdb)
+        if new_vdb:
+            gen_col.objects.link(new_vdb)
 
-        # Restore Parenting for VDB
-        new_vdb.parent = new_empty
-        new_vdb.matrix_parent_inverse = src_vdb.matrix_parent_inverse.copy()
+            # Restore Parenting for VDB
+            new_vdb.parent = new_empty
+            new_vdb.matrix_parent_inverse = src_vdb.matrix_parent_inverse.copy()
         
         # Handle Alembics Loop
         for src_alembic in src_alembics:
@@ -222,7 +228,7 @@ def copy_and_align(template_col, target_obj, current_frame):
             print(f"Step 4: Aligned to Origin with -90 X Rot. New Matrix: {new_empty.matrix_world}")
         
         # 5. Set VDB Frame Start (To Current Frame)
-        if new_vdb.data:
+        if new_vdb and new_vdb.data:
             print(f"Setting VDB Frame Start to {current_frame} (was {new_vdb.data.frame_start})")
             try:
                 # User request: "set the start frame to the current frame"
@@ -240,22 +246,44 @@ def copy_and_align(template_col, target_obj, current_frame):
 
 def main():
     print("--- Starting WaterSplashes Script ---")
+    
+    # --- Configuration ---
+    use_frame_range = True
+    start_frame = 513
+    end_frame = 572
+    step = 2
+    # ---------------------
+
     target_obj = bpy.context.object
     if not target_obj:
         print("No active object selected.")
         return
-        
-    current_frame = bpy.context.scene.frame_current
     
     templates = find_templates()
     if not templates:
         print("No valid 'WaterSplashes' templates found.")
         return
-        
-    template = random.choice(templates)
-    print(f"Selected Template: {template.name}")
+
+    if use_frame_range:
+        print(f"Running in Range Mode: {start_frame} to {end_frame} (Step {step})")
+        # Ensure range handles end frame inclusive if desired, commonly `range` is exclusive at end
+        # We'll use start to end+1 to include end if step aligns
+        for f in range(start_frame, end_frame + 1, step):
+            bpy.context.scene.frame_set(f)
+            # Ensure depsgraph is updated for GeoNodes to evaluate at new frame
+            bpy.context.view_layer.update() 
+            
+            print(f"Processing Frame: {f}")
+            template = random.choice(templates)
+            copy_and_align(template, target_obj, f)
+            
+    else:
+        # Standard Single Frame Mode
+        current_frame = bpy.context.scene.frame_current
+        template = random.choice(templates)
+        print(f"Selected Template: {template.name}")
+        copy_and_align(template, target_obj, current_frame)
     
-    copy_and_align(template, target_obj, current_frame)
     print("--- Main Function Finished ---")
 
 main()

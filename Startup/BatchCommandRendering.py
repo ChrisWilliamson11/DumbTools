@@ -548,18 +548,26 @@ def get_job_output_prefix(job, settings, blend_path):
     return ""
 
 def get_frames_from_disk(directory, prefix=""):
-    """Returns a set of integer frame numbers found in the directory, optionally filtered by prefix."""
+    """Returns a set of integer frame numbers found in the directory, optionally filtered by strict prefix."""
     if not directory or not os.path.exists(directory):
         return set()
         
     found_frames = set()
     try:
         files = os.listdir(directory)
-        regex = re.compile(r'(\d+)\.[a-zA-Z0-9]+$')
         
+        # Determine Matching Strategy
+        if prefix:
+            # Strict: Must Start with Prefix + Digits + Ext
+            # e.g. "Scene_0001.png" matches "Scene_"
+            # "Scene_Comp_0001.png" does NOT match "Scene_" (Comp is not digits)
+            regex = re.compile(r'^' + re.escape(prefix) + r'(\d+)\.[a-zA-Z0-9]+$')
+        else:
+            # Loose: Ends with Digits + Ext
+            regex = re.compile(r'(\d+)\.[a-zA-Z0-9]+$')
+
         for f in files:
             if f.startswith("."): continue
-            # Filter by prefix if provided
             if prefix and not f.startswith(prefix): continue
             
             match = regex.search(f)
@@ -579,14 +587,17 @@ def scan_disk_frames(directory, prefix=""):
     return format_frame_ranges(found_frames), len(found_frames)
 
 def get_existing_frame_files(directory, prefix=""):
-    """Returns a list of absolute paths to frame files in the directory, optionally filtered by prefix."""
+    """Returns a list of absolute paths to frame files, optionally filtered by strict prefix."""
     if not directory or not os.path.exists(directory):
         return []
         
     found_files = []
     try:
         files = os.listdir(directory)
-        regex = re.compile(r'(\d+)\.[a-zA-Z0-9]+$')
+        if prefix:
+             regex = re.compile(r'^' + re.escape(prefix) + r'(\d+)\.[a-zA-Z0-9]+$')
+        else:
+             regex = re.compile(r'(\d+)\.[a-zA-Z0-9]+$')
         
         for f in files:
             if f.startswith("."): continue
@@ -720,6 +731,69 @@ def write_batch_file(context):
                     hf.write("bpy.app.handlers.frame_change_post.append(skip_check_handler)\n")
                     hf.write("bpy.app.handlers.frame_change_post.append(heartbeat_handler)\n")
                     hf.write("if bpy.context.scene: apply_overrides(bpy.context.scene)\n")
+                    hf.write("\n")
+                    hf.write("# -------------------------------------------------------------------\n")
+                    hf.write("# Smart Chunk Resume Logic\n")
+                    hf.write("# -------------------------------------------------------------------\n")
+                    hf.write("import sys\n")
+                    hf.write("def smart_render_wrapper():\n")
+                    hf.write("    try:\n")
+                    hf.write("        dash_index = sys.argv.index('--')\n")
+                    hf.write("    except ValueError:\n")
+                    hf.write("        return\n")
+                    hf.write("\n")
+                    hf.write("    args = sys.argv[dash_index+1:]\n")
+                    hf.write("    c_start, c_end, c_id = None, None, None\n")
+                    hf.write("\n")
+                    hf.write("    for i in range(len(args)):\n")
+                    hf.write("        if args[i] == '--chunk-start': c_start = int(args[i+1])\n")
+                    hf.write("        if args[i] == '--chunk-end': c_end = int(args[i+1])\n")
+                    hf.write("        if args[i] == '--chunk-id': c_id = args[i+1]\n")
+                    hf.write("\n")
+                    hf.write("    if c_start is None or c_end is None or c_id is None:\n")
+                    hf.write("        return\n")
+                    hf.write("\n")
+                    hf.write("    print(f'BatchRender: Smart Chunk Mode {c_id} ({c_start}-{c_end})')\n")
+                    hf.write("    prog_dir = os.environ.get('FLIP_BATCH_PROGRESS_DIR')\n")
+                    hf.write("    if not prog_dir: return\n")
+                    hf.write("\n")
+                    hf.write("    chunk_dir = os.path.join(os.path.dirname(prog_dir), 'chunks')\n")
+                    hf.write("    resume_file = os.path.join(chunk_dir, f'{c_id}.resume')\n")
+                    hf.write("\n")
+                    hf.write("    actual_start = c_start\n")
+                    hf.write("    if os.path.exists(resume_file):\n")
+                    hf.write("        try:\n")
+                    hf.write("            with open(resume_file, 'r') as f:\n")
+                    hf.write("                last = int(f.read().strip())\n")
+                    hf.write("            if last >= c_start and last < c_end:\n")
+                    hf.write("                actual_start = last + 1\n")
+                    hf.write("                print(f'BatchRender: Resuming from frame {actual_start}')\n")
+                    hf.write("        except: pass\n")
+                    hf.write("\n")
+                    hf.write("    if actual_start > c_end:\n")
+                    hf.write("        print('BatchRender: Chunk already finished. Exiting.')\n")
+                    hf.write("        sys.exit(0)\n")
+                    hf.write("\n")
+                    hf.write("    bpy.context.scene.frame_start = actual_start\n")
+                    hf.write("    bpy.context.scene.frame_end = c_end\n")
+                    hf.write("\n")
+                    hf.write("    def update_resume(scene):\n")
+                    hf.write("        try:\n")
+                    hf.write("            with open(resume_file, 'w') as f:\n")
+                    hf.write("                f.write(str(scene.frame_current))\n")
+                    hf.write("        except: pass\n")
+                    hf.write("\n")
+                    hf.write("    def clean_resume(scene):\n")
+                    hf.write("        if os.path.exists(resume_file):\n")
+                    hf.write("            try: os.remove(resume_file)\n")
+                    hf.write("            except: pass\n")
+                    hf.write("\n")
+                    hf.write("    bpy.app.handlers.render_post.append(update_resume)\n")
+                    hf.write("    bpy.app.handlers.render_complete.append(clean_resume)\n")
+                    hf.write("    bpy.ops.render.render(animation=True)\n")
+                    hf.write("    sys.exit(0)\n")
+                    hf.write("\n")
+                    hf.write("smart_render_wrapper()\n")
             except:
                 print("Failed to write handler script") 
         else:
@@ -992,7 +1066,12 @@ def write_batch_file(context):
                      
                      # Run Command (Subset for chunk)
                      chunk_cmd = list(cmd_parts)
-                     chunk_cmd.extend(["-s", str(current), "-e", str(c_end), "-a"])
+                     # Use Smart Wrapper instead of standard -s -e -a
+                     chunk_cmd.append("--")
+                     chunk_cmd.extend(["--chunk-start", str(current), "--chunk-end", str(c_end), "--chunk-id", chunk_id])
+                     # chunk_cmd.extend(["-s", str(current), "-e", str(c_end), "-a"]) # LEGACY
+                     # Frame jump not supported in wrapper directly yet, but user didn't ask for it specifically with chunks
+                     # if settings.use_frame_jump: chunk_cmd.extend(["-j", str(settings.frame_jump)])
                      if settings.use_frame_jump: chunk_cmd.extend(["-j", str(settings.frame_jump)])
                      
                      lines.append(" ".join(chunk_cmd))
@@ -1119,11 +1198,33 @@ def write_batch_file(context):
 # -------------------------------------------------------------------
 
 def get_computed_job_id(job):
-    """Returns the robust Job ID (Sanitized Filename_SceneName)."""
+    """Returns the robust Job ID (Sanitized Filename_SceneName_OutputHash)."""
     f_base = os.path.splitext(os.path.basename(job.filepath))[0]
-    raw_id = f"{f_base}_{job.scene_name}"
+    
+    # Calculate simple hash of the output path to uniquify the ID
+    # This ensures that if we change output folder, we don't pick up old progress
+    out_path = job.sc_filepath
+    if job.use_overrides and job.use_custom_output:
+        out_path = job.output_path
+        
+    # Use global settings if not overridden? 
+    # Technically "resolve_job_output_path" is better but we don't have access to 'settings' or 'context' here efficiently
+    # and we want this ID to be stable based on the JOB properties.
+    # If the user uses Global Output, that might change for ALL jobs. 
+    # Ideally the ID should reflect where it writes.
+    
+    # Let's stick to Job-local data + fallback to sc_filepath.
+    if not out_path: out_path = ""
+    
+    # Simple Hash (Adler32 or similar? just sum for now or built-in hash)
+    # Use hex of hash
+    import zlib
+    path_hash = zlib.adler32(out_path.encode('utf-8')) & 0xffffffff
+    hash_str = f"{path_hash:08x}"
+    
+    raw_id = f"{f_base}_{job.scene_name}_{hash_str}"
+    
     # Strict sanitation: Allow only Alphanumeric, ., -, _
-    # This prevents any weird characters (newlines, quotes, etc) from breaking batch files
     return "".join(c for c in raw_id if c.isalnum() or c in ('_', '-', '.'))
 
 
@@ -1820,10 +1921,16 @@ class BATCH_RENDER_OT_scan_disk(bpy.types.Operator):
 
                 # Merge sets
                 final_set = found_frames_set.union(disk_frames_set)
-                found_count = len(final_set)
                 
-                if final_set:
-                     job.frames_on_disk = format_frame_ranges(list(final_set))
+                # Filter to Job Range ONLY
+                # This ensures we don't count "junk" frames (e.g. 1, 10, 20 from test renders) 
+                # that fall outside the current render target.
+                filtered_set = {f for f in final_set if start <= f <= end}
+                
+                found_count = len(filtered_set)
+                
+                if filtered_set:
+                     job.frames_on_disk = format_frame_ranges(list(filtered_set))
                 else:
                      job.frames_on_disk = "-"
 

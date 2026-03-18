@@ -2,6 +2,7 @@ import bpy
 import os
 import subprocess
 import struct
+from bpy.app.handlers import persistent
 
 # Blender 5+ VSE helpers and operators
 # - Uses SequenceEditor.strips instead of deprecated .sequences
@@ -36,6 +37,29 @@ def active_channel(context, default=1):
     se = ensure_sequencer(context)
     strip = getattr(se, "active_strip", None)
     return getattr(strip, "channel", default) if strip else default
+
+
+def get_topmost_strip_at_frame(context, frame):
+    """Return the highest-channel, non-muted strip overlapping *frame*, or None."""
+    best = None
+    for s in vse_strips(context):
+        if s.mute:
+            continue
+        if s.frame_final_start <= frame < s.frame_final_end:
+            if best is None or s.channel > best.channel:
+                best = s
+    return best
+
+
+def _get_strip_source_directory(strip):
+    """Return the absolute source directory for *strip*, or None."""
+    if strip.type == "IMAGE":
+        return bpy.path.abspath(strip.directory)
+    elif strip.type == "MOVIE":
+        return os.path.dirname(bpy.path.abspath(strip.filepath))
+    elif strip.type == "SOUND":
+        return os.path.dirname(bpy.path.abspath(strip.sound.filepath))
+    return None
 
 
 # ---------- Operators ----------
@@ -370,6 +394,93 @@ class VSEOpenSourceBlend(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class VSEBrowseSource(bpy.types.Operator):
+    """Open the file browser to the folder containing the strip's source files"""
+
+    bl_idname = "sequencer.browse_source"
+    bl_label = "Browse Source"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        strip = context.scene.sequence_editor.active_strip
+        if not strip:
+            self.report({"WARNING"}, "No active strip")
+            return {"CANCELLED"}
+
+        directory = _get_strip_source_directory(strip)
+
+        if not directory or not os.path.exists(directory):
+            self.report({"WARNING"}, f"Could not determine valid directory from strip: {directory}")
+            return {"CANCELLED"}
+
+        # Open the directory in Blender's internal file browser
+        found_browser = False
+        for area in context.screen.areas:
+            if area.type == "FILE_BROWSER":
+                # params.directory expects a byte string in Blender RNA
+                area.spaces.active.params.directory = bytes(directory, "utf-8")
+                found_browser = True
+
+        if found_browser:
+            self.report({"INFO"}, f"Browsing: {directory}")
+        else:
+            self.report({"WARNING"}, "No File Browser area open to update")
+
+        return {"FINISHED"}
+
+
+# ---------- Frame-change handler ----------
+
+
+@persistent
+def _on_frame_change(scene, depsgraph=None):
+    """Callback for frame_change_post: drives selection-follows-playhead and auto-browse."""
+    context = bpy.context
+    se = scene.sequence_editor
+    if not se:
+        print("[VSE] No sequence_editor, bailing")
+        return
+
+    frame = scene.frame_current
+    sfp = scene.vse_selection_follows_playhead
+    ab = scene.vse_auto_browse_source
+    print(f"[VSE] frame={frame}  selection_follows={sfp}  auto_browse={ab}")
+
+    top_strip = get_topmost_strip_at_frame(context, frame)
+    print(f"[VSE] top_strip={top_strip.name if top_strip else None}  (ch={top_strip.channel if top_strip else '-'})")
+
+    if sfp and top_strip:
+        print(f"[VSE] Setting active_strip -> {top_strip.name}")
+        se.active_strip = top_strip
+        print(f"[VSE] active_strip is now: {se.active_strip}")
+
+    if ab and top_strip:
+        directory = _get_strip_source_directory(top_strip)
+        print(f"[VSE] strip type={top_strip.type}  directory={directory}")
+        if directory and os.path.exists(directory):
+            dir_bytes = bytes(directory, "utf-8")
+            found_browser = False
+            for window in context.window_manager.windows:
+                for area in window.screen.areas:
+                    if area.type == "FILE_BROWSER":
+                        found_browser = True
+                        try:
+                            area.spaces.active.params.directory = dir_bytes
+                            print(f"[VSE] Set FILE_BROWSER dir -> {directory}")
+                        except Exception as e:
+                            print(f"[VSE] FILE_BROWSER set failed: {e}")
+            if not found_browser:
+                print("[VSE] No FILE_BROWSER area found")
+        else:
+            print(f"[VSE] directory missing or doesn't exist: {directory}")
+
+    # Force UI redraw so changes are visible immediately
+    for window in context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type in ("SEQUENCE_EDITOR", "FILE_BROWSER", "PROPERTIES"):
+                area.tag_redraw()
+
+
 # ---------- UI ----------
 
 
@@ -399,6 +510,10 @@ class VSEDumbToolsMenu(bpy.types.Menu):
         layout.operator("sequencer.move_selected_to_end", text="Move Selected to End")
         layout.separator()
         layout.operator("sequencer.open_source_blend", text="Open Source Blend")
+        layout.operator("sequencer.browse_source", text="Browse Source")
+        layout.separator()
+        layout.prop(context.scene, "vse_selection_follows_playhead")
+        layout.prop(context.scene, "vse_auto_browse_source")
 
 
 def sequencer_menu_func(self, context):
@@ -416,6 +531,7 @@ _classes = (
     VSEMoveSelectedToStart,
     VSEMoveSelectedToEnd,
     VSEOpenSourceBlend,
+    VSEBrowseSource,
     VSEDumbToolsMenu,
 )
 
@@ -433,8 +549,36 @@ def register():
 
     bpy.types.SEQUENCER_MT_editor_menus.append(sequencer_menu_func)
 
+    # Scene properties for playhead-driven features
+    bpy.types.Scene.vse_selection_follows_playhead = bpy.props.BoolProperty(
+        name="Selection Follows Playhead",
+        description="Auto-select the top-most non-muted strip under the playhead",
+        default=False,
+    )
+    bpy.types.Scene.vse_auto_browse_source = bpy.props.BoolProperty(
+        name="Auto Browse Source",
+        description="Auto-update an open File Browser to the source folder of the strip under the playhead",
+        default=False,
+    )
+
+    # Frame-change handler
+    if _on_frame_change not in bpy.app.handlers.frame_change_post:
+        bpy.app.handlers.frame_change_post.append(_on_frame_change)
+    print(f"[VSE Tools] Handler registered. frame_change_post has {len(bpy.app.handlers.frame_change_post)} handlers.")
+
 
 def unregister():
+    # Remove handler
+    if _on_frame_change in bpy.app.handlers.frame_change_post:
+        bpy.app.handlers.frame_change_post.remove(_on_frame_change)
+
+    # Remove scene properties
+    for attr in ("vse_selection_follows_playhead", "vse_auto_browse_source"):
+        try:
+            delattr(bpy.types.Scene, attr)
+        except Exception:
+            pass
+
     for cls in reversed(_classes):
         try:
             bpy.utils.unregister_class(cls)

@@ -200,6 +200,181 @@ def _copy_influence_keyframes(dst_strip, src_strip):
             pass
 
 
+def _copy_strip_time_keyframes(dst_strip, src_strip):
+    """Copy animated strip-time keyframes from src_strip to dst_strip.
+
+    Mirrors _copy_influence_keyframes but targets the 'strip_time' data_path.
+    """
+    if dst_strip is None or src_strip is None:
+        return
+
+    src_id = getattr(src_strip, "id_data", None)
+    dst_id = getattr(dst_strip, "id_data", None)
+    if src_id is None or dst_id is None:
+        return
+
+    # Resolve RNA paths
+    src_path = None
+    dst_path = None
+    try:
+        src_path = src_strip.path_from_id("strip_time")
+    except Exception:
+        pass
+    try:
+        dst_path = dst_strip.path_from_id("strip_time")
+    except Exception:
+        pass
+
+    # Locate source FCurve from strip.fcurves first
+    src_fc = None
+    try:
+        strip_fcurves = getattr(src_strip, "fcurves", None)
+        if strip_fcurves:
+            if src_path:
+                for fc in strip_fcurves:
+                    dp = getattr(fc, "data_path", "")
+                    ai = getattr(fc, "array_index", 0)
+                    if dp == src_path and ai == 0:
+                        src_fc = fc
+                        break
+            if src_fc is None:
+                for fc in strip_fcurves:
+                    dp = getattr(fc, "data_path", "")
+                    ai = getattr(fc, "array_index", 0)
+                    if dp.endswith("strip_time") and ai == 0:
+                        src_fc = fc
+                        break
+    except Exception:
+        pass
+
+    # Fallback: search in the owner's action
+    if src_fc is None:
+        src_anim = getattr(src_id, "animation_data", None)
+        src_action = getattr(src_anim, "action", None) if src_anim else None
+        if src_action:
+            try:
+                if src_path:
+                    src_fc = src_action.fcurves.find(src_path, index=0)
+            except Exception:
+                src_fc = None
+            if src_fc is None:
+                try:
+                    for fc in src_action.fcurves:
+                        if getattr(fc, "array_index", 0) != 0:
+                            continue
+                        dp = getattr(fc, "data_path", "")
+                        if dp.endswith("strip_time"):
+                            if src_path and dp != src_path:
+                                continue
+                            src_fc = fc
+                            break
+                except Exception:
+                    pass
+
+    # Nothing to copy if no source keys
+    if not src_fc or len(getattr(src_fc, "keyframe_points", [])) == 0:
+        return
+
+    # Ensure destination has anim data; enable animated strip time
+    try:
+        if not getattr(dst_id, "animation_data", None):
+            dst_id.animation_data_create()
+    except Exception:
+        pass
+    _safe_set(dst_strip, "use_animated_time", True)
+
+    # Clear existing destination strip_time keys if present
+    try:
+        dst_fc_existing = None
+        dst_strip_fcurves = getattr(dst_strip, "fcurves", None)
+        if dst_strip_fcurves:
+            if dst_path:
+                for fc in dst_strip_fcurves:
+                    dp = getattr(fc, "data_path", "")
+                    ai = getattr(fc, "array_index", 0)
+                    if dp == dst_path and ai == 0:
+                        dst_fc_existing = fc
+                        break
+            if dst_fc_existing is None:
+                for fc in dst_strip_fcurves:
+                    dp = getattr(fc, "data_path", "")
+                    ai = getattr(fc, "array_index", 0)
+                    if dp.endswith("strip_time") and ai == 0:
+                        dst_fc_existing = fc
+                        break
+        if dst_fc_existing:
+            try:
+                for i in range(len(dst_fc_existing.keyframe_points) - 1, -1, -1):
+                    dst_fc_existing.keyframe_points.remove(
+                        dst_fc_existing.keyframe_points[i]
+                    )
+                dst_fc_existing.update()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Insert destination keys at the same frames/values
+    for kp in list(src_fc.keyframe_points):
+        frame = float(kp.co[0])
+        value = float(kp.co[1])
+        try:
+            dst_strip.strip_time = value
+        except Exception:
+            pass
+        try:
+            dst_strip.keyframe_insert(data_path="strip_time", frame=frame)
+        except Exception:
+            pass
+
+    # Mirror interpolation, easing, and handles on the created dest fcurve
+    dst_fc = None
+    try:
+        dst_strip_fcurves = getattr(dst_strip, "fcurves", None)
+        if dst_strip_fcurves:
+            if dst_path:
+                for fc in dst_strip_fcurves:
+                    if getattr(fc, "data_path", "") == dst_path and getattr(fc, "array_index", 0) == 0:
+                        dst_fc = fc
+                        break
+            if dst_fc is None:
+                for fc in dst_strip_fcurves:
+                    if getattr(fc, "data_path", "").endswith("strip_time") and getattr(fc, "array_index", 0) == 0:
+                        dst_fc = fc
+                        break
+    except Exception:
+        dst_fc = None
+
+    if dst_fc and len(dst_fc.keyframe_points) == len(src_fc.keyframe_points):
+        for i, kp in enumerate(src_fc.keyframe_points):
+            dkp = dst_fc.keyframe_points[i]
+            _safe_set(
+                dkp,
+                "interpolation",
+                getattr(kp, "interpolation", getattr(dkp, "interpolation", None)),
+            )
+            if hasattr(kp, "easing"):
+                _safe_set(dkp, "easing", getattr(kp, "easing", getattr(dkp, "easing", None)))
+            for attr in ("handle_left_type", "handle_right_type"):
+                if hasattr(kp, attr):
+                    _safe_set(dkp, attr, getattr(kp, attr))
+            try:
+                dkp.handle_left = kp.handle_left
+                dkp.handle_right = kp.handle_right
+            except Exception:
+                try:
+                    dkp.handle_left[0] = kp.handle_left[0]
+                    dkp.handle_left[1] = kp.handle_left[1]
+                    dkp.handle_right[0] = kp.handle_right[0]
+                    dkp.handle_right[1] = kp.handle_right[1]
+                except Exception:
+                    pass
+        try:
+            dst_fc.update()
+        except Exception:
+            pass
+
+
 def copy_nla_animation(source_armature, target_armature):
     # Ensure the source armature has NLA tracks
     if (
@@ -321,12 +496,65 @@ def copy_nla_animation(source_armature, target_armature):
                 "influence",
                 getattr(strip, "influence", getattr(new_strip, "influence", 1.0)),
             )
+            _safe_set(
+                new_strip,
+                "strip_time",
+                getattr(strip, "strip_time", getattr(new_strip, "strip_time", 0.0)),
+            )
 
-            # Misc
+            # Boolean toggles
+            _safe_set(
+                new_strip,
+                "use_animated_time_cyclic",
+                getattr(
+                    strip,
+                    "use_animated_time_cyclic",
+                    getattr(new_strip, "use_animated_time_cyclic", False),
+                ),
+            )
+            _safe_set(
+                new_strip,
+                "use_auto_blend",
+                getattr(
+                    strip,
+                    "use_auto_blend",
+                    getattr(new_strip, "use_auto_blend", False),
+                ),
+            )
+            _safe_set(
+                new_strip,
+                "use_reverse",
+                getattr(
+                    strip,
+                    "use_reverse",
+                    getattr(new_strip, "use_reverse", False),
+                ),
+            )
+            _safe_set(
+                new_strip,
+                "use_sync_length",
+                getattr(
+                    strip,
+                    "use_sync_length",
+                    getattr(new_strip, "use_sync_length", False),
+                ),
+            )
+
+            # Action slot (Blender 4.x layered actions)
+            if hasattr(strip, "action_slot_handle") and hasattr(new_strip, "action_slot_handle"):
+                _safe_set(
+                    new_strip,
+                    "action_slot_handle",
+                    getattr(strip, "action_slot_handle", 0),
+                )
 
             # Copy animated influence FCurve (if the source has one)
             _copy_influence_keyframes(new_strip, strip)
 
+            # Copy animated strip time FCurve (if the source has one)
+            _copy_strip_time_keyframes(new_strip, strip)
+
+            # Misc flags
             _safe_set(
                 new_strip,
                 "mute",
@@ -337,8 +565,6 @@ def copy_nla_animation(source_armature, target_armature):
                 "select",
                 getattr(strip, "select", getattr(new_strip, "select", False)),
             )
-            # Note: some attributes (like 'time') don't exist
-            # or are read-only; we skip those safely.
 
 
 def main():

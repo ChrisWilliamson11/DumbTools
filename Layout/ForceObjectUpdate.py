@@ -220,5 +220,4 @@ def unregister():
     if hasattr(bpy.types.Scene, 'force_update_props'):
         del bpy.types.Scene.force_update_props
 
-if __name__ == "__main__":
-    register()
+register()

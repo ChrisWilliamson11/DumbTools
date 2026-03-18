@@ -737,26 +737,23 @@ def write_batch_file(context):
                     hf.write("# -------------------------------------------------------------------\n")
                     hf.write("import sys\n")
                     hf.write("def smart_render_wrapper():\n")
-                    hf.write("    try:\n")
-                    hf.write("        dash_index = sys.argv.index('--')\n")
-                    hf.write("    except ValueError:\n")
-                    hf.write("        return\n")
-                    hf.write("\n")
-                    hf.write("    args = sys.argv[dash_index+1:]\n")
-                    hf.write("    c_start, c_end, c_id = None, None, None\n")
-                    hf.write("\n")
-                    hf.write("    for i in range(len(args)):\n")
-                    hf.write("        if args[i] == '--chunk-start': c_start = int(args[i+1])\n")
-                    hf.write("        if args[i] == '--chunk-end': c_end = int(args[i+1])\n")
-                    hf.write("        if args[i] == '--chunk-id': c_id = args[i+1]\n")
-                    hf.write("\n")
-                    hf.write("    if c_start is None or c_end is None or c_id is None:\n")
-                    hf.write("        return\n")
-                    hf.write("\n")
-                    hf.write("    print(f'BatchRender: Smart Chunk Mode {c_id} ({c_start}-{c_end})')\n")
                     hf.write("    prog_dir = os.environ.get('FLIP_BATCH_PROGRESS_DIR')\n")
                     hf.write("    if not prog_dir: return\n")
                     hf.write("\n")
+                    hf.write("    # Read Env Vars\n")
+                    hf.write("    if os.environ.get('FLIP_BATCH_CHUNK_MODE') != '1':\n")
+                    hf.write("        return\n")
+                    hf.write("\n")
+                    hf.write("    try:\n")
+                    hf.write("        c_id = os.environ.get('FLIP_BATCH_CHUNK_ID')\n")
+                    hf.write("        c_start = int(os.environ.get('FLIP_BATCH_CHUNK_START', 0))\n")
+                    hf.write("        c_end = int(os.environ.get('FLIP_BATCH_CHUNK_END', 0))\n")
+                    hf.write("    except (ValueError, TypeError):\n")
+                    hf.write("        return\n")
+                    hf.write("\n")
+                    hf.write("    if not c_id: return\n")
+                    hf.write("\n")
+                    hf.write("    print(f'BatchRender: Smart Chunk Mode {c_id} ({c_start}-{c_end})')\n")
                     hf.write("    chunk_dir = os.path.join(os.path.dirname(prog_dir), 'chunks')\n")
                     hf.write("    resume_file = os.path.join(chunk_dir, f'{c_id}.resume')\n")
                     hf.write("\n")
@@ -765,17 +762,19 @@ def write_batch_file(context):
                     hf.write("        try:\n")
                     hf.write("            with open(resume_file, 'r') as f:\n")
                     hf.write("                last = int(f.read().strip())\n")
-                    hf.write("            if last >= c_start and last < c_end:\n")
-                    hf.write("                actual_start = last + 1\n")
-                    hf.write("                print(f'BatchRender: Resuming from frame {actual_start}')\n")
+                    hf.write("                if last >= c_start and last < c_end:\n")
+                    hf.write("                    actual_start = last + 1\n")
+                    hf.write("                    print(f'BatchRender: Resuming from frame {actual_start}')\n")
                     hf.write("        except: pass\n")
                     hf.write("\n")
                     hf.write("    if actual_start > c_end:\n")
                     hf.write("        print('BatchRender: Chunk already finished. Exiting.')\n")
                     hf.write("        sys.exit(0)\n")
                     hf.write("\n")
-                    hf.write("    bpy.context.scene.frame_start = actual_start\n")
-                    hf.write("    bpy.context.scene.frame_end = c_end\n")
+                    hf.write("    # Update Scene - Do NOT Render Here. Let -a handle it.\n")
+                    hf.write("    scene = bpy.context.scene\n")
+                    hf.write("    scene.frame_start = actual_start\n")
+                    hf.write("    scene.frame_end = c_end\n")
                     hf.write("\n")
                     hf.write("    def update_resume(scene):\n")
                     hf.write("        try:\n")
@@ -790,8 +789,6 @@ def write_batch_file(context):
                     hf.write("\n")
                     hf.write("    bpy.app.handlers.render_post.append(update_resume)\n")
                     hf.write("    bpy.app.handlers.render_complete.append(clean_resume)\n")
-                    hf.write("    bpy.ops.render.render(animation=True)\n")
-                    hf.write("    sys.exit(0)\n")
                     hf.write("\n")
                     hf.write("smart_render_wrapper()\n")
             except:
@@ -1045,7 +1042,18 @@ def write_batch_file(context):
                      
                      lines.append(f"if exist \"{lock_name}.done\" GOTO {chunk_label}")
                      
+
+                     
                      # Attempt Lock
+                     # Clean up any previous error/log files if retrying automatically
+                     if is_windows:
+                         lines.append(f"if exist \"{lock_name}.error\" del \"{lock_name}.error\"")
+                         # lines.append(f"if exist \"{lock_name}.log\" del \"{lock_name}.log\"") # Actually let's keep log until overwritten? Or delete to be clean.
+                         # Deleting log is safer so we don't append to old log.
+                         # But shell redirection ">" overwrites anyway. So it's fine.
+                     else:
+                         lines.append(f"if [ -f \"{lock_name}.error\" ]; then rm \"{lock_name}.error\"; fi")
+                     
                      # Try to acquire lock
                      lines.append(f'mkdir "{lock_name}.lock" 2>nul')
                      lines.append(f'if errorlevel 1 (')
@@ -1064,14 +1072,25 @@ def write_batch_file(context):
                           lines.append(f'    hostname > "{lock_name}.lock/owner"')
                      lines.append(f')')
                      
+                     
+                     # Set Env Vars for Wrapper
+                     if is_windows:
+                         lines.append(f"set FLIP_BATCH_CHUNK_MODE=1")
+                         lines.append(f"set FLIP_BATCH_CHUNK_ID={chunk_id}")
+                         lines.append(f"set FLIP_BATCH_CHUNK_START={current}")
+                         lines.append(f"set FLIP_BATCH_CHUNK_END={c_end}")
+                     else:
+                         lines.append(f"export FLIP_BATCH_CHUNK_MODE=1")
+                         lines.append(f"export FLIP_BATCH_CHUNK_ID=\"{chunk_id}\"")
+                         lines.append(f"export FLIP_BATCH_CHUNK_START={current}")
+                         lines.append(f"export FLIP_BATCH_CHUNK_END={c_end}")
+                     
                      # Run Command (Subset for chunk)
                      chunk_cmd = list(cmd_parts)
-                     # Use Smart Wrapper instead of standard -s -e -a
-                     chunk_cmd.append("--")
-                     chunk_cmd.extend(["--chunk-start", str(current), "--chunk-end", str(c_end), "--chunk-id", chunk_id])
-                     # chunk_cmd.extend(["-s", str(current), "-e", str(c_end), "-a"]) # LEGACY
-                     # Frame jump not supported in wrapper directly yet, but user didn't ask for it specifically with chunks
-                     # if settings.use_frame_jump: chunk_cmd.extend(["-j", str(settings.frame_jump)])
+                     # No -- args needed, we use env vars.
+                     # Just add -a (Animation) to trigger render
+                     chunk_cmd.append("-a")
+                     
                      if settings.use_frame_jump: chunk_cmd.extend(["-j", str(settings.frame_jump)])
                      
                      lines.append(" ".join(chunk_cmd))
@@ -1082,18 +1101,24 @@ def write_batch_file(context):
                          lines.append(f"    timeout /t 2 /nobreak >nul")
                          lines.append(f"    rmdir /s /q \"{lock_name}.lock\"")
                          lines.append(f"    echo Render failed for chunk {chunk_id} (Exit Code: %errorlevel%)")
+                         lines.append(f"    echo FAILED (Exit Code: %errorlevel%) > \"{lock_name}.error\"")
                      else:
                          lines.append(f"    sleep 1")
                          lines.append(f"    rm -rf \"{lock_name}.lock\"")
                          lines.append(f"    echo Render failed for chunk {chunk_id}")
+                         lines.append(f"    echo FAILED > \"{lock_name}.error\"")
                      lines.append(f") else (")
                      if is_windows:
                          lines.append(f"    timeout /t 1 /nobreak >nul")
                          lines.append(f"    rmdir /s /q \"{lock_name}.lock\"")
+                         # Cleanup log if success? 
+                         # lines.append(f"    del \"{lock_name}.log\"") 
                      else:
                          lines.append(f"    sleep 1")
                          lines.append(f"    rm -rf \"{lock_name}.lock\"")
                      lines.append(f"    echo done > \"{lock_name}.done\"")
+                     # Remove error file if it existed from previous run
+                     lines.append(f"    if exist \"{lock_name}.error\" del \"{lock_name}.error\"")
                      lines.append(f")")
                      
                      lines.append(f":{chunk_label}")
@@ -1318,9 +1343,15 @@ def refresh_job_chunks(job, settings, batch_path):
         
         lock_file, done_file = resolve_chunk_paths(batch_path, job, current, c_end)
         
+        # Check Error File
+        error_file = lock_file.replace('.lock', '.error')
+        
         if os.path.exists(done_file):
             item.status = "Done"
             item.icon = "CHECKBOX_HLT"
+        elif os.path.exists(error_file):
+             item.status = "Failed"
+             item.icon = "ERROR"
         elif os.path.exists(lock_file):
             item.status = "Rendering"
             item.icon = "TIME"

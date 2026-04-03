@@ -1,3 +1,4 @@
+# Tooltip: Select all upstream (input) nodes connected to the active node
 import bpy
 
 def select_upstream_nodes(node, nodes):

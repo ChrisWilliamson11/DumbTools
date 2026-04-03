@@ -1,3 +1,4 @@
+# Tooltip: Scale selected keyframes from either the first or last key, stretching or compressing the timing
 import bpy
 
 import bpy

@@ -1,3 +1,4 @@
+# Tooltip: Isolate selected objects while keeping lights and active camera visible
 import bpy
 
 def is_local_view(space):

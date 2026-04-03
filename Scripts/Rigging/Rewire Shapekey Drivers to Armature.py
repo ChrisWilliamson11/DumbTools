@@ -1,3 +1,4 @@
+# Tooltip: Rewire shape key drivers from one armature to another, updating all references
 # Rewire Shapekey Drivers to Armature
 # -----------------------------------
 # This utility rewires shapekey drivers that currently target object-based

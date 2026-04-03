@@ -1,3 +1,4 @@
+# Tooltip: Update muzzle flash positions to match current weapon/object transforms
 import bpy
 import mathutils
 import math

@@ -1,3 +1,4 @@
+# Tooltip: Inspector panel showing detailed properties of the selected VSE strip
 import bpy
 
 def inspect_strip():

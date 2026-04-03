@@ -1,3 +1,4 @@
+# Tooltip: Custom Rigify UI panel with pivot switching and IK/FK controls
 import bpy
 import math
 import json

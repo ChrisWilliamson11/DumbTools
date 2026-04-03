@@ -1,3 +1,4 @@
+# Tooltip: Copy viewport shading, overlays, and display settings between workspaces
 import bpy
 
 viewport_settings = {}

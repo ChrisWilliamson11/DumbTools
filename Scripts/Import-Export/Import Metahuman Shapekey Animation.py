@@ -1,3 +1,4 @@
+# Tooltip: Import MetaHuman facial animation from FBX ASCII file as shape key keyframes
 bl_info = {
     "name": "Import Shapekeys from ASCII FBX (CTRL Tracks)",
     "author": "Assistant",

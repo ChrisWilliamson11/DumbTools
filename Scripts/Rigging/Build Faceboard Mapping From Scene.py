@@ -1,3 +1,4 @@
+# Tooltip: Build a faceboard control mapping from the current scene's shape key setup
 # Build Faceboard Mapping From Scene
 # Generates a JSON mapping from object-based faceboard controls (CTRL_*) to
 # bones on an armature-based faceboard. Uses fuzzy matching with sensible

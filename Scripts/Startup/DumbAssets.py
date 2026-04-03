@@ -1,3 +1,4 @@
+# Tooltip: Asset browser panel for managing and importing custom asset libraries
 import bpy
 from bpy.types import Operator, Panel
 from bpy_extras.io_utils import ImportHelper

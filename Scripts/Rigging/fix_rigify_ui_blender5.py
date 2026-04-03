@@ -1,3 +1,4 @@
+# Tooltip: Patch Rigify UI scripts in text datablocks for Blender 5.0 compatibility
 """
 Fix Rigify UI Script for Blender 5.0+ (Bulletproof Regex Patch)
 

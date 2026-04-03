@@ -1,3 +1,4 @@
+# Tooltip: Deadline render submission panel with pool, priority, and split-frame options
 import json
 import subprocess
 import tempfile

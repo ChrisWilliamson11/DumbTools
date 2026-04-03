@@ -1,3 +1,4 @@
+# Tooltip: Group selected objects into a new collection
 import bpy
 
 def group_selected_objects_into_collections():

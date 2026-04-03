@@ -299,14 +299,15 @@ class DumbToolsDocsOperator(bpy.types.Operator):
             return {'FINISHED'}
 
 class DumbToolsUpdateScriptsOperator(bpy.types.Operator):
-    """Download the latest DumbTools Scripts from GitHub"""
+    """Sync entire extension from GitHub (replaces scripts, assets, docs, and extension files with the latest version)"""
     bl_idname = "dumbtools.update_scripts"
-    bl_label = "Update Scripts from GitHub"
+    bl_label = "Sync Extension from GitHub"
 
     def execute(self, context):
         addon_id = __package__ if __package__ else __name__
         preferences = context.preferences.addons[addon_id].preferences
-        target_dir = preferences.script_folder
+        scripts_dir = preferences.script_folder
+        ext_root = os.path.dirname(os.path.abspath(__file__))
         
         # URL to zip download of the main branch
         url = "https://github.com/ChrisWilliamson11/DumbTools/archive/refs/heads/main.zip"
@@ -324,28 +325,39 @@ class DumbToolsUpdateScriptsOperator(bpy.types.Operator):
                 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                     zip_ref.extractall(tmp_dir)
                     
-                # Extracted folder is 'DumbTools-main', and the scripts are inside it
-                extracted_scripts = os.path.join(tmp_dir, "DumbTools-main", "Scripts")
+                extracted_root = os.path.join(tmp_dir, "DumbTools-main")
+                extracted_scripts = os.path.join(extracted_root, "Scripts")
                 
                 if not os.path.exists(extracted_scripts):
                     self.report({'ERROR'}, "Could not find 'Scripts' directory in downloaded archive!")
                     return {'CANCELLED'}
                 
-                if not os.path.exists(target_dir):
-                    try:
-                        os.makedirs(target_dir, exist_ok=True)
-                    except Exception:
-                        self.report({'ERROR'}, f"Failed to create target directory: {target_dir}")
-                        return {'CANCELLED'}
-                        
-                # Overwrite existing files
-                shutil.copytree(extracted_scripts, target_dir, dirs_exist_ok=True)
+                # --- Sync Scripts (full replace) ---
+                if os.path.exists(scripts_dir):
+                    shutil.rmtree(scripts_dir)
+                shutil.copytree(extracted_scripts, scripts_dir)
                 
-            self.report({'INFO'}, "DumbTools scripts updated successfully!")
-            self.report({'WARNING'}, "Please disable and re-enable Addon or Restart Blender to reflect script changes.")
+                # --- Sync directories at extension root (full replace) ---
+                for dirname in ("Docs", "Assets"):
+                    src = os.path.join(extracted_root, dirname)
+                    dst = os.path.join(ext_root, dirname)
+                    if os.path.exists(src):
+                        if os.path.exists(dst):
+                            shutil.rmtree(dst)
+                        shutil.copytree(src, dst)
+                
+                # --- Sync root files (overwrite) ---
+                for filename in ("__init__.py", "blender_manifest.toml", "README.md"):
+                    src = os.path.join(extracted_root, filename)
+                    dst = os.path.join(ext_root, filename)
+                    if os.path.exists(src):
+                        shutil.copy2(src, dst)
+                
+            self.report({'INFO'}, "DumbTools extension synced successfully!")
+            self.report({'WARNING'}, "Please restart Blender for changes to take full effect.")
             
         except Exception as e:
-            self.report({'ERROR'}, f"Failed to update scripts: {e}")
+            self.report({'ERROR'}, f"Failed to sync extension: {e}")
             return {'CANCELLED'}
             
         return {'FINISHED'}

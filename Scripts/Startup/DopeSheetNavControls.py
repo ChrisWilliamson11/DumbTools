@@ -1,3 +1,4 @@
+# Tooltip: Add navigation controls to the Dope Sheet for quick keyframe browsing
 import bpy
 from bpy.types import Header, Menu, Panel, Operator
 

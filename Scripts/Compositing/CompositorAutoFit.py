@@ -1,3 +1,4 @@
+# Tooltip: Auto-fit compositor backdrop to window size, updating live on resize
 #adds a menu entry to the compositor to auto fit the image. when it is enabled, it tracks the size of the compositing window, any changes and it runs the fit to availabel space operation.
 
 import bpy

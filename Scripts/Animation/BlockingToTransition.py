@@ -1,3 +1,4 @@
+# Tooltip: Convert stepped/blocking keyframes to smooth bezier transitions with configurable transition length
 import bpy
 
 class ConvertSteppedToBezierOperator(bpy.types.Operator):

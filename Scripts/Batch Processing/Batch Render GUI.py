@@ -1,3 +1,4 @@
+# Tooltip: GUI panel for batch rendering multiple blend files with configurable settings
 """
 Standalone Batch Render GUI for Blender
 Allows selecting multiple .blend files and rendering them via command-line

@@ -1,3 +1,4 @@
+# Tooltip: Generate randomised muzzle flash effects on selected objects
 import bpy
 import random
 import mathutils

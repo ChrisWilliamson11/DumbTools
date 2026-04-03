@@ -1,3 +1,4 @@
+# Tooltip: Render animations from multiple blend files sequentially using command-line rendering
 import bpy
 import os
 import subprocess

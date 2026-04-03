@@ -1,4 +1,4 @@
-# Tooltip:  Tooltip: Removes animation channels off selected objects/bones
+# Tooltip: Remove selected animation channels (location, rotation, scale) from selected objects or bones
 import bpy
 
 import bpy

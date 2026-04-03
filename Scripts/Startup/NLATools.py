@@ -1,3 +1,4 @@
+# Tooltip: NLA editor tools panel for batch operations on NLA strips and tracks
 import bpy
 
 class SelectStripsOperator(bpy.types.Operator):

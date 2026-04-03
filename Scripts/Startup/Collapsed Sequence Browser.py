@@ -1,3 +1,4 @@
+# Tooltip: File browser that groups image/VDB sequences into single collapsible entries
 import bpy
 import os
 import re

@@ -1,3 +1,4 @@
+# Tooltip: Smoothly clamp bone rotations to constraint limits across all NLA clips
 import bpy
 import math
 class ScaleKeyframesToLimitNLA(bpy.types.Operator):

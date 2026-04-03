@@ -1,3 +1,4 @@
+# Tooltip: Smoothly clamp bone rotations to their rotation constraint limits
 import bpy
 import math
 class ScaleKeyframesToLimit(bpy.types.Operator):

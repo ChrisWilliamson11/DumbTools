@@ -1,3 +1,4 @@
+# Tooltip: Save and recall viewport shading presets with one click
 import bpy
 import json
 import os

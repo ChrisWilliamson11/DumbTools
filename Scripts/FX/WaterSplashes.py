@@ -1,3 +1,4 @@
+# Tooltip: Generate water splash particle effects on selected objects
 import bpy
 import random
 import mathutils

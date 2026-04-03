@@ -1,3 +1,4 @@
+# Tooltip: Scale keyframe ranges interactively in the timeline
 import bpy
 from bpy.props import FloatProperty
 import math

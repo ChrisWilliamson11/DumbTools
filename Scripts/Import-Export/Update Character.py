@@ -1,3 +1,4 @@
+# Tooltip: Update a character rig from a newer source file while preserving animation and materials
 import bpy
 import os
 from bpy_extras.io_utils import ImportHelper

@@ -1,4 +1,4 @@
-# Tooltip: Experental OSC plugin
+# Tooltip: Experimental OSC receiver for controlling Blender properties via Open Sound Control
 import threading
 from pythonosc.dispatcher import Dispatcher
 from pythonosc.osc_server import BlockingOSCUDPServer

@@ -1,3 +1,4 @@
+# Tooltip: Fix F-curve group assignments to match bone names in the active armature
 import bpy
 import re
 

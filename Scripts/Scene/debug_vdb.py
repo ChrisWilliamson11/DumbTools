@@ -1,3 +1,4 @@
+# Tooltip: Debug VDB volume objects in the scene - list paths and check for missing files
 import bpy
 
 o = bpy.context.object

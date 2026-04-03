@@ -1,3 +1,4 @@
+# Tooltip: Replace custom property references (mymap) in drivers with direct armature paths
 import bpy
 import re
 

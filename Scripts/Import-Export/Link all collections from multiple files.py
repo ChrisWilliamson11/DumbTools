@@ -1,3 +1,4 @@
+# Tooltip: Link all collections from multiple selected blend files into the current scene
 import bpy
 import os
 from bpy.props import CollectionProperty, StringProperty

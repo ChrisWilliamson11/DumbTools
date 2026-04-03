@@ -1,3 +1,4 @@
+# Tooltip: Batch command-line rendering panel for submitting multiple render jobs
 
 import bpy
 

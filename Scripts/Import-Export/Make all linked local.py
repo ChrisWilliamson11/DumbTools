@@ -1,3 +1,4 @@
+# Tooltip: Make all linked library data local, resolving links while preserving data
 # SPDX-License-Identifier: MIT
 # Make all linked library datablocks local
 # Works in Blender 2.93+ (tested on 3.x/4.x APIs)

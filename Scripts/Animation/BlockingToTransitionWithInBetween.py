@@ -1,3 +1,4 @@
+# Tooltip: Convert blocking keyframes to smooth transitions with in-between poses, Z offset, and rotation
 import bpy
 import math
 import random

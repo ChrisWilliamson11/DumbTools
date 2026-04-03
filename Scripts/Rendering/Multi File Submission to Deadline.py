@@ -1,3 +1,4 @@
+# Tooltip: Select multiple blend files and submit all their scenes to Deadline for rendering
 import bpy
 import os
 import tempfile

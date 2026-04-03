@@ -1,3 +1,4 @@
+# Tooltip: Retime VDB volume sequences by resampling frame numbers to a new range
 import os
 import re
 import shutil

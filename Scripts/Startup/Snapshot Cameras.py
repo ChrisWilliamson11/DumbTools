@@ -1,3 +1,4 @@
+# Tooltip: Create snapshot cameras that capture the current viewport position and settings
 import bpy
 import os
 import json

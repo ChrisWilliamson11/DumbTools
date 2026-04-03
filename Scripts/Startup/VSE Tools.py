@@ -1,3 +1,4 @@
+# Tooltip: Video Sequence Editor tools panel with batch operations and utilities
 import bpy
 import os
 import subprocess

@@ -1,3 +1,4 @@
+# Tooltip: Consolidate asset files into a single folder structure
 import bpy
 from bpy.types import Operator, Panel
 from bpy_extras.io_utils import ImportHelper

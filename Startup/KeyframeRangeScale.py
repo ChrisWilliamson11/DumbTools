@@ -29,33 +29,49 @@ class ANIM_OT_keyframe_range_scaler(bpy.types.Operator):
     def get_selected_keyframes(self, context):
         keyframes = {}
 
-        # Get the active action based on context
-        active_action = None
+        # Collect all actions to check based on context
+        actions_to_check = set()
 
-        if context.area.type == 'DOPESHEET_EDITOR':
-            # Handle different modes in dopesheet
-            dopesheet = context.space_data
-            if dopesheet.mode == 'ACTION':
-                # Action Editor mode
-                active_action = dopesheet.action
-            elif dopesheet.mode == 'DOPESHEET':
-                # Standard dopesheet mode
-                if context.object and context.object.animation_data:
-                    active_action = context.object.animation_data.action
-        elif context.area.type == 'GRAPH_EDITOR':
-            active_action = context.space_data.action
-        elif context.area.type == 'TIMELINE':
-            if context.object and context.object.animation_data:
-                active_action = context.object.animation_data.action
+        # Get actions from all selected objects and their data
+        for obj in context.selected_objects:
+            # Object animation
+            if obj.animation_data and obj.animation_data.action:
+                actions_to_check.add(obj.animation_data.action)
 
-        # Only process keyframes from the active action
-        if active_action:
-            for fcurve in active_action.fcurves:
-                for keyframe in fcurve.keyframe_points:
-                    if keyframe.select_control_point:
-                        if fcurve not in keyframes:
-                            keyframes[fcurve] = []
-                        keyframes[fcurve].append(keyframe)
+            # Object data animation (mesh, camera, light, etc.)
+            if obj.data and hasattr(obj.data, 'animation_data'):
+                if obj.data.animation_data and obj.data.animation_data.action:
+                    actions_to_check.add(obj.data.animation_data.action)
+
+            # Shape keys animation
+            if obj.data and hasattr(obj.data, 'shape_keys') and obj.data.shape_keys:
+                if obj.data.shape_keys.animation_data and obj.data.shape_keys.animation_data.action:
+                    actions_to_check.add(obj.data.shape_keys.animation_data.action)
+
+        # Also check active object if not in selection
+        if context.object:
+            if context.object.animation_data and context.object.animation_data.action:
+                actions_to_check.add(context.object.animation_data.action)
+
+            if context.object.data and hasattr(context.object.data, 'animation_data'):
+                if context.object.data.animation_data and context.object.data.animation_data.action:
+                    actions_to_check.add(context.object.data.animation_data.action)
+
+            if context.object.data and hasattr(context.object.data, 'shape_keys') and context.object.data.shape_keys:
+                if context.object.data.shape_keys.animation_data and context.object.data.shape_keys.animation_data.action:
+                    actions_to_check.add(context.object.data.shape_keys.animation_data.action)
+
+        # Process keyframes from all actions using slotted action API (Blender 5.0)
+        for action in actions_to_check:
+            for layer in action.layers:
+                for strip in layer.strips:
+                    for channelbag in strip.channelbags:
+                        for fcurve in channelbag.fcurves:
+                            for keyframe in fcurve.keyframe_points:
+                                if keyframe.select_control_point:
+                                    if fcurve not in keyframes:
+                                        keyframes[fcurve] = []
+                                    keyframes[fcurve].append(keyframe)
 
         return keyframes
 

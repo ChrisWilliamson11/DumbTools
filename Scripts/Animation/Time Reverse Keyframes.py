@@ -2,14 +2,38 @@
 
 import bpy
 
+def iter_fcurves(action):
+    """
+    Yields fcurves from an Action, handling both Legacy Blender and Blender 5+ Layered Animation.
+    """
+    if not action:
+        return
+    if hasattr(action, "fcurves") and action.fcurves:
+        for fc in action.fcurves:
+            yield fc
+    if hasattr(action, "layers"):
+        for layer in action.layers:
+            if hasattr(layer, "strips"):
+                for strip in layer.strips:
+                    if hasattr(strip, "channelbags"):
+                         for bag in strip.channelbags:
+                             if hasattr(bag, "fcurves"):
+                                 for fc in bag.fcurves:
+                                     yield fc
+                    if hasattr(strip, "fcurves"):
+                        for fc in strip.fcurves:
+                            yield fc
+                    elif hasattr(strip, "channels"):
+                         for fc in strip.channels:
+                             yield fc
+
 def reverse_keyframes(obj):
     if obj.animation_data is None or obj.animation_data.action is None:
         return
 
     action = obj.animation_data.action
-    fcurves = action.fcurves
 
-    for fcurve in fcurves:
+    for fcurve in iter_fcurves(action):
         # Extract keyframes that are selected
         keyframes = [kp for kp in fcurve.keyframe_points if kp.select_control_point]
 

@@ -1,6 +1,30 @@
 # Tooltip:  offset the animation on a bone chain
 import bpy
 
+import bpy
+
+def iter_fcurves(action):
+    if not action:
+        return
+    if hasattr(action, "fcurves") and action.fcurves:
+        for fc in action.fcurves:
+            yield fc
+    if hasattr(action, "layers"):
+        for layer in action.layers:
+            if hasattr(layer, "strips"):
+                for strip in layer.strips:
+                    if hasattr(strip, "channelbags"):
+                         for bag in strip.channelbags:
+                             if hasattr(bag, "fcurves"):
+                                 for fc in bag.fcurves:
+                                     yield fc
+                    if hasattr(strip, "fcurves"):
+                        for fc in strip.fcurves:
+                            yield fc
+                    elif hasattr(strip, "channels"):
+                         for fc in strip.channels:
+                             yield fc
+
 class OBJECT_OT_OffsetKeyframesOperator(bpy.types.Operator):
     bl_label = "Offset Keyframes"
     bl_idname = "object.offset_keyframes_operator"
@@ -45,7 +69,7 @@ class OBJECT_OT_OffsetKeyframesOperator(bpy.types.Operator):
         action = obj.animation_data.action
         
         if action:
-            for fcurve in action.fcurves:
+            for fcurve in iter_fcurves(action):
                 for keyframe in fcurve.keyframe_points:
                     if keyframe.select_control_point:
                         selected_keyframes.append(keyframe)
@@ -56,7 +80,7 @@ class OBJECT_OT_OffsetKeyframesOperator(bpy.types.Operator):
             selected_bones = list(selected_bones)[::-1]
 
         for index, bone in enumerate(selected_bones):
-            for fcurve in bpy.context.object.animation_data.action.fcurves:
+            for fcurve in iter_fcurves(bpy.context.object.animation_data.action):
                 if bone.name in fcurve.data_path:
                     for keyframe in fcurve.keyframe_points:
                         if keyframe in selected_keyframes:
@@ -67,7 +91,7 @@ class OBJECT_OT_OffsetKeyframesOperator(bpy.types.Operator):
             selected_bones = list(selected_bones)[::-1]
 
         for index, bone in enumerate(selected_bones):
-            for fcurve in bpy.context.object.animation_data.action.fcurves:
+            for fcurve in iter_fcurves(bpy.context.object.animation_data.action):
                 if bone.name in fcurve.data_path:
                     for keyframe in fcurve.keyframe_points:
                         if keyframe in selected_keyframes:

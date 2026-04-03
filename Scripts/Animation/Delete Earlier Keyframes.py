@@ -2,6 +2,31 @@
 
 import bpy
 
+def iter_fcurves(action):
+    """
+    Yields fcurves from an Action, handling both Legacy Blender and Blender 5+ Layered Animation.
+    """
+    if not action:
+        return
+    if hasattr(action, "fcurves") and action.fcurves:
+        for fc in action.fcurves:
+            yield fc
+    if hasattr(action, "layers"):
+        for layer in action.layers:
+            if hasattr(layer, "strips"):
+                for strip in layer.strips:
+                    if hasattr(strip, "channelbags"):
+                         for bag in strip.channelbags:
+                             if hasattr(bag, "fcurves"):
+                                 for fc in bag.fcurves:
+                                     yield fc
+                    if hasattr(strip, "fcurves"):
+                        for fc in strip.fcurves:
+                            yield fc
+                    elif hasattr(strip, "channels"):
+                         for fc in strip.channels:
+                             yield fc
+
 def get_nla_offset(obj):
     """
     Calculates the correct offset to align the action's timeline with the NLA strip's timeline.
@@ -32,7 +57,7 @@ def select_keyframes_before_current_frame():
         bone_name = bone.name
         action = obj.animation_data.action
         
-        for fcurve in action.fcurves:
+        for fcurve in iter_fcurves(action):
             if bone_name in fcurve.data_path:
                 for keyframe in fcurve.keyframe_points:
                     if keyframe.co.x < adjusted_current_frame:
@@ -50,7 +75,7 @@ def delete_selected_keyframes():
     offset = get_nla_offset(obj)
     adjusted_current_frame = bpy.context.scene.frame_current - offset
 
-    for fcurve in action.fcurves:
+    for fcurve in iter_fcurves(action):
         keyframes_to_remove = [keyframe for keyframe in fcurve.keyframe_points if keyframe.co.x < adjusted_current_frame]
         
         for keyframe in reversed(keyframes_to_remove):

@@ -3,6 +3,34 @@
 import bpy
 import math
 
+def iter_fcurves(action):
+    if not action:
+        return
+    if hasattr(action, "fcurves") and action.fcurves:
+        for fc in action.fcurves:
+            yield fc
+    if hasattr(action, "layers"):
+        for layer in action.layers:
+            if hasattr(layer, "strips"):
+                for strip in layer.strips:
+                    if hasattr(strip, "channelbags"):
+                         for bag in strip.channelbags:
+                             if hasattr(bag, "fcurves"):
+                                 for fc in bag.fcurves:
+                                     yield fc
+                    if hasattr(strip, "fcurves"):
+                        for fc in strip.fcurves:
+                            yield fc
+                    elif hasattr(strip, "channels"):
+                         for fc in strip.channels:
+                             yield fc
+
+def find_fcurve(action, data_path, index=0):
+    for fc in iter_fcurves(action):
+        if fc.data_path == data_path and fc.array_index == index:
+            return fc
+    return None
+
 def calculate_spring_motion(rotation, velocity, target_rotation, mass, stiffness, damping, frame_duration):
     force = -stiffness * (rotation - target_rotation) - damping * velocity
     acceleration = force / mass
@@ -14,7 +42,7 @@ def replace_with_spring_keyframes(action, bone_name, mass, stiffness, damping, s
     bone_path = f'pose.bones["{bone_name}"].rotation_euler'
     
     for i in range(3):  # Apply to all three axes: X (0), Y (1), Z (2)
-        fcurve = action.fcurves.find(data_path=bone_path, index=i)
+        fcurve = find_fcurve(action, bone_path, i)
         
         if not fcurve:
             continue

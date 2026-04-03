@@ -1,7 +1,30 @@
 import bpy
 
+import bpy
+
+def iter_fcurves(action):
+    if not action:
+        return
+    if hasattr(action, "fcurves") and action.fcurves:
+        for fc in action.fcurves:
+            yield fc
+    if hasattr(action, "layers"):
+        for layer in action.layers:
+            if hasattr(layer, "strips"):
+                for strip in layer.strips:
+                    if hasattr(strip, "channelbags"):
+                         for bag in strip.channelbags:
+                             if hasattr(bag, "fcurves"):
+                                 for fc in bag.fcurves:
+                                     yield fc
+                    if hasattr(strip, "fcurves"):
+                        for fc in strip.fcurves:
+                            yield fc
+                    elif hasattr(strip, "channels"):
+                         for fc in strip.channels:
+                             yield fc
+
 class ANIM_OT_scale_keys_from_start_end(bpy.types.Operator):
-    """Scale selected keyframes in time relative to the first or last keyframe of each channel"""
     bl_idname = "anim.scale_keys_from_start_end"
     bl_label = "Scale Keys From Start/End"
     bl_options = {'REGISTER', 'UNDO'}
@@ -40,7 +63,7 @@ class ANIM_OT_scale_keys_from_start_end(bpy.types.Operator):
             action = obj.animation_data.action
             
             # Iterate over all channels (fcurves) in the action
-            for fcurve in action.fcurves:
+            for fcurve in iter_fcurves(action):
                 # Get all selected keyframes in this channel
                 selected_keys = [kp for kp in fcurve.keyframe_points if kp.select_control_point]
                 

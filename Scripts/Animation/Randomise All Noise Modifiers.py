@@ -3,6 +3,28 @@
 import bpy
 import random
 
+def iter_fcurves(action):
+    if not action:
+        return
+    if hasattr(action, "fcurves") and action.fcurves:
+        for fc in action.fcurves:
+            yield fc
+    if hasattr(action, "layers"):
+        for layer in action.layers:
+            if hasattr(layer, "strips"):
+                for strip in layer.strips:
+                    if hasattr(strip, "channelbags"):
+                         for bag in strip.channelbags:
+                             if hasattr(bag, "fcurves"):
+                                 for fc in bag.fcurves:
+                                     yield fc
+                    if hasattr(strip, "fcurves"):
+                        for fc in strip.fcurves:
+                            yield fc
+                    elif hasattr(strip, "channels"):
+                         for fc in strip.channels:
+                             yield fc
+
 def main():
     # Range for randomizing the phase
     min_phase, max_phase = -10000, 10000
@@ -11,7 +33,7 @@ def main():
     for obj in bpy.context.selected_objects:
         # Check if the object has animation data and fcurves
         if obj.animation_data and obj.animation_data.action:
-            for fcurve in obj.animation_data.action.fcurves:
+            for fcurve in iter_fcurves(obj.animation_data.action):
                 randomize_noise_phase(fcurve, min_phase, max_phase)
 
 def randomize_noise_phase(fcurve, min_phase, max_phase):

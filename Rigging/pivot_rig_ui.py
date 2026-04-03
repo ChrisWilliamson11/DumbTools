@@ -366,12 +366,44 @@ def find_action(action):
     else:
         return None
 
+def get_action_fcurves(action):
+    """Get all FCurves from an action, supporting both legacy and Blender 5.0+ layered animation.
+    In Blender 5.0+, Action.fcurves was removed. FCurves now live inside:
+        Action -> Layers -> Strips -> Channelbags -> FCurves
+    """
+    # Blender 5.0+: layered animation system
+    if hasattr(action, 'layers'):
+        curves = []
+        for layer in action.layers:
+            for strip in layer.strips:
+                if hasattr(strip, 'channelbags'):
+                    for channelbag in strip.channelbags:
+                        curves.extend(channelbag.fcurves)
+        return curves
+    # Legacy (Blender 4.x and earlier): fcurves directly on Action
+    if hasattr(action, 'fcurves'):
+        return list(action.fcurves)
+    return []
+
 def clean_action_empty_curves(action):
     "Delete completely empty curves from the given action."
     action = find_action(action)
-    for curve in list(action.fcurves):
-        if curve.is_empty:
-            action.fcurves.remove(curve)
+    if action is None:
+        return
+    # Blender 5.0+: remove from each channelbag
+    if hasattr(action, 'layers'):
+        for layer in action.layers:
+            for strip in layer.strips:
+                if hasattr(strip, 'channelbags'):
+                    for channelbag in strip.channelbags:
+                        for curve in list(channelbag.fcurves):
+                            if curve.is_empty:
+                                channelbag.fcurves.remove(curve)
+    # Legacy
+    elif hasattr(action, 'fcurves'):
+        for curve in list(action.fcurves):
+            if curve.is_empty:
+                action.fcurves.remove(curve)
     action.update_tag()
 
 TRANSFORM_PROPS_LOCATION = frozenset(['location'])
@@ -426,7 +458,7 @@ class ActionCurveTable(FCurveTable):
         super().__init__()
         self.action = find_action(action)
         if self.action:
-            self.index_curves(self.action.fcurves)
+            self.index_curves(get_action_fcurves(self.action))
 
 class DriverCurveTable(FCurveTable):
     "Table for efficient lookup of Driver FCurves by properties."

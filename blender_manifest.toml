@@ -1,18 +1,18 @@
-schema_version = "1.0.0"
+schema_version = "1.0.3"
 
 id = "dumb_tools"
 version = "1.0.1"
 name = "DumbTools"
-description = "Executes scripts from a predefined folder"
-author = "Chris Williamson"
+tagline = "Executes scripts from a predefined folder"
 maintainer = "Chris Williamson"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+
 license = [
-  "SPDX-License-Identifier: GPL-2.0-or-later"
+    "SPDX:GPL-2.0-or-later"
 ]
 website = "https://github.com/ChrisWilliamson11/DumbTools"
 
-# Type of extension
-type = "add-on"
-
-# Minimum Blender version required
-blender_version_min = "4.2.0"
+[permissions]
+network = "Download updated scripts from GitHub"

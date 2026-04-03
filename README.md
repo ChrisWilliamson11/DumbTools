@@ -2,7 +2,7 @@
 
 **Author:** Chris Williamson  
 **Version:** 1.0.1  
-**Blender Compatibility:** 3.60.0+
+**Blender Compatibility:** 4.2.0+
 
 DumbTools is a Blender addon that provides a dynamic script execution system, allowing you to organize and run custom Python scripts directly from Blender's interface. It transforms your script collection into an organized, accessible menu system within Blender.
 

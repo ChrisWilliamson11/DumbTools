@@ -15,17 +15,15 @@ DumbTools is a Blender addon that provides a dynamic script execution system, al
 ## 🛠️ Installation
 
 ### Method 1: Addon Installation (Recommended)
-1. Download the `DumbTools.zip` 
-2. In Blender, go to `Edit > Preferences > Add-ons`
-3. Click `Install...` and select the downloaded zip file
-4. Enable the "DumbTools" addon
-5. Configure the scripts folder path in addon preferences to the folder your scripts are stored in
+1. Download the github repo as a zip (green button with 'Code' on it)
+2. Drag the zip into the blender window to install
+2. update scripts in the preferences ->addons->dumbtools
 
 ## ⚙️ Configuration
 
 After installation, configure DumbTools in `Edit > Preferences > Add-ons > DumbTools`:
 
-- **Scripts Folder**: Path to your script collection
+- **Scripts Folder**: Path to your script collection if you want to use a custom folder
 - **Menu Name**: Custom name for the DumbTools menu
 - **Startup & Post-Load Scripts**: Enable/disable individual startup scripts
 - **Deadline Command Path**: Path to the Deadline command executable (for Deadline integration)

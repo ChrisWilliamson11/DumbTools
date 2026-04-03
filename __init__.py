@@ -16,6 +16,25 @@ CUSTOM_STARTUP_FOLDER = ""
 CUSTOM_POSTLOAD_FOLDER = ""
 
 
+def _get_dumbtools_prefs():
+    """Get DumbTools preferences regardless of addon ID.
+    
+    Available in all DumbTools scripts as get_dumbtools_prefs().
+    Returns the AddonPreferences instance for DumbTools.
+    """
+    addon_id = __package__ if __package__ else __name__
+    return bpy.context.preferences.addons[addon_id].preferences
+
+
+def _get_ext_root():
+    """Get the DumbTools extension root directory.
+    
+    Available in all DumbTools scripts as get_ext_root().
+    Returns the absolute path to the extension's install directory.
+    """
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 def script_folder_default():
     default_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Scripts")
     if not os.path.exists(default_folder):
@@ -217,8 +236,16 @@ def execute_script(filepath):
         return
         
     try:
+        # Inject centralised helpers so scripts can access prefs and paths
+        # without needing to know the addon ID.
+        #   get_dumbtools_prefs() -> AddonPreferences instance
+        #   get_ext_root()        -> extension install directory
+        script_globals = {
+            "get_dumbtools_prefs": _get_dumbtools_prefs,
+            "get_ext_root": _get_ext_root,
+        }
         with open(filepath, 'r') as file:
-            exec(compile(file.read(), filepath, 'exec'), {})
+            exec(compile(file.read(), filepath, 'exec'), script_globals)
         # print(f"Executed '{filepath}' successfully.")
     except Exception as e:
         print(f"Failed to execute '{filepath}': {e}")

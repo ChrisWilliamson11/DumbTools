@@ -15,10 +15,7 @@ dependency_graph = bpy.context.evaluated_depsgraph_get()
 
 print(f"Number of selected objects: {len(objects)}")
 
-def get_script_folder():
-    # Access the script folder path from the preferences
-    prefs = bpy.context.preferences.addons["DumbTools"].preferences
-    return prefs.script_folder
+# get_dumbtools_prefs() and get_ext_root() are injected by DumbTools __init__.py
 
 
 class BrowseTargetFolderOperator(bpy.types.Operator):
@@ -101,8 +98,7 @@ class LoadAnimationOperator(bpy.types.Operator):
             print(f"Modifier {mod_name} already exists on the object.")
 
     def append_load_animation_node_group(self):
-        script_folder = get_script_folder()
-        filepath = os.path.join(script_folder, "Docs", "Assets", "LoadAnimation.blend")
+        filepath = os.path.join(get_ext_root(), "Assets", "LoadAnimation.blend")
         print(f"Loading node group from: {filepath}")
         with bpy.data.libraries.load(filepath, link=False) as (data_from, data_to):
             if "LoadAnimation" not in bpy.data.node_groups:

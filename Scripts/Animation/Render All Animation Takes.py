@@ -8,9 +8,10 @@ import subprocess
 import shutil
 
 # Get deadline path from DumbTools preferences
+# get_dumbtools_prefs() is injected by DumbTools __init__.py
 def get_deadline_path():
     try:
-        prefs = bpy.context.preferences.addons["DumbTools"].preferences
+        prefs = get_dumbtools_prefs()
         return getattr(prefs, 'deadline_path', "\\\\wlgsrvrnd\\DeadlineRepository10\\bin\\Windows\\64bit\\deadlinecommand.exe")
     except:
         # Fallback to hardcoded path if preferences aren't available

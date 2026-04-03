@@ -2,13 +2,9 @@
 import bpy
 import os
 
-# Get the base directory from DumbTools preferences
-addon_prefs = bpy.context.preferences.addons["DumbTools"].preferences
-base_dir = addon_prefs.script_folder
-
-
 # File path to the Blender file containing the 'DimensionObject'
-external_file_path = os.path.join(base_dir, "Docs", "Assets", "DimensionObject.blend")
+# get_ext_root() is injected by DumbTools __init__.py
+external_file_path = os.path.join(get_ext_root(), "Assets", "DimensionObject.blend")
 
 # Name of the object to append
 dimension_object_name = "DimensionObject"

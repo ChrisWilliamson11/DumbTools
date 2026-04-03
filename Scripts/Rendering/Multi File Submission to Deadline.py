@@ -28,8 +28,9 @@ class SubmitMultipleBlendFilesOperator(Operator, ImportHelper):
     
     def get_deadline_path(self):
         """Get deadline path from preferences or use default"""
+        # get_dumbtools_prefs() is injected by DumbTools __init__.py
         try:
-            prefs = bpy.context.preferences.addons["DumbTools"].preferences
+            prefs = get_dumbtools_prefs()
             return getattr(prefs, 'deadline_path', "\\\\wlgsrvrnd\\DeadlineRepository10\\bin\\Windows\\64bit\\deadlinecommand.exe")
         except:
             return "\\\\wlgsrvrnd\\DeadlineRepository10\\bin\\Windows\\64bit\\deadlinecommand.exe"

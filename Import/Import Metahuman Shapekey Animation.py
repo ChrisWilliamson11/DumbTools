@@ -250,6 +250,25 @@ def fbx_ticks_to_frame(tick, fps):
     return (float(tick) / FBX_TICKS_PER_SECOND) * fps
 
 
+def get_channelbag_fcurves(action, id_block):
+    """Get the FCurves collection for the given id_block's slot in the action.
+
+    In Blender 5's layered Action API, FCurves live inside channelbags
+    associated with slots. Returns the channelbag's fcurves or None if
+    no matching channelbag exists yet.
+    """
+    anim_data = id_block.animation_data
+    if not anim_data or not anim_data.action_slot:
+        return None
+    slot_handle = anim_data.action_slot.handle
+    for layer in action.layers:
+        for strip in layer.strips:
+            for cbag in strip.channelbags:
+                if cbag.slot_handle == slot_handle:
+                    return cbag.fcurves
+    return None
+
+
 def remove_shapekey_value_drivers(obj, name_prefix=None):
     """
     Remove drivers that target key_blocks["<name>"].value on the object's shape key datablock.
@@ -274,13 +293,24 @@ def remove_shapekey_value_drivers(obj, name_prefix=None):
     return removed
 
 
-def remove_existing_fcurves_for_datapath(action, data_path):
-    """Remove existing FCurves in an action for a specific data_path."""
-    if not action:
+def remove_existing_fcurves_for_datapath(action, data_path, id_block=None, channel_index=None):
+    """Remove existing FCurves in an action for a specific data_path.
+
+    Uses the Blender 5 channelbag API to find and remove FCurves.
+    id_block is required to locate the correct channelbag/slot.
+    """
+    if not action or not id_block:
         return 0
-    to_remove = [fcu for fcu in action.fcurves if fcu.data_path == data_path]
+    cbag_fcurves = get_channelbag_fcurves(action, id_block)
+    if not cbag_fcurves:
+        return 0
+    to_remove = [
+        fcu for fcu in cbag_fcurves
+        if fcu.data_path == data_path
+        and (channel_index is None or getattr(fcu, "array_index", -1) == channel_index)
+    ]
     for fcu in to_remove:
-        action.fcurves.remove(fcu)
+        cbag_fcurves.remove(fcu)
     return len(to_remove)
 
 
@@ -289,6 +319,7 @@ def insert_curve_on_shapekey(
     shapekey_name,
     frames,
     values,
+    id_block=None,
     group_name="CTRL",
     clear_existing=True,
     interpolation="BEZIER",
@@ -309,11 +340,13 @@ def insert_curve_on_shapekey(
     - Deduplicate frames (last value wins)
     - Sort frames ascending
     - Bulk add keyframe points, set interpolation and clamp handles if BEZIER
+
+    id_block: the shape_keys datablock (obj.data.shape_keys) for Blender 5 API.
     """
     data_path = f'key_blocks["{shapekey_name}"].value'
     if clear_existing:
-        remove_existing_fcurves_for_datapath(action, data_path)
-    fc = action.fcurves.new(data_path=data_path, index=-1, action_group=group_name)
+        remove_existing_fcurves_for_datapath(action, data_path, id_block=id_block)
+    fc = action.fcurve_ensure_for_datablock(id_block, data_path, index=0)
 
     # Optional despike using a sliding median (replace isolated outliers with neighborhood median)
     if despike and len(values) >= 3:
@@ -474,6 +507,7 @@ def insert_curve_on_id(
     data_path,
     frames,
     values,
+    id_block=None,
     group_name="CTRL",
     clear_existing=True,
     interpolation="BEZIER",
@@ -490,23 +524,16 @@ def insert_curve_on_id(
 ):
     """Insert an FCurve on an arbitrary data_path for the given action.
     Mirrors insert_curve_on_shapekey behavior for filtering, clamping, interpolation, etc.
+
+    id_block: the ID datablock (e.g. armature Object) for Blender 5 API.
     """
     if clear_existing:
-        to_remove = [
-            fcu
-            for fcu in action.fcurves
-            if fcu.data_path == data_path
-            and (
-                channel_index is None
-                or getattr(fcu, "array_index", -1) == channel_index
-            )
-        ]
-        for fcu in to_remove:
-            action.fcurves.remove(fcu)
-    fc = action.fcurves.new(
-        data_path=data_path,
-        index=(channel_index if channel_index is not None else -1),
-        action_group=group_name,
+        remove_existing_fcurves_for_datapath(
+            action, data_path, id_block=id_block, channel_index=channel_index
+        )
+    fc = action.fcurve_ensure_for_datablock(
+        id_block, data_path,
+        index=(channel_index if channel_index is not None else 0),
     )
 
     values_local = list(values)
@@ -1157,6 +1184,7 @@ class IMPORT_OT_ascii_fbx_shapekeys(bpy.types.Operator, ImportHelper):
                                 target_dp,
                                 frames,
                                 values,
+                                id_block=owner_id,
                                 group_name="CTRL",
                                 clear_existing=self.clear_existing_fcurves,
                                 interpolation="BEZIER"
@@ -1190,6 +1218,7 @@ class IMPORT_OT_ascii_fbx_shapekeys(bpy.types.Operator, ImportHelper):
                         prop_name,
                         frames,
                         values,
+                        id_block=obj.data.shape_keys,
                         group_name="CTRL",
                         clear_existing=self.clear_existing_fcurves,
                         interpolation="BEZIER"

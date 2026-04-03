@@ -8,17 +8,18 @@ import sys
 # ==========================================
 # Set the target folder path here if you want to run it directly from an editor.
 # You can also drag and drop a folder onto this script file.
-TARGET_DIR = r"INSERT_FOLDER_PATH_HERE"
+TARGET_DIR = R"H:\000_Projects\Goliath\01-3_Marketing\03_Animation\Runner_Vignettes\Medic\04_Assets\FX\ShieldBreaks\ShieldBreakA"
 
 # Speed multiplier. 
 # 3 = 300% speed (Keep 1 frame, skip 2).
-SPEED_FACTOR = 3
+SPEED_FACTOR = 2
+
 
 # Amount of zero-padding for numbers (e.g. 4 => _0001.vdb)
 # Set to 0 to disable padding (e.g. _1.vdb)
 PADDING = 0
 
-# If True, copies the FIRST frame of the original sequence to fill the remaining duration.
+# If True, copies the FIRST frame of the original sequence to fill the remaining duration.ye
 # If False, you might want to modify the code to copy the LAST frame.
 PAD_WITH_FIRST_FRAME = True
 # ==========================================

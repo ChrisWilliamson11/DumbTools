@@ -1,0 +1,18 @@
+schema_version = 1.0.0
+
+id = "dumb_tools"
+version = "1.0.1"
+name = "DumbTools"
+description = "Executes scripts from a predefined folder"
+author = "Chris Williamson"
+maintainer = "Chris Williamson"
+license = [
+  "SPDX-License-Identifier: GPL-2.0-or-later"
+]
+website = "https://github.com/ChrisWilliamson11/DumbTools"
+
+# Type of extension
+type = "add-on"
+
+# Minimum Blender version required
+blender_version_min = "4.2.0"

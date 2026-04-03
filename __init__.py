@@ -5,19 +5,11 @@ from bpy.types import AddonPreferences
 from bpy.props import BoolProperty
 from bpy.app.handlers import persistent
 import webbrowser
+import urllib.request
+import zipfile
+import shutil
+import tempfile
 
-bl_info = {
-    "name": "DumbTools",
-    "author": "Chris Williamson",
-    "version": (1, 0, 1),
-    "blender": (3, 60, 0),
-    "location": "View3D > Toolshelf > DumbTools",
-    "description": "Executes scripts from a predefined folder",
-    "warning": "",
-    "wiki_url": "",
-    "category": "Development",
-    "default" : True,
-}
 
 CUSTOM_SCRIPTS_FOLDER =""
 CUSTOM_STARTUP_FOLDER = ""
@@ -25,11 +17,12 @@ CUSTOM_POSTLOAD_FOLDER = ""
 
 
 def script_folder_default():
-    # Get the absolute path to Blender's configuration directory
-    user_script_path = bpy.utils.user_resource('SCRIPTS', path="addons", create=True)
-    default_folder = os.path.join(user_script_path, "DumbToolsScripts")
+    default_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Scripts")
     if not os.path.exists(default_folder):
-        os.makedirs(default_folder, exist_ok=True)
+        try:
+            os.makedirs(default_folder, exist_ok=True)
+        except Exception:
+            pass
     return default_folder
 
 
@@ -67,6 +60,7 @@ class DumbToolsPreferences(bpy.types.AddonPreferences):
 
     def draw(self, context):
         layout = self.layout
+        layout.operator("dumbtools.update_scripts", icon='FILE_REFRESH')
         box = layout.box()
         box.prop(self, "script_folder")
         box.prop(self, "menu_name")
@@ -277,6 +271,57 @@ class DumbToolsDocsOperator(bpy.types.Operator):
             webbrowser.open(f"file://{docs_path}")
             return {'FINISHED'}
 
+class DumbToolsUpdateScriptsOperator(bpy.types.Operator):
+    """Download the latest DumbTools Scripts from GitHub"""
+    bl_idname = "dumbtools.update_scripts"
+    bl_label = "Update Scripts from GitHub"
+
+    def execute(self, context):
+        preferences = context.preferences.addons[__name__].preferences
+        target_dir = preferences.script_folder
+        
+        # URL to zip download of the main branch
+        url = "https://github.com/ChrisWilliamson11/DumbTools/archive/refs/heads/main.zip"
+        
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                zip_path = os.path.join(tmp_dir, "DumbTools-main.zip")
+                
+                # Download
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req) as response, open(zip_path, 'wb') as out_file:
+                    shutil.copyfileobj(response, out_file)
+                
+                # Extract
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(tmp_dir)
+                    
+                # Extracted folder is 'DumbTools-main', and the scripts are inside it
+                extracted_scripts = os.path.join(tmp_dir, "DumbTools-main", "Scripts")
+                
+                if not os.path.exists(extracted_scripts):
+                    self.report({'ERROR'}, "Could not find 'Scripts' directory in downloaded archive!")
+                    return {'CANCELLED'}
+                
+                if not os.path.exists(target_dir):
+                    try:
+                        os.makedirs(target_dir, exist_ok=True)
+                    except Exception:
+                        self.report({'ERROR'}, f"Failed to create target directory: {target_dir}")
+                        return {'CANCELLED'}
+                        
+                # Overwrite existing files
+                shutil.copytree(extracted_scripts, target_dir, dirs_exist_ok=True)
+                
+            self.report({'INFO'}, "DumbTools scripts updated successfully!")
+            self.report({'WARNING'}, "Please disable and re-enable Addon or Restart Blender to reflect script changes.")
+            
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to update scripts: {e}")
+            return {'CANCELLED'}
+            
+        return {'FINISHED'}
+
 
 def execute_startup_scripts():
     preferences = bpy.context.preferences.addons[__name__].preferences
@@ -333,6 +378,7 @@ def register():
     execute_startup_scripts()  # Execute startup scripts immediately
     bpy.app.handlers.load_post.append(load_handler)
     bpy.utils.register_class(DumbToolsDocsOperator)
+    bpy.utils.register_class(DumbToolsUpdateScriptsOperator)
 
 
 
@@ -356,6 +402,7 @@ def unregister():
     # If the addon is disabled, remove the menu from the editor
     bpy.types.TOPBAR_MT_editor_menus.remove(draw_dumbtools_menu)
     bpy.utils.unregister_class(DumbToolsDocsOperator)
+    bpy.utils.unregister_class(DumbToolsUpdateScriptsOperator)
     
     # Unregister the script operators
     for op_class in reversed(list(SCRIPT_OPERATORS.values())):

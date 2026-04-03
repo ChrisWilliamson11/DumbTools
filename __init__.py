@@ -36,7 +36,7 @@ def report_message(message, icon='INFO', title="DumbTools Notification"):
 
 
 class DumbToolsPreferences(bpy.types.AddonPreferences):
-    bl_idname = "DumbTools"
+    bl_idname = __package__ if __package__ else __name__
 
     script_folder: bpy.props.StringProperty(
         name="Scripts Folder",
@@ -277,7 +277,8 @@ class DumbToolsUpdateScriptsOperator(bpy.types.Operator):
     bl_label = "Update Scripts from GitHub"
 
     def execute(self, context):
-        preferences = context.preferences.addons[__name__].preferences
+        addon_id = __package__ if __package__ else __name__
+        preferences = context.preferences.addons[addon_id].preferences
         target_dir = preferences.script_folder
         
         # URL to zip download of the main branch
@@ -324,7 +325,8 @@ class DumbToolsUpdateScriptsOperator(bpy.types.Operator):
 
 
 def execute_startup_scripts():
-    preferences = bpy.context.preferences.addons[__name__].preferences
+    addon_id = __package__ if __package__ else __name__
+    preferences = bpy.context.preferences.addons[addon_id].preferences
     #print("Executing startup scripts...")
     if CUSTOM_STARTUP_FOLDER and os.path.isdir(CUSTOM_STARTUP_FOLDER):
         for fname in os.listdir(CUSTOM_STARTUP_FOLDER):
@@ -335,7 +337,8 @@ def execute_startup_scripts():
                 
 @persistent
 def load_handler(dummy):
-    preferences = bpy.context.preferences.addons[__name__].preferences
+    addon_id = __package__ if __package__ else __name__
+    preferences = bpy.context.preferences.addons[addon_id].preferences
     #print("Running load handler for post-load scripts...")
     if CUSTOM_POSTLOAD_FOLDER and os.path.isdir(CUSTOM_POSTLOAD_FOLDER):
         for fname in os.listdir(CUSTOM_POSTLOAD_FOLDER):
@@ -346,13 +349,15 @@ def load_handler(dummy):
 
 # Function to draw the menu (this is the function you append to TOPBAR_MT_editor_menus)
 def draw_dumbtools_menu(self, context):
-    menu_name = context.preferences.addons[__name__].preferences.menu_name
+    addon_id = __package__ if __package__ else __name__
+    menu_name = context.preferences.addons[addon_id].preferences.menu_name
     self.layout.menu(DumbToolsMenu.bl_idname, text=menu_name)
          
 def register():
     bpy.utils.register_class(DumbToolsPreferences)
     global CUSTOM_SCRIPTS_FOLDER
-    CUSTOM_SCRIPTS_FOLDER = bpy.context.preferences.addons[__name__].preferences.script_folder
+    addon_id = __package__ if __package__ else __name__
+    CUSTOM_SCRIPTS_FOLDER = bpy.context.preferences.addons[addon_id].preferences.script_folder
     if not os.path.exists(CUSTOM_SCRIPTS_FOLDER):
         os.makedirs(CUSTOM_SCRIPTS_FOLDER, exist_ok=True)
     global CUSTOM_STARTUP_FOLDER, CUSTOM_POSTLOAD_FOLDER

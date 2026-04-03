@@ -2,6 +2,33 @@
 import bpy
 import random
 
+def iter_fcurves(action):
+    """
+    Yields fcurves from an Action, handling both Legacy Blender and Blender 5+ Layered Animation.
+    """
+    if not action:
+        return
+    # Legacy: Direct fcurves list
+    if hasattr(action, "fcurves") and action.fcurves:
+        for fc in action.fcurves:
+            yield fc
+    # Blender 5+: Layers and Strips
+    if hasattr(action, "layers"):
+        for layer in action.layers:
+            if hasattr(layer, "strips"):
+                for strip in layer.strips:
+                    if hasattr(strip, "channelbags"):
+                         for bag in strip.channelbags:
+                             if hasattr(bag, "fcurves"):
+                                 for fc in bag.fcurves:
+                                     yield fc
+                    # Fallback for other structures (legacy transition or direct strips)
+                    if hasattr(strip, "fcurves"):
+                        for fc in strip.fcurves:
+                            yield fc
+                    elif hasattr(strip, "channels"):
+                         for fc in strip.channels:
+                             yield fc
 
 class OffsetAnimationOperator(bpy.types.Operator):
     bl_idname = "object.offset_animation"
@@ -81,7 +108,7 @@ class OffsetAnimationOperator(bpy.types.Operator):
                 if not act:
                     return
                 if selected_only:
-                    for fcu in getattr(act, "fcurves", []) or []:
+                    for fcu in iter_fcurves(act):
                         for kp in getattr(fcu, "keyframe_points", []) or []:
                             if _key_selected(kp):
                                 found = True
@@ -126,9 +153,9 @@ class OffsetAnimationOperator(bpy.types.Operator):
             return start, end
 
         def shift_action_keys(act, delta, selected_only=False):
-            if not act or not act.fcurves:
+            if not act:
                 return
-            for fcu in act.fcurves:
+            for fcu in iter_fcurves(act):
                 for k in fcu.keyframe_points:
                     if selected_only:
                         if not (

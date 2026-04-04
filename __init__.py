@@ -112,7 +112,7 @@ def register_properties(CUSTOM_SCRIPTS_FOLDER, CUSTOM_STARTUP_FOLDER, CUSTOM_POS
 
                             
 class BaseScriptOperator(bpy.types.Operator):
-    """Base operator for executing scripts."""
+    """Base operator for executing scripts. Ctrl+click to open in Text Editor instead."""
     bl_idname = "dumbtools.base_script_operator"
     bl_label = "Execute Script"  # Generic label for the base operator
     filepath: bpy.props.StringProperty()
@@ -122,6 +122,53 @@ class BaseScriptOperator(bpy.types.Operator):
             self.report({'ERROR'}, "No script path specified")
             return {'CANCELLED'}
         execute_script(self.filepath)
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        if event.ctrl and self.filepath:
+            return self.open_in_text_editor(context)
+        return self.execute(context)
+
+    def open_in_text_editor(self, context):
+        """Load the script as a text datablock and switch an editor to show it."""
+        if not self.filepath or not os.path.exists(self.filepath):
+            self.report({'ERROR'}, f"Script not found: {self.filepath}")
+            return {'CANCELLED'}
+
+        script_name = os.path.basename(self.filepath)
+
+        # Check if already loaded, remove old version to get fresh content
+        if script_name in bpy.data.texts:
+            bpy.data.texts.remove(bpy.data.texts[script_name])
+
+        # Load the script file as a text datablock
+        text_block = bpy.data.texts.load(self.filepath)
+        text_block.name = script_name
+
+        # Find the best area to convert to a Text Editor:
+        # Prefer the largest non-Properties, non-Outliner, non-Header area
+        best_area = None
+        best_size = 0
+        skip_types = {'PROPERTIES', 'OUTLINER', 'INFO', 'STATUSBAR',
+                      'HEADER', 'TOPBAR', 'PREFERENCES'}
+
+        for area in context.screen.areas:
+            if area.type in skip_types:
+                continue
+            area_size = area.width * area.height
+            if area_size > best_size:
+                best_size = area_size
+                best_area = area
+
+        if best_area:
+            best_area.type = 'TEXT_EDITOR'
+            # Set the active text in the space
+            for space in best_area.spaces:
+                if space.type == 'TEXT_EDITOR':
+                    space.text = text_block
+                    break
+
+        self.report({'INFO'}, f"Opened '{script_name}' in Text Editor")
         return {'FINISHED'}
 
 def register_script_operators():

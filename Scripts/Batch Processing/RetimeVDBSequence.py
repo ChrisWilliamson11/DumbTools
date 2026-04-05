@@ -9,7 +9,7 @@ import sys
 # ==========================================
 # Set the target folder path here if you want to run it directly from an editor.
 # You can also drag and drop a folder onto this script file.
-TARGET_DIR = R"H:\000_Projects\Goliath\01-3_Marketing\03_Animation\Runner_Vignettes\Medic\04_Assets\FX\ShieldBreaks\ShieldBreakA"
+TARGET_DIR = R"H:\000_Projects\Goliath\01-3_Marketing\03_Animation\Runner_Vignettes\Medic\04_Assets\FX\ShieldBreaks\ShieldBreakB"
 
 # Speed multiplier. 
 # 3 = 300% speed (Keep 1 frame, skip 2).

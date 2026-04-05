@@ -20,17 +20,21 @@ def find_muzzle_flash_templates():
     valid_templates = []
     
     for col in source_col.children:
-        # Check for Empty and Volume (VDB)
+        # Check for Empty, Volume (VDB) and Mesh/PointCloud (Alembic)
         has_empty = False
         has_volume = False
+        alembic_count = 0
         
         for obj in col.objects:
             if obj.type == 'EMPTY':
                 has_empty = True
             elif obj.type == 'VOLUME':
                 has_volume = True
+            elif obj.type in ('MESH', 'POINTCLOUD'):
+                alembic_count += 1
         
-        if has_empty and has_volume:
+        # Valid if: Empty exists AND (Volume exists OR Alembic exists)
+        if has_empty and (has_volume or alembic_count > 0):
             valid_templates.append(col)
             
     return valid_templates
@@ -97,41 +101,96 @@ def copy_and_align(template_col, target_obj, current_frame):
         # 2. Identify Source Objects
         src_empty = None
         src_vdb = None
+        src_alembics = []
         
         for obj in template_col.objects:
             if obj.type == 'EMPTY':
                 src_empty = obj
             elif obj.type == 'VOLUME':
                 src_vdb = obj
+            elif obj.type in ('MESH', 'POINTCLOUD'):
+                src_alembics.append(obj)
                 
-        if not src_empty or not src_vdb:
-            print(f"Skipping invalid template {template_col.name} (Missing Empty or Volume)")
+        if not src_empty or (not src_vdb and not src_alembics):
+            print(f"Skipping invalid template {template_col.name} (Missing Empty, or no Volume/Alembic)")
             return
 
-        print(f"Step 2: Source Objects Found: Empty={src_empty.name}, VDB={src_vdb.name}")
+        vdb_name = src_vdb.name if src_vdb else "None"
+        print(f"Step 2: Source Objects Found: Empty={src_empty.name}, VDB={vdb_name}, Alembics={len(src_alembics)}")
 
         # 3. Duplicate Objects (Using Data API to avoid Context issues)
         # Copy Empty
         new_empty = src_empty.copy()
         # Empty data is usually None or shared, copy() on object is enough.
         
-        # Copy VDB
-        new_vdb = src_vdb.copy()
-        if src_vdb.data:
-            # Deep copy data to ensure frame_offset properties/animation are unique
-            new_vdb.data = src_vdb.data.copy()
+        # Copy VDB (if present)
+        new_vdb = None
+        if src_vdb:
+            new_vdb = src_vdb.copy()
+            if src_vdb.data:
+                # Deep copy data to ensure frame_offset properties/animation are unique
+                new_vdb.data = src_vdb.data.copy()
         
         print("Step 3: Objects Duplicated")
         
         # Link to Generated Collection
         gen_col.objects.link(new_empty)
-        gen_col.objects.link(new_vdb)
+        if new_vdb:
+            gen_col.objects.link(new_vdb)
+            # Restore Parent Relationship
+            new_vdb.parent = new_empty
+            new_vdb.matrix_parent_inverse = src_vdb.matrix_parent_inverse.copy()
         print("Step 3b: Objects Linked to Collection")
         
-        # Restore Parent Relationship
-        new_vdb.parent = new_empty
-        # Preserve transform offset from parent
-        new_vdb.matrix_parent_inverse = src_vdb.matrix_parent_inverse.copy()
+        # Handle Alembic children
+        for src_alembic in src_alembics:
+            new_alembic = src_alembic.copy()
+            gen_col.objects.link(new_alembic)
+            new_alembic.parent = new_empty
+            new_alembic.matrix_parent_inverse = src_alembic.matrix_parent_inverse.copy()
+            
+            print(f"  Duplicated Alembic: {new_alembic.name} ({new_alembic.type})")
+            
+            # Handle Alembic Cache Timing (MeshSequenceCache)
+            abc_mod = None
+            for mod in new_alembic.modifiers:
+                if mod.type == 'MESH_SEQUENCE_CACHE':
+                    abc_mod = mod
+                    break
+            
+            if abc_mod and abc_mod.cache_file:
+                print(f"  Found Alembic Modifier: {abc_mod.name}")
+                
+                # Duplicate CacheFile to allow unique offset
+                old_cache = abc_mod.cache_file
+                new_cache = old_cache.copy()
+                abc_mod.cache_file = new_cache
+                
+                # Find Animation on CacheFile (frame property)
+                if new_cache.animation_data and new_cache.animation_data.action:
+                    new_cache.animation_data.action = new_cache.animation_data.action.copy()
+                    act = new_cache.animation_data.action
+                    
+                    # Find Start Frame of this Action
+                    start_frame = None
+                    for fc in iter_fcurves(act):
+                        if fc.data_path.endswith("frame"):
+                            if len(fc.keyframe_points) > 0:
+                                t = fc.keyframe_points[0].co[0]
+                                if start_frame is None or t < start_frame:
+                                    start_frame = t
+                    
+                    if start_frame is not None:
+                        target_start = current_frame - 1
+                        abc_delta = target_start - start_frame
+                        print(f"  Shifting Alembic Cache by {abc_delta} frames (Start {start_frame} -> {target_start})")
+                        shift_action(act, abc_delta)
+                    else:
+                        print("  Could not find start frame in Alembic Action keyframes")
+                else:
+                    print("  Alembic CacheFile has no animation action")
+            else:
+                print("  No MeshSequenceCache modifier or CacheFile found on Alembic object")
 
         # Force update to ensure matrices and relationships are valid
         bpy.context.view_layer.update()
@@ -143,7 +202,7 @@ def copy_and_align(template_col, target_obj, current_frame):
         print(f"Step 4: Aligned Empty to Target. New Matrix: {new_empty.matrix_world}")
         
         # 5. Set Frame Start (Randomly current or current-1)
-        if new_vdb.data:
+        if new_vdb and new_vdb.data:
             # Using getattr/setattr just in case, but standard API is .frame_start
             offset_val = random.choice([0, 1])
             new_start = int(current_frame - offset_val)
@@ -160,6 +219,8 @@ def copy_and_align(template_col, target_obj, current_frame):
                  
             # Read back to verify
             print(f"  New Frame Start (Readback): {new_vdb.data.frame_start}")
+        elif not new_vdb:
+            print("Step 5 Info: No VDB in this template (Alembic-only)")
         else:
             print("Step 5 Warning: New VDB has no Data!")
 
@@ -179,7 +240,7 @@ def copy_and_align(template_col, target_obj, current_frame):
                 count += 1
             print(f"  Total FCurves found: {count}")
 
-        if new_vdb.animation_data and new_vdb.animation_data.action:
+        if new_vdb and new_vdb.animation_data and new_vdb.animation_data.action:
             # Make Unique
             new_vdb.animation_data.action = new_vdb.animation_data.action.copy()
             new_obj_action = new_vdb.animation_data.action
@@ -198,11 +259,11 @@ def copy_and_align(template_col, target_obj, current_frame):
         print(f"Shifting Keyframes by {delta} frames (Visible at {vis_frame} -> {current_frame})")
         
         # Shift Object Action
-        if new_vdb.animation_data and new_vdb.animation_data.action:
+        if new_vdb and new_vdb.animation_data and new_vdb.animation_data.action:
             shift_action(new_vdb.animation_data.action, delta)
             
         # --- Data Action (Frame Offset) ---
-        if new_vdb.data and new_vdb.data.animation_data and new_vdb.data.animation_data.action:
+        if new_vdb and new_vdb.data and new_vdb.data.animation_data and new_vdb.data.animation_data.action:
             # Make Unique
             new_vdb.data.animation_data.action = new_vdb.data.animation_data.action.copy()
             new_data_action = new_vdb.data.animation_data.action

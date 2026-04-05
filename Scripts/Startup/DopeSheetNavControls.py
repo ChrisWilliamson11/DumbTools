@@ -115,17 +115,17 @@ def register():
     if hasattr(bpy.types, "SEQUENCER_HT_playback_controls"):
         bpy.types.SEQUENCER_HT_playback_controls.append(draw_footer_controls)
 
-    # Add to Marker menus
-    if hasattr(bpy.types, "DOPESHEET_MT_marker"):
-        bpy.types.DOPESHEET_MT_marker.append(draw_marker_menu_additions)
-    if hasattr(bpy.types, "TIME_MT_marker"):
-        bpy.types.TIME_MT_marker.append(draw_marker_menu_additions)
-    if hasattr(bpy.types, "GRAPH_MT_marker"):
-        bpy.types.GRAPH_MT_marker.append(draw_marker_menu_additions)
-    if hasattr(bpy.types, "NLA_MT_marker"):
-        bpy.types.NLA_MT_marker.append(draw_marker_menu_additions)
-    if hasattr(bpy.types, "SEQUENCER_MT_marker"):
-        bpy.types.SEQUENCER_MT_marker.append(draw_marker_menu_additions)
+    # Add to Editor Context menus
+    if hasattr(bpy.types, "DOPESHEET_MT_context_menu"):
+        bpy.types.DOPESHEET_MT_context_menu.append(draw_marker_menu_additions)
+    if hasattr(bpy.types, "TIME_MT_context_menu"):
+        bpy.types.TIME_MT_context_menu.append(draw_marker_menu_additions)
+    if hasattr(bpy.types, "GRAPH_MT_context_menu"):
+        bpy.types.GRAPH_MT_context_menu.append(draw_marker_menu_additions)
+    if hasattr(bpy.types, "NLA_MT_context_menu"):
+        bpy.types.NLA_MT_context_menu.append(draw_marker_menu_additions)
+    if hasattr(bpy.types, "SEQUENCER_MT_context_menu"):
+        bpy.types.SEQUENCER_MT_context_menu.append(draw_marker_menu_additions)
 
 def unregister():
     bpy.utils.unregister_class(SetStartFrameOperator)
@@ -147,15 +147,15 @@ def unregister():
     if hasattr(bpy.types, "SEQUENCER_HT_playback_controls"):
         bpy.types.SEQUENCER_HT_playback_controls.remove(draw_footer_controls)
 
-    if hasattr(bpy.types, "DOPESHEET_MT_marker"):
-        bpy.types.DOPESHEET_MT_marker.remove(draw_marker_menu_additions)
-    if hasattr(bpy.types, "TIME_MT_marker"):
-        bpy.types.TIME_MT_marker.remove(draw_marker_menu_additions)
-    if hasattr(bpy.types, "GRAPH_MT_marker"):
-        bpy.types.GRAPH_MT_marker.remove(draw_marker_menu_additions)
-    if hasattr(bpy.types, "NLA_MT_marker"):
-        bpy.types.NLA_MT_marker.remove(draw_marker_menu_additions)
-    if hasattr(bpy.types, "SEQUENCER_MT_marker"):
-        bpy.types.SEQUENCER_MT_marker.remove(draw_marker_menu_additions)
+    if hasattr(bpy.types, "DOPESHEET_MT_context_menu"):
+        bpy.types.DOPESHEET_MT_context_menu.remove(draw_marker_menu_additions)
+    if hasattr(bpy.types, "TIME_MT_context_menu"):
+        bpy.types.TIME_MT_context_menu.remove(draw_marker_menu_additions)
+    if hasattr(bpy.types, "GRAPH_MT_context_menu"):
+        bpy.types.GRAPH_MT_context_menu.remove(draw_marker_menu_additions)
+    if hasattr(bpy.types, "NLA_MT_context_menu"):
+        bpy.types.NLA_MT_context_menu.remove(draw_marker_menu_additions)
+    if hasattr(bpy.types, "SEQUENCER_MT_context_menu"):
+        bpy.types.SEQUENCER_MT_context_menu.remove(draw_marker_menu_additions)
 
 register()

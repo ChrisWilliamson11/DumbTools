@@ -50,4 +50,10 @@ def reorient_action():
         with bpy.context.temp_override(active_pose_bone=pb, constraint=con):
             bpy.ops.constraint.childof_set_inverse(constraint=con.name, owner='BONE')
 
+    # Exit Pose Mode and select the empty
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.select_all(action='DESELECT')
+    empty.select_set(True)
+    bpy.context.view_layer.objects.active = empty
+
 reorient_action()

@@ -4,9 +4,13 @@ import bpy
 
 def bake_reoriented_action():
     obj = bpy.context.active_object
-    if not obj or obj.type != 'ARMATURE' or bpy.context.mode != 'POSE':
-        print("Must be in Pose Mode with an Armature active.")
+    if not obj or obj.type != 'ARMATURE':
+        print("Must have an Armature active.")
         return
+        
+    original_mode = bpy.context.mode
+    if original_mode != 'POSE':
+        bpy.ops.object.mode_set(mode='POSE')
         
     # Find bones with Child Of constraints
     bones_to_bake = []
@@ -67,5 +71,8 @@ def bake_reoriented_action():
         use_current_action=use_current, 
         bake_types={'POSE'}
     )
+    
+    if original_mode != 'POSE':
+        bpy.ops.object.mode_set(mode=original_mode)
     
 bake_reoriented_action()

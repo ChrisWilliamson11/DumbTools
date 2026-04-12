@@ -65,5 +65,4 @@ def main():
     
     print(f"--- Parent Muzzleflashes Completed. Parented {parented_count} objects to '{target_obj.name}' ---")
 
-if __name__ == "__main__":
-    main()
+main()

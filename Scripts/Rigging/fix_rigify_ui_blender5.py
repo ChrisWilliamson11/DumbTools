@@ -83,6 +83,12 @@ PATCHES = [
         "find_regex": r"self\.index_curves\(self\.action\.fcurves\)",
         "replace_str": r"self.index_curves(get_action_fcurves(self.action))",
         "check_already_applied": r"get_action_fcurves\(self\.action\)",
+    },
+    {
+        "description": "Fix INSERTKEY_XYZ_TO_RGB error in get_keying_flags",
+        "find_regex": r"if prefs\.edit\.use_insertkey_xyz_to_rgb:\s*flags\.add\('INSERTKEY_XYZ_TO_RGB'\)",
+        "replace_str": r"if hasattr(prefs.edit, 'use_insertkey_xyz_to_rgb') and bpy.app.version < (4, 1):\n        flags.add('INSERTKEY_XYZ_TO_RGB')",
+        "check_already_applied": r"hasattr\(prefs\.edit, 'use_insertkey_xyz_to_rgb'\) and bpy\.app\.version < \(4, 1\)"
     }
 ]
 

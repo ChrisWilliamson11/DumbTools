@@ -1,12 +1,13 @@
-# Tooltip: Reads USD material tags on imported objects and automatically appends and assigns the original Blender materials.
+# Tooltip: Launches the USD Importer, then reads material tags to automatically append and assign the original Blender materials.
 import bpy
 import json
 import os
+from bpy_extras.io_utils import ImportHelper
 
-class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
+class DUMBTOOLS_OT_usd_material_restore_dialog(bpy.types.Operator):
     """Restores materials to imported USD objects using tagged custom properties"""
-    bl_idname = "dumbtools.usd_material_import"
-    bl_label = "USD Material Import Restore"
+    bl_idname = "dumbtools.usd_material_restore_dialog"
+    bl_label = "Confirm Material Path Remapping"
     bl_options = {'REGISTER', 'UNDO'}
 
     search_path: bpy.props.StringProperty(
@@ -60,12 +61,10 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
             if cache_key in appended_materials:
                 return appended_materials[cache_key]
 
-            # Before checking if it exists, remember that if we just import USD,
+            # Wait, before checking if it exists, remember that if we just import USD,
             # the USD Proxy material took the name 'mat_name'. We have freed the name
             # by renaming the proxy in the main loop below.
-            
             existing_mat = bpy.data.materials.get(mat_name)
-            # If it already exists and has been restored or manually created AFTER proxies were renamed
             if existing_mat:
                 appended_materials[cache_key] = existing_mat
                 return existing_mat
@@ -102,7 +101,6 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
                 
             if getattr(obj, "data", None) and hasattr(obj.data, "materials"):
                 # 1. Expand slot capacity to match the original object length
-                # This prevents "out of bounds" errors when we fix polygon indices
                 max_slot_idx = max([int(k) for k in mat_data.keys()]) if mat_data else -1
                 while len(obj.material_slots) <= max_slot_idx:
                     obj.data.materials.append(None)
@@ -113,7 +111,6 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
                     mat = slot.material
                     if not mat: continue
                     
-                    # Prevent touching materials we've already restored
                     if mat.get("_dt_restored"): continue
                         
                     mat_name = mat.name
@@ -126,7 +123,6 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
                             break
                             
                     if original_idx is not None:
-                        # 3. Securely rename the dummy proxy so the appended material can take the real name
                         if mat.name == base_name and "_dt_restored" not in mat:
                             mat.name = base_name + "_USDProxy"
                         poly_remap[current_idx] = original_idx
@@ -144,7 +140,6 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
                             changed = True
                             
                     if changed:
-                        # extremely fast C-level array assignment
                         obj.data.polygons.foreach_set("material_index", poly_indices)
                         obj.data.update()
 
@@ -182,7 +177,6 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
             del obj["_dt_usd_materials"]
             restored_count += 1
 
-
             
         if restored_count > 0:
             msg = f"Restored materials on {restored_count} object(s)."
@@ -199,19 +193,58 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
         return context.window_manager.invoke_props_dialog(self, width=600)
 
 
+class DUMBTOOLS_OT_usd_material_import_filepicker(bpy.types.Operator, ImportHelper):
+    """Select a USD to import and restore materials"""
+    bl_idname = "dumbtools.usd_material_import_filepicker"
+    bl_label = "Import USD & Restore Materials"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    filename_ext = ".usd"
+    filter_glob: bpy.props.StringProperty(
+        default="*.usd;*.usda;*.usdc",
+        options={'HIDDEN'},
+        maxlen=255,  
+    )
+
+    def execute(self, context):
+        try:
+            # We enforce import of custom properties so the tags survive.
+            bpy.ops.wm.usd_import(filepath=self.filepath)
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to import USD: {e}")
+            return {'CANCELLED'}
+        
+        # Check if imported items need material fixing
+        tagged = [o for o in context.selected_objects if "_dt_usd_materials" in o]
+        
+        if tagged:
+            # We defer the popup call via a timer by 0.01s. 
+            # This completely avoids all 'context is incorrect' errors when triggering dialogs from FileBrowser executes!
+            def invoke_dialog():
+                bpy.ops.dumbtools.usd_material_restore_dialog('INVOKE_DEFAULT')
+                return None
+            bpy.app.timers.register(invoke_dialog, first_interval=0.01)
+        else:
+            self.report({'INFO'}, "USD smoothly imported, but no structural DumbTools material tags were found!")
+            
+        return {'FINISHED'}
+
+
 def register():
     try:
-        bpy.utils.register_class(DUMBTOOLS_OT_usd_material_import)
+        bpy.utils.register_class(DUMBTOOLS_OT_usd_material_restore_dialog)
+        bpy.utils.register_class(DUMBTOOLS_OT_usd_material_import_filepicker)
     except Exception:
         pass
 
 
 def unregister():
     try:
-        bpy.utils.unregister_class(DUMBTOOLS_OT_usd_material_import)
+        bpy.utils.unregister_class(DUMBTOOLS_OT_usd_material_restore_dialog)
+        bpy.utils.unregister_class(DUMBTOOLS_OT_usd_material_import_filepicker)
     except Exception:
         pass
 
 
 register()
-bpy.ops.dumbtools.usd_material_import('INVOKE_DEFAULT')
+bpy.ops.dumbtools.usd_material_import_filepicker('INVOKE_DEFAULT')

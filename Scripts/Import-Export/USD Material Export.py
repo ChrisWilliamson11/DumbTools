@@ -52,14 +52,30 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator):
                 
         self.report({'INFO'}, f"Tagged {tagged_count} objects with USD Material metadata.")
         
-        # Invoke USD export dialog automatically with desired defaults
-        bpy.ops.wm.usd_export('INVOKE_DEFAULT',
-            selected_objects_only=True,
-            export_animation=True,
-            export_armatures=False,
-            export_blendshapes=False,
-            export_custom_properties=True
-        )
+        # Invoke USD export dialog automatically with desired defaults.
+        # We use try/except fallbacks here because Blender frequently changes the exact 
+        # python argument names for the USD exporter between versions (e.g. blendshapes vs shapekeys).
+        try:
+            # Optimal defaults (including armatures and shapekeys)
+            bpy.ops.wm.usd_export('INVOKE_DEFAULT',
+                selected_objects_only=True,
+                export_animation=True,
+                export_armatures=False,
+                export_shapekeys=False,
+                export_custom_properties=True
+            )
+        except Exception as e:
+            try:
+                # Fallback 1: Blender version might not support disabling armatures/shapekeys via python
+                bpy.ops.wm.usd_export('INVOKE_DEFAULT',
+                    selected_objects_only=True,
+                    export_animation=True,
+                    export_custom_properties=True
+                )
+            except Exception as e2:
+                # Fallback 2: Absolute safety fallback
+                bpy.ops.wm.usd_export('INVOKE_DEFAULT')
+                
         return {'FINISHED'}
 
     def invoke(self, context, event):

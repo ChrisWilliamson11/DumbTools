@@ -90,7 +90,7 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
                 
             return None
 
-        # Pre-process: Rename all proxy materials to free up their original names
+        # Pre-process: Rename proxy materials, expand slot capacity, and remap polygon indices
         for obj in context.selected_objects:
             if "_dt_usd_materials" not in obj:
                 continue
@@ -100,17 +100,53 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
             except Exception:
                 continue
                 
-            for slot_idx_str, data in mat_data.items():
-                slot_idx = int(slot_idx_str)
-                mat_name = data.get("name")
+            if getattr(obj, "data", None) and hasattr(obj.data, "materials"):
+                # 1. Expand slot capacity to match the original object length
+                # This prevents "out of bounds" errors when we fix polygon indices
+                max_slot_idx = max([int(k) for k in mat_data.keys()]) if mat_data else -1
+                while len(obj.material_slots) <= max_slot_idx:
+                    obj.data.materials.append(None)
+                    
+                # 2. Build a mapping of (current USD slot index -> original physical slot index)
+                poly_remap = {}
+                for current_idx, slot in enumerate(obj.material_slots):
+                    mat = slot.material
+                    if not mat: continue
+                    
+                    # Prevent touching materials we've already restored
+                    if mat.get("_dt_restored"): continue
+                        
+                    mat_name = mat.name
+                    base_name = mat_name[:-9] if mat_name.endswith("_USDProxy") else mat_name
+                    
+                    original_idx = None
+                    for slot_idx_str, data in mat_data.items():
+                        if data.get("name") == base_name:
+                            original_idx = int(slot_idx_str)
+                            break
+                            
+                    if original_idx is not None:
+                        # 3. Securely rename the dummy proxy so the appended material can take the real name
+                        if mat.name == base_name and "_dt_restored" not in mat:
+                            mat.name = base_name + "_USDProxy"
+                        poly_remap[current_idx] = original_idx
                 
-                if slot_idx < len(obj.material_slots):
-                    mat = obj.material_slots[slot_idx].material
-                    # If this material perfectly matches the target name, AND it hasn't been restored yet,
-                    # it is overwhelmingly likely to be the dummy proxy from the USD importer.
-                    # We rename it so the appended material can take its native name without getting a .001 suffix.
-                    if mat and mat.name == mat_name and "_dt_restored" not in mat:
-                        mat.name = mat_name + "_USDProxy"
+                # 4. Correct the materials assigned to all physical polygons
+                if poly_remap and hasattr(obj.data, "polygons") and len(obj.data.polygons) > 0:
+                    poly_indices = [0] * len(obj.data.polygons)
+                    obj.data.polygons.foreach_get("material_index", poly_indices)
+                    
+                    changed = False
+                    for i in range(len(poly_indices)):
+                        old_idx = poly_indices[i]
+                        if old_idx in poly_remap and poly_remap[old_idx] != old_idx:
+                            poly_indices[i] = poly_remap[old_idx]
+                            changed = True
+                            
+                    if changed:
+                        # extremely fast C-level array assignment
+                        obj.data.polygons.foreach_set("material_index", poly_indices)
+                        obj.data.update()
 
         for obj in context.selected_objects:
             if "_dt_usd_materials" not in obj:

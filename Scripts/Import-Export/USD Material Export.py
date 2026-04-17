@@ -25,6 +25,11 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator):
             for i, slot in enumerate(obj.material_slots):
                 mat = slot.material
                 if not mat:
+                    mat_data[str(i)] = {
+                        "name": None,
+                        "path": "",
+                        "link_param": getattr(slot, "link", 'OBJECT')
+                    }
                     continue
                     
                 path = ""

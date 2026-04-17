@@ -121,7 +121,7 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
                     
                     original_idx = None
                     for slot_idx_str, data in mat_data.items():
-                        if data.get("name") == base_name:
+                        if data.get("name") and data.get("name") == base_name:
                             original_idx = int(slot_idx_str)
                             break
                             
@@ -163,21 +163,21 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
                 mat_path = data.get("path")
                 link_param = data.get("link_param", 'OBJECT')
                 
-                if self.search_path and mat_path:
-                    mat_path = mat_path.replace(self.search_path, self.replace_path)
+                # Handle explicitly empty slots exported by the JSON
+                if mat_name is None:
+                    mat = None
+                else:
+                    if self.search_path and mat_path:
+                        mat_path = mat_path.replace(self.search_path, self.replace_path)
+                    mat = get_or_append_material(mat_name, mat_path)
                 
-                mat = get_or_append_material(mat_name, mat_path)
+                if getattr(obj, "data", None) and hasattr(obj.data, "materials"):
+                    while len(obj.material_slots) <= slot_idx:
+                        obj.data.materials.append(None)
                 
-                if mat:
-                    # Dynamically recreate any missing slots that were lost during USD translation
-                    # (e.g. if the material was assigned to a slot but not to any actual faces)
-                    if getattr(obj, "data", None) and hasattr(obj.data, "materials"):
-                        while len(obj.material_slots) <= slot_idx:
-                            obj.data.materials.append(None)
-                    
-                    if slot_idx < len(obj.material_slots):
-                        obj.material_slots[slot_idx].material = mat
-                        obj.material_slots[slot_idx].link = link_param
+                if slot_idx < len(obj.material_slots):
+                    obj.material_slots[slot_idx].material = mat
+                    obj.material_slots[slot_idx].link = link_param
             
             del obj["_dt_usd_materials"]
             restored_count += 1
@@ -195,7 +195,8 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
         return {'FINISHED'}
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self)
+        # Override the default dialog width (usually ~300) so long network paths are fully visible
+        return context.window_manager.invoke_props_dialog(self, width=600)
 
 
 def register():

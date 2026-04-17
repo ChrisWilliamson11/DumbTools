@@ -31,23 +31,23 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
         restored_count = 0
         missing_files = set()
         
-        # We need a small cache so we don't try to append the same material 50 times
-        appended_materials = {} # key: (mat_name, path), value: bpy.types.Material
+        appended_materials = {} 
 
         def get_or_append_material(mat_name, path):
-            # 1. Did we already append it during this script run?
             cache_key = (mat_name, path)
             if cache_key in appended_materials:
                 return appended_materials[cache_key]
 
-            # 2. Is it already in the file EXACTLY by name?
-            # We assume if the name matches exactly, it's the right one.
+            # Before checking if it exists, remember that if we just import USD,
+            # the USD Proxy material took the name 'mat_name'. We have freed the name
+            # by renaming the proxy in the main loop below.
+            
             existing_mat = bpy.data.materials.get(mat_name)
+            # If it already exists and has been restored or manually created AFTER proxies were renamed
             if existing_mat:
                 appended_materials[cache_key] = existing_mat
                 return existing_mat
 
-            # 3. Need to append it from the source file
             if not path or not os.path.exists(path):
                 if path:
                     missing_files.add(path)
@@ -58,15 +58,37 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
                     if mat_name in data_from.materials:
                         data_to.materials.append(mat_name)
                 
-                # Check what was actually appended
                 for m in data_to.materials:
                     if m is not None:
+                        m["_dt_restored"] = True
                         appended_materials[cache_key] = m
                         return m
             except Exception as e:
                 print(f"USD Import Restore: Failed to load material {mat_name} from {path}. Error: {e}")
                 
             return None
+
+        # Pre-process: Rename all proxy materials to free up their original names
+        for obj in context.selected_objects:
+            if "_dt_usd_materials" not in obj:
+                continue
+            
+            try:
+                mat_data = json.loads(obj["_dt_usd_materials"])
+            except Exception:
+                continue
+                
+            for slot_idx_str, data in mat_data.items():
+                slot_idx = int(slot_idx_str)
+                mat_name = data.get("name")
+                
+                if slot_idx < len(obj.material_slots):
+                    mat = obj.material_slots[slot_idx].material
+                    # If this material perfectly matches the target name, AND it hasn't been restored yet,
+                    # it is overwhelmingly likely to be the dummy proxy from the USD importer.
+                    # We rename it so the appended material can take its native name without getting a .001 suffix.
+                    if mat and mat.name == mat_name and "_dt_restored" not in mat:
+                        mat.name = mat_name + "_USDProxy"
 
         for obj in context.selected_objects:
             if "_dt_usd_materials" not in obj:
@@ -77,29 +99,25 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
             except Exception:
                 continue
                 
-            # Iterate through the stored slot mappings
             for slot_idx_str, data in mat_data.items():
                 slot_idx = int(slot_idx_str)
                 mat_name = data.get("name")
                 mat_path = data.get("path")
                 link_param = data.get("link_param", 'OBJECT')
                 
-                # Apply path remapping
                 if self.search_path and mat_path:
                     mat_path = mat_path.replace(self.search_path, self.replace_path)
                 
-                # Resolve the material
                 mat = get_or_append_material(mat_name, mat_path)
                 
                 if mat:
-                    # Make sure the slot index exists
                     if slot_idx < len(obj.material_slots):
                         obj.material_slots[slot_idx].material = mat
                         obj.material_slots[slot_idx].link = link_param
             
-            # Cleanup the tag
             del obj["_dt_usd_materials"]
             restored_count += 1
+
             
         if restored_count > 0:
             msg = f"Restored materials on {restored_count} object(s)."

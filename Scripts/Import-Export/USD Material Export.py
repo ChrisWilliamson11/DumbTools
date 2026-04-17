@@ -51,6 +51,15 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator):
                 tagged_count += 1
                 
         self.report({'INFO'}, f"Tagged {tagged_count} objects with USD Material metadata.")
+        
+        # Invoke USD export dialog automatically with desired defaults
+        bpy.ops.wm.usd_export('INVOKE_DEFAULT',
+            selected_objects_only=True,
+            export_animation=True,
+            export_armatures=False,
+            export_blendshapes=False,
+            export_custom_properties=True
+        )
         return {'FINISHED'}
 
     def invoke(self, context, event):

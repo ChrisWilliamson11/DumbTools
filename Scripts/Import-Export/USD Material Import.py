@@ -26,6 +26,28 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
         layout.label(text="Remap Source File Paths:")
         layout.prop(self, "search_path", text="Find")
         layout.prop(self, "replace_path", text="Replace")
+        
+        layout.separator()
+        box = layout.box()
+        box.label(text="Detected Source Paths:")
+        
+        unique_paths = set()
+        for obj in context.selected_objects:
+            if "_dt_usd_materials" in obj:
+                try:
+                    data = json.loads(obj["_dt_usd_materials"])
+                    for slot_data in data.values():
+                        if slot_data.get("path"):
+                            unique_paths.add(slot_data.get("path"))
+                except Exception:
+                    pass
+        
+        col = box.column(align=True)
+        if unique_paths:
+            for p in sorted(unique_paths):
+                col.label(text=p, icon='FILE_BLEND')
+        else:
+            col.label(text="No paths found in current selection.", icon='INFO')
 
     def execute(self, context):
         restored_count = 0
@@ -111,12 +133,19 @@ class DUMBTOOLS_OT_usd_material_import(bpy.types.Operator):
                 mat = get_or_append_material(mat_name, mat_path)
                 
                 if mat:
+                    # Dynamically recreate any missing slots that were lost during USD translation
+                    # (e.g. if the material was assigned to a slot but not to any actual faces)
+                    if getattr(obj, "data", None) and hasattr(obj.data, "materials"):
+                        while len(obj.material_slots) <= slot_idx:
+                            obj.data.materials.append(None)
+                    
                     if slot_idx < len(obj.material_slots):
                         obj.material_slots[slot_idx].material = mat
                         obj.material_slots[slot_idx].link = link_param
             
             del obj["_dt_usd_materials"]
             restored_count += 1
+
 
             
         if restored_count > 0:

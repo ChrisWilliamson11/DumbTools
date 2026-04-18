@@ -14,6 +14,28 @@ def scrape_bvh_joint_names(filepath):
                 names.append(stripped.split()[1])
     return names
 
+def iter_fcurves(action):
+    if not action:
+        return
+    if hasattr(action, "fcurves") and action.fcurves:
+        for fc in action.fcurves:
+            yield fc
+    if hasattr(action, "layers"):
+        for layer in action.layers:
+            if hasattr(layer, "strips"):
+                for strip in layer.strips:
+                    if hasattr(strip, "channelbags"):
+                         for bag in strip.channelbags:
+                             if hasattr(bag, "fcurves"):
+                                 for fc in bag.fcurves:
+                                     yield fc
+                    if hasattr(strip, "fcurves"):
+                        for fc in strip.fcurves:
+                            yield fc
+                    elif hasattr(strip, "channels"):
+                         for fc in strip.channels:
+                             yield fc
+
 class KimodoSettings(bpy.types.PropertyGroup):
     prompt: bpy.props.StringProperty(
         name="Prompt",
@@ -135,7 +157,7 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         # Find keyframes
         keyframes = set()
         if obj.animation_data and obj.animation_data.action:
-            for fcurve in obj.animation_data.action.fcurves:
+            for fcurve in iter_fcurves(obj.animation_data.action):
                 for kp in fcurve.keyframe_points:
                     keyframes.add(int(kp.co[0]))
         

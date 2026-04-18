@@ -284,9 +284,11 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                     if j_name in obj.pose.bones:
                         pb = obj.pose.bones[j_name]
                         quat = pb.matrix_basis.to_quaternion()
-                        frame_rot_list.append([quat.w, quat.x, quat.y, quat.z])
+                        axis = quat.axis
+                        angle = quat.angle
+                        frame_rot_list.append([axis.x * angle, axis.y * angle, axis.z * angle])
                     else:
-                        frame_rot_list.append([1.0, 0.0, 0.0, 0.0])
+                        frame_rot_list.append([0.0, 0.0, 0.0])
                 local_joints_rot_all.append(frame_rot_list)
                 
                 if "Hips" in obj.pose.bones:

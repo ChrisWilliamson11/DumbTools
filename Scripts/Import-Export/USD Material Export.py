@@ -158,95 +158,90 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
         for obj in objects_to_export:
             try: obj.select_set(True)
             except: pass
+            
+        context.view_layer.update()
+        
+        # Save necessary state to class variables so the timer can access them!
+        self.__class__._deferred_filepath = self.filepath
+        self.__class__._deferred_animation = self.export_animation
+        self.__class__._deferred_armatures = self.export_armatures
+        self.__class__._deferred_shapekeys = self.export_shapekeys
+        self.__class__._deferred_temp_objects = temp_objects_to_delete
+        self.__class__._deferred_stored_collections = stored_collections
+        self.__class__._deferred_original_selection = original_selection
+        self.__class__._deferred_original_active = original_active
 
         # Change to a loading cursor and force Blender to redraw the interface.
         context.window.cursor_set('WAIT')
         bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
-        
-        # CRITICAL: We've spawned raw meshes, altered parents, and changed selection states. 
-        context.view_layer.update()
-        
-        # DEBUG LOGGER
-        try:
-            log_path = self.filepath + ".log.txt"
-            with open(log_path, "w") as f:
-                f.write("--- DUMBTOOLS USD DEBUG LOG ---\n")
-                f.write(f"Export Animation: {self.export_animation}\n")
-                f.write(f"Original Collection Instances detected: {len(instances)}\n")
-                f.write(f"Target Export Objects set count: {len(objects_to_export)}\n")
-                f.write(f"Current Context Selected Objects count: {len(context.selected_objects)}\n\n")
-                
-                f.write("--- OBJECTS TO EXPORT SET ---\n")
-                for obj in objects_to_export:
-                    parent_name = obj.parent.name if obj.parent else "None"
-                    f.write(f"Name: {obj.name} | Type: {obj.type} | Sel: {obj.select_get()} | Parent: {parent_name}\n")
-                    
-                f.write("\n--- CONTEXT SELECTED OBJECTS LIST ---\n")
-                for obj in context.selected_objects:
-                    parent_name = obj.parent.name if obj.parent else "None"
-                    f.write(f"Name: {obj.name} | Type: {obj.type} | Sel: {obj.select_get()} | Parent: {parent_name}\n")
-        except Exception:
-            pass
 
-        # 4. Trigger Synchronous Native USD Export
+        # Defer the C++ USD Exporter by 0.1 seconds.
+        # This completely guarantees Blender's internal Main Thread organically flushes the 
+        # C++ BASE_SELECTED flags so the USD exporter actually sees the exact selection!
+        bpy.app.timers.register(self.__class__.deferred_export, first_interval=0.1)
+        
+        return {'FINISHED'}
+
+    @classmethod
+    def deferred_export(cls):
         try:
             try:
-                bpy.ops.wm.usd_export(filepath=self.filepath,
+                bpy.ops.wm.usd_export(filepath=cls._deferred_filepath,
                     selected_objects_only=True,
-                    export_animation=self.export_animation,
-                    export_armatures=self.export_armatures,
-                    export_shapekeys=self.export_shapekeys,
+                    export_animation=cls._deferred_animation,
+                    export_armatures=cls._deferred_armatures,
+                    export_shapekeys=cls._deferred_shapekeys,
                     export_custom_properties=True
                 )
-            except Exception as e:
+            except Exception:
                 try:
-                    bpy.ops.wm.usd_export(filepath=self.filepath,
+                    bpy.ops.wm.usd_export(filepath=cls._deferred_filepath,
                         selected_objects_only=True,
-                        export_animation=self.export_animation,
+                        export_animation=cls._deferred_animation,
                         export_custom_properties=True
                     )
-                except Exception as e2:
-                    bpy.ops.wm.usd_export(filepath=self.filepath, selected_objects_only=True)
+                except Exception:
+                    bpy.ops.wm.usd_export(filepath=cls._deferred_filepath, selected_objects_only=True)
                     
-            self.report({'INFO'}, f"Smoothly exported {len(context.selected_objects)} total objects with {tagged_count} material tags.")
+            print(f"[DumbTools] Smoothly exported {len(bpy.context.selected_objects)} objects to USD.")
         except Exception as e:
-            self.report({'ERROR'}, f"Failed to export USD: {e}")
+            print(f"[DumbTools] Failed to export USD: {e}")
             
         finally:
             # Restore the standard Blender cursor
-            context.window.cursor_set('DEFAULT')
+            bpy.context.window.cursor_set('DEFAULT')
         
-        # 5. Perfect Deep Clean!
-        # Quietly annihilate all the temporary realized geometry we created
-        for obj in temp_objects_to_delete:
-            try:
-                if getattr(obj, "data", None):
-                    bpy.data.objects.remove(obj, do_unlink=True)
-                else:    
-                    bpy.data.objects.remove(obj, do_unlink=True)
-            except ReferenceError:
-                pass
+            # 5. Perfect Deep Clean!
+            for obj in cls._deferred_temp_objects:
+                try:
+                    if getattr(obj, "data", None):
+                        bpy.data.objects.remove(obj, do_unlink=True)
+                    else:    
+                        bpy.data.objects.remove(obj, do_unlink=True)
+                except ReferenceError:
+                    pass
+                    
+            # Restore the stripped Collection Instances
+            for instance_empty, col in cls._deferred_stored_collections.items():
+                try:
+                    if instance_empty and getattr(instance_empty, "name", None):
+                        instance_empty.instance_type = 'COLLECTION'
+                        instance_empty.instance_collection = col
+                except ReferenceError:
+                    pass
+                    
+            # Restore selection state precisely
+            bpy.ops.object.select_all(action='DESELECT')
+            for obj in cls._deferred_original_selection:
+                try: obj.select_set(True)
+                except ReferenceError: pass
                 
-        # Restore the stripped Collection Instances
-        for instance_empty, col in stored_collections.items():
-            try:
-                if instance_empty and getattr(instance_empty, "name", None):
-                    instance_empty.instance_type = 'COLLECTION'
-                    instance_empty.instance_collection = col
-            except ReferenceError:
-                pass
+            if cls._deferred_original_active:
+                try: bpy.context.view_layer.objects.active = cls._deferred_original_active
+                except ReferenceError: pass
                 
-        # Restore selection state precisely
-        bpy.ops.object.select_all(action='DESELECT')
-        for obj in original_selection:
-            try: obj.select_set(True)
-            except ReferenceError: pass
-            
-        if original_active:
-            try: context.view_layer.objects.active = original_active
-            except ReferenceError: pass
-
-        return {'FINISHED'}
+            # Final flush
+            bpy.context.view_layer.update()
 
 
 def register():

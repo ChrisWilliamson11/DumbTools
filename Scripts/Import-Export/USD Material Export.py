@@ -155,6 +155,11 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
         # This gives visual feedback during the heavy synchronous Python C++ block!
         context.window.cursor_set('WAIT')
         bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
+        
+        # CRITICAL: We've spawned raw meshes, altered parents, and changed selection states. 
+        # The underlying Dependency Graph and ViewLayer requires a hard flush BEFORE the C++ exporter runs
+        # otherwise the USD compiler literally cannot see the newly spawned memory blocks!
+        context.view_layer.update()
 
         # 4. Trigger Synchronous Native USD Export
         try:

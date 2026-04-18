@@ -286,7 +286,7 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                     root_positions_all.append([0.0, 0.0, 0.0])
                     
             constraints_data.append({
-                "type": "full_body",
+                "type": "fullbody",
                 "frame_indices": pose_indices,
                 "local_joints_rot": local_joints_rot_all,
                 "root_positions": root_positions_all

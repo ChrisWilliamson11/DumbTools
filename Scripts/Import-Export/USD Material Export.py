@@ -9,9 +9,9 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
     bl_label = "Export USD with Materials"
     bl_options = {'REGISTER', 'UNDO'}
     
-    filename_ext = ".usd"
+    filename_ext = ".usdc"
     filter_glob: bpy.props.StringProperty(
-        default="*.usd;*.usdc;*.usda",
+        default="*.usdc;*.usd;*.usda",
         options={'HIDDEN'},
         maxlen=255,
     )
@@ -54,6 +54,9 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
         objects_to_export = set(original_selection)
         temp_objects_to_delete = []
         
+        # Force an initial depsgraph update
+        context.view_layer.update()
+        
         # 1. Non-destructive Collection Instance Processor
         instances = [obj for obj in original_selection if getattr(obj, "instance_type", "") == 'COLLECTION' and obj.instance_collection]
         
@@ -68,10 +71,14 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
             bpy.ops.object.duplicate(linked=False)
             dummy_empty = context.active_object
             
+            # CRITICAL: Blender hasn't populated this new dummy empty into the scene graph yet. 
+            # Make Instances Real will return completely empty if we don't aggressively update the view_layer.
+            context.view_layer.update()
+            
             # Explode the duplicate into real geometry
             try:
                 bpy.ops.object.duplicates_make_real(use_hierarchy=True)
-            except TypeError:
+            except Exception:
                 bpy.ops.object.duplicates_make_real()
             
             realized_objects = []
@@ -84,8 +91,11 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
                 objects_to_export.add(real_obj)
                 
                 # Rigid-link the realized geometry to the original Empty so it perfectly inherits constraints!
+                # We save world matrix explicitly first to avert weird shifts if Blender pre-parented them to dummy_empty
+                real_matrix = real_obj.matrix_world.copy()
                 real_obj.parent = instance_empty
                 real_obj.matrix_parent_inverse = instance_empty.matrix_world.inverted()
+                real_obj.matrix_world = real_matrix
                 
             # Queue the sacrifical dummy empty for cleanup
             try:

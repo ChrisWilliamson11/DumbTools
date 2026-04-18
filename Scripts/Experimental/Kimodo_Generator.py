@@ -67,16 +67,13 @@ class DUMBTOOLS_OT_generate_soma_skeleton(bpy.types.Operator):
             self.report({'ERROR'}, f"Cannot find SOMA template at {bvh_path}")
             return {'CANCELLED'}
 
-        # Import BVH
-        bpy.ops.import_anim.bvh(filepath=bvh_path, use_fps_scale=False, update_scene_fps=False, update_scene_duration=False)
+        # Import BVH scaled down to meters so it matches 1.77m
+        bpy.ops.import_anim.bvh(filepath=bvh_path, global_scale=0.01, use_fps_scale=False, update_scene_fps=False, update_scene_duration=False)
         
         # The imported armature becomes the active object
         obj = context.active_object
         if obj and obj.type == 'ARMATURE':
             obj.name = "SOMA77_Rig"
-            # Set all bones to Quaternion for better interpolation and axis-angle conversion
-            for pb in obj.pose.bones:
-                pb.rotation_mode = 'QUATERNION'
             self.report({'INFO'}, "Successfully generated SOMA77 skeleton")
         return {'FINISHED'}
 
@@ -85,7 +82,7 @@ def run_kimodo_generation(filepath_dir, scene):
     wsl_cmd = (
         'wsl -d Ubuntu -e bash -c "cd ~/Kimodo_WSL/kimodo && '
         'source venv/bin/activate && '
-        'kimodo_gen --input_folder /mnt/g/Kimodo/temp --output /mnt/g/Kimodo/temp/motion --bvh"'
+        'kimodo_gen --input_folder /mnt/g/Kimodo/temp --output /mnt/g/Kimodo/temp/motion --bvh --bvh_standard_tpose"'
     )
     
     def background_task():
@@ -112,7 +109,7 @@ def import_generated_bvh(filepath_dir):
     original_obj = bpy.context.active_object
 
     # Import the BVH
-    bpy.ops.import_anim.bvh(filepath=bvh_path, use_fps_scale=False, update_scene_fps=False, update_scene_duration=False)
+    bpy.ops.import_anim.bvh(filepath=bvh_path, global_scale=0.01, use_fps_scale=True, update_scene_fps=False, update_scene_duration=False)
     
     imported_obj = bpy.context.active_object
     if imported_obj and imported_obj != original_obj and imported_obj.animation_data and imported_obj.animation_data.action:
@@ -176,6 +173,7 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
 
         # Scrape constraints
         original_frame = context.scene.frame_current
+        scene_fps = context.scene.render.fps / context.scene.render.fps_base
         
         local_joints_rot_all = []
         root_positions_all = []
@@ -183,7 +181,11 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
 
         for frame in keyframes:
             context.scene.frame_set(frame)
-            frame_indices.append(frame - keyframes[0]) # Normalized to 0 start
+            
+            # Map Blender frame via Scene FPS directly to Kimodo's internal 30 FPS engine
+            time_sec = (frame - keyframes[0]) / scene_fps
+            kimodo_frame = int(round(time_sec * 30.0))
+            frame_indices.append(kimodo_frame)
             
             frame_rot_list = []
             for j_name in joint_order:

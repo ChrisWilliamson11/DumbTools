@@ -308,10 +308,15 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 root_indices.append(kimodo_frame)
                 
                 loc = tracker.location
-                smooth_root_2d.append([loc.x, loc.y]) # Blender X, Y correspond natively to ground plane mapping
+                # Kimodo space natively considers -Z as forward (Blender +Y). 
+                # Therefore Kimodo X = Blender X, Kimodo Z = -Blender Y
+                smooth_root_2d.append([loc.x, -loc.y])
                 
+                # Blender Empty forward rotation vector mapped into Kimodo [X, Z] pointing vector 
                 rot_z = tracker.rotation_euler.z 
-                global_root_heading.append([math.cos(rot_z), math.sin(rot_z)])
+                hx = -math.sin(rot_z)
+                hz = -math.cos(rot_z)
+                global_root_heading.append([hx, hz])
                 
             constraints_data.append({
                 "type": "root2d",
@@ -377,7 +382,6 @@ class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
         layout.prop(settings, "num_samples")
         layout.prop(settings, "diffusion_steps")
         layout.prop(settings, "cfg_weight")
-        layout.prop(settings, "transition_frames")
         
         layout.separator()
         layout.operator(DUMBTOOLS_OT_generate_motion_from_pose.bl_idname, icon='PLAY', text="Export & Generate Motion")

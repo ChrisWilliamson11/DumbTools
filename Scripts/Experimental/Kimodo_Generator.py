@@ -263,5 +263,4 @@ def unregister():
         bpy.utils.unregister_class(cls)
     del bpy.types.Scene.kimodo_settings
 
-if __name__ == "__main__":
-    register()
+register()

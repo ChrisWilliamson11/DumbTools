@@ -69,7 +69,10 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
             dummy_empty = context.active_object
             
             # Explode the duplicate into real geometry
-            bpy.ops.object.duplicates_make_real(use_base_instance=False, use_hierarchy=True)
+            try:
+                bpy.ops.object.duplicates_make_real(use_hierarchy=True)
+            except TypeError:
+                bpy.ops.object.duplicates_make_real()
             
             realized_objects = []
             for obj in context.selected_objects:

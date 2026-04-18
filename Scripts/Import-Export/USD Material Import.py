@@ -21,12 +21,19 @@ class DUMBTOOLS_OT_usd_material_restore_dialog(bpy.types.Operator):
         description="New path segment to insert",
         default=""
     )
+    
+    overwrite_existing: bpy.props.BoolProperty(
+        name="Overwrite Existing (Fix Proxies)",
+        description="If a material with the correct name already exists (e.g. an old USD proxy), explicitly download the true one from the source and replace all proxies scene-wide",
+        default=True
+    )
 
     def draw(self, context):
         layout = self.layout
         layout.label(text="Remap Source File Paths:")
         layout.prop(self, "search_path", text="Find")
         layout.prop(self, "replace_path", text="Replace")
+        layout.prop(self, "overwrite_existing")
         
         layout.separator()
         box = layout.box()
@@ -61,18 +68,22 @@ class DUMBTOOLS_OT_usd_material_restore_dialog(bpy.types.Operator):
             if cache_key in appended_materials:
                 return appended_materials[cache_key]
 
-            # Wait, before checking if it exists, remember that if we just import USD,
-            # the USD Proxy material took the name 'mat_name'. We have freed the name
-            # by renaming the proxy in the main loop below.
             existing_mat = bpy.data.materials.get(mat_name)
-            if existing_mat:
+            
+            # Trust existing if overwrite is off
+            if existing_mat and not self.overwrite_existing:
+                appended_materials[cache_key] = existing_mat
+                return existing_mat
+                
+            # Trust existing if it was already explicitly restored by this script run
+            if existing_mat and existing_mat.get("_dt_restored"):
                 appended_materials[cache_key] = existing_mat
                 return existing_mat
 
             if not path or not os.path.exists(path):
                 if path:
                     missing_files.add(path)
-                return None
+                return existing_mat # gracefully fallback to proxy if source file is completely missing
                 
             try:
                 with bpy.data.libraries.load(path, link=False) as (data_from, data_to):
@@ -83,11 +94,20 @@ class DUMBTOOLS_OT_usd_material_restore_dialog(bpy.types.Operator):
                     if m is not None:
                         m["_dt_restored"] = True
                         appended_materials[cache_key] = m
+                        
+                        # Swap out the old ghost material!
+                        if existing_mat and existing_mat != m:
+                            # Swap all users from the old proxy to the freshly downloaded real material
+                            existing_mat.user_remap(m)
+                            # Free up the preferred clean name
+                            existing_mat.name = existing_mat.name + "_Ghost"
+                            m.name = mat_name
+                            
                         return m
             except Exception as e:
                 print(f"USD Import Restore: Failed to load material {mat_name} from {path}. Error: {e}")
                 
-            return None
+            return existing_mat
 
         # Pre-process: Rename proxy materials, expand slot capacity, and remap polygon indices
         for obj in context.selected_objects:
@@ -118,12 +138,13 @@ class DUMBTOOLS_OT_usd_material_restore_dialog(bpy.types.Operator):
                     
                     original_idx = None
                     for slot_idx_str, data in mat_data.items():
-                        if data.get("name") and data.get("name") == base_name:
+                        j_name = data.get("name")
+                        if j_name and (base_name == j_name or base_name.startswith(j_name + ".")):
                             original_idx = int(slot_idx_str)
                             break
                             
                     if original_idx is not None:
-                        if mat.name == base_name and "_dt_restored" not in mat:
+                        if (mat.name == base_name or mat.name.startswith(base_name + ".")) and "_dt_restored" not in mat:
                             mat.name = base_name + "_USDProxy"
                         poly_remap[current_idx] = original_idx
                 

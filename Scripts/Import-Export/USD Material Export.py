@@ -14,11 +14,18 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator):
 
         tagged_count = 0
         
-        for obj in context.selected_objects:
+        # Dynamically drill down into Collection Instances to tag embedded meshes
+        objs_to_process = set(context.selected_objects)
+        for obj in list(objs_to_process):
+            if getattr(obj, "instance_type", "") == 'COLLECTION' and obj.instance_collection:
+                for col_obj in obj.instance_collection.all_objects:
+                    objs_to_process.add(col_obj)
+        
+        for obj in objs_to_process:
             if obj.type not in {'MESH', 'CURVE', 'SURFACE', 'META', 'FONT', 'GPENCIL'}:
                 continue
                 
-            if not obj.material_slots:
+            if not getattr(obj, "material_slots", None):
                 continue
                 
             mat_data = {}

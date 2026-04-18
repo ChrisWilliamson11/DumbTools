@@ -92,11 +92,18 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
                 objects_to_export.add(real_obj)
                 
                 # Rigid-link the realized geometry to the original Empty so it perfectly inherits constraints!
-                # We save world matrix explicitly first to avert weird shifts if Blender pre-parented them to dummy_empty
                 real_matrix = real_obj.matrix_world.copy()
                 real_obj.parent = instance_empty
                 real_obj.matrix_parent_inverse = instance_empty.matrix_world.inverted()
                 real_obj.matrix_world = real_matrix
+                
+                # CRITICAL VISIBILITY OVERRIDE:
+                # Make Instances Real often places objects into the original hidden proxy collections.
+                # If they are hidden, USD skips them unconditionally!
+                try: context.scene.collection.objects.link(real_obj)
+                except Exception: pass
+                real_obj.hide_viewport = False
+                real_obj.hide_render = False
                 
             # Temporarily strip the original Empty of its exact "Collection Instance" properties.
             # If we don't do this, the USD Exporter sees it's a Collection Instance and aggressively 

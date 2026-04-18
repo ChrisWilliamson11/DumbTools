@@ -47,12 +47,49 @@ class KimodoSettings(bpy.types.PropertyGroup):
         description="Random seed (-1 for random)",
         default=-1
     )
-    transition_frames: bpy.props.IntProperty(
-        name="Transition Frames",
-        description="Number of frames to help transition",
-        default=5,
-        min=0, max=60
+    num_samples: bpy.props.IntProperty(
+        name="Variations",
+        description="Number of separate animations to generate (Warning: takes longer)",
+        default=1,
+        min=1, max=10
     )
+    diffusion_steps: bpy.props.IntProperty(
+        name="Quality (Steps)",
+        description="Number of diffusion iterations (Higher = smoother but slower)",
+        default=100,
+        min=20, max=500
+    )
+    cfg_weight: bpy.props.FloatProperty(
+        name="Prompt Weight (CFG)",
+        description="How strictly to follow the prompt vs motion variance",
+        default=2.0,
+        min=1.0, max=10.0
+    )
+    export_pose: bpy.props.BoolProperty(
+        name="Skeletal Posing",
+        description="Export the animated dummy skeleton as full-body keyframe constraints",
+        default=True
+    )
+    export_root: bpy.props.BoolProperty(
+        name="Root Trajectory",
+        description="Export the animated 'Kimodo_Trajectory' Empty as continuous 2D plane constraints",
+        default=True
+    )
+
+class DUMBTOOLS_OT_create_kimodo_trajectory(bpy.types.Operator):
+    """Generate an animatable Empty tracking root trajectory dynamically"""
+    bl_idname = "dumbtools.create_kimodo_trajectory"
+    bl_label = "Create Trajectory Control"
+
+    def execute(self, context):
+        if "Kimodo_Trajectory" in bpy.data.objects:
+            self.report({'WARNING'}, "Trajectory control already exists!")
+            return {'CANCELLED'}
+        bpy.ops.object.empty_add(type='CIRCLE', radius=1.0, align='WORLD', location=(0, 0, 0))
+        tracker = context.active_object
+        tracker.name = "Kimodo_Trajectory"
+        self.report({'INFO'}, "Created Trajectory Tracking Empty!")
+        return {'FINISHED'}
 
 class DUMBTOOLS_OT_generate_soma_skeleton(bpy.types.Operator):
     bl_idname = "dumbtools.generate_soma_skeleton"
@@ -93,40 +130,69 @@ def run_kimodo_generation(filepath_dir, scene):
         process.wait()
         print("Kimodo Generation completed with exit code", process.returncode)
         
-        # Set a flag to trigger import in the main thread (thread-safe execution via app timer)
-        bpy.app.timers.register(lambda: import_generated_bvh(filepath_dir), first_interval=0.1)
+        # We must explicitly read settings.num_samples inside the operator, so pass it through
+        num_samples = scene.kimodo_settings.num_samples
+        bpy.app.timers.register(lambda: import_generated_bvh(filepath_dir, num_samples), first_interval=0.1)
 
     thread = threading.Thread(target=background_task)
     thread.start()
 
-def import_generated_bvh(filepath_dir):
-    bvh_path = os.path.join(filepath_dir, "motion.bvh")
-    if not os.path.exists(bvh_path):
-        print(f"Error: generated BVH not found at {bvh_path}")
+def import_generated_bvh(filepath_dir, num_samples):
+    original_obj = bpy.context.active_object
+    if not original_obj or original_obj.type != 'ARMATURE':
+        print("Error: Active object is not a valid Armature!")
         return None
 
-    # Save current active object
-    original_obj = bpy.context.active_object
+    if not original_obj.animation_data:
+        original_obj.animation_data_create()
 
-    # Import the BVH
-    bpy.ops.import_anim.bvh(filepath=bvh_path, global_scale=0.01, use_fps_scale=True, update_scene_fps=False, update_scene_duration=False)
-    
-    imported_obj = bpy.context.active_object
-    if imported_obj and imported_obj != original_obj and imported_obj.animation_data and imported_obj.animation_data.action:
-        # Copy the action
-        generated_action = imported_obj.animation_data.action
-        generated_action.name = "Kimodo_Generated_Action"
+    # Clear active action to prevent it entirely overriding our new NLA strips
+    original_obj.animation_data.action = None
+
+    bvh_files = []
+    if num_samples == 1:
+        single_path = os.path.join(filepath_dir, "motion.bvh")
+        if os.path.exists(single_path):
+            bvh_files.append(single_path)
+    else:
+        motion_dir = os.path.join(filepath_dir, "motion")
+        if os.path.isdir(motion_dir):
+            for i in range(num_samples):
+                p = os.path.join(motion_dir, f"motion_{i:02d}.bvh")
+                if os.path.exists(p):
+                    bvh_files.append(p)
+
+    if not bvh_files:
+        print("Error: No BVH files found in temp directory!")
+        return None
+
+    for i, bvh_path in enumerate(bvh_files):
+        # Import the BVH
+        bpy.ops.import_anim.bvh(filepath=bvh_path, global_scale=0.01, use_fps_scale=True, update_scene_fps=False, update_scene_duration=False)
         
-        # Apply to original
-        if original_obj and original_obj.type == 'ARMATURE':
-            if not original_obj.animation_data:
-                original_obj.animation_data_create()
-            original_obj.animation_data.action = generated_action
+        imported_obj = bpy.context.active_object
+        if imported_obj and imported_obj != original_obj and imported_obj.animation_data and imported_obj.animation_data.action:
+            action = imported_obj.animation_data.action
+            action.name = f"Kimodo_Gen_v{i+1}"
             
-        # Delete imported armature to keep scene clean
-        bpy.data.objects.remove(imported_obj, do_unlink=True)
-        
-        print("Successfully applied Kimodo motion to skeleton.")
+            # Create an isolated NLA track for this variation
+            track = original_obj.animation_data.nla_tracks.new()
+            track.name = f"Kimodo Variation {i+1}"
+            
+            # Map the generated action into the track
+            strip = track.strips.new(action.name, 1, action)
+            
+            # Visually mute all but the first track so the user can easily toggle / solo them to compare
+            if i > 0:
+                track.mute = True
+                
+            # Delete imported armature to keep scene clean
+            bpy.data.objects.remove(imported_obj, do_unlink=True)
+
+    # Set context object back
+    bpy.context.view_layer.objects.active = original_obj
+    original_obj.select_set(True)
+    print("Successfully applied Kimodo motion(s) to skeleton NLA.")
     return None
 
 class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
@@ -153,72 +219,110 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             return {'CANCELLED'}
 
         settings = context.scene.kimodo_settings
-
-        # Find keyframes
-        keyframes = set()
-        if obj.animation_data and obj.animation_data.action:
-            for fcurve in iter_fcurves(obj.animation_data.action):
-                for kp in fcurve.keyframe_points:
-                    keyframes.add(int(kp.co[0]))
-        
-        if not keyframes:
-            # If no keyframes, just use the current frame
-            keyframes.add(context.scene.frame_current)
-            
-        keyframes = sorted(list(keyframes))
+        if not obj or obj.type != 'ARMATURE':
+            self.report({'ERROR'}, "Active object is not an Armature")
+            return {'CANCELLED'}
 
         temp_dir = r"g:\Kimodo\temp"
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
 
-        # Scrape constraints
-        original_frame = context.scene.frame_current
         scene_fps = context.scene.render.fps / context.scene.render.fps_base
         
-        local_joints_rot_all = []
-        root_positions_all = []
-        frame_indices = []
+        # Discover universal start frame anchor to sync pose and trajectory timelines
+        min_frame = 99999999
+        keyframes = set()
+        if settings.export_pose and obj.animation_data and obj.animation_data.action:
+            for fcurve in iter_fcurves(obj.animation_data.action):
+                for kp in fcurve.keyframe_points:
+                    fr = int(kp.co[0])
+                    keyframes.add(fr)
+                    min_frame = min(min_frame, fr)
+                    
+        tracker = bpy.data.objects.get("Kimodo_Trajectory")
+        traj_keyframes = set()
+        if settings.export_root and tracker and tracker.animation_data and tracker.animation_data.action:
+            for fcurve in iter_fcurves(tracker.animation_data.action):
+                for kp in fcurve.keyframe_points:
+                    fr = int(kp.co[0])
+                    traj_keyframes.add(fr)
+                    min_frame = min(min_frame, fr)
+                    
+        if min_frame == 99999999:
+            min_frame = context.scene.frame_start
 
-        for frame in keyframes:
-            context.scene.frame_set(frame)
-            
-            # Map Blender frame via Scene FPS directly to Kimodo's internal 30 FPS engine
-            time_sec = (frame - keyframes[0]) / scene_fps
-            kimodo_frame = int(round(time_sec * 30.0))
-            frame_indices.append(kimodo_frame)
-            
-            frame_rot_list = []
-            for j_name in joint_order:
-                if j_name in obj.pose.bones:
-                    pb = obj.pose.bones[j_name]
-                    # matrix_basis is local transform relative to rest pose
-                    quat = pb.matrix_basis.to_quaternion()
-                    # Axis angle = axis * angle
-                    axis = quat.axis
-                    angle = quat.angle
-                    frame_rot_list.append([axis.x * angle, axis.y * angle, axis.z * angle])
+        original_frame = context.scene.frame_current
+
+        constraints_data = []
+
+        # 1. Process Skeleton Pose Constraints
+        if settings.export_pose and keyframes:
+            keyframes = sorted(list(keyframes))
+            local_joints_rot_all = []
+            root_positions_all = []
+            pose_indices = []
+
+            for frame in keyframes:
+                context.scene.frame_set(frame)
+                
+                time_sec = (frame - min_frame) / scene_fps
+                kimodo_frame = int(round(time_sec * 30.0))
+                pose_indices.append(kimodo_frame)
+                
+                frame_rot_list = []
+                for j_name in joint_order:
+                    if j_name in obj.pose.bones:
+                        pb = obj.pose.bones[j_name]
+                        quat = pb.matrix_basis.to_quaternion()
+                        frame_rot_list.append([quat.w, quat.x, quat.y, quat.z])
+                    else:
+                        frame_rot_list.append([1.0, 0.0, 0.0, 0.0])
+                local_joints_rot_all.append(frame_rot_list)
+                
+                if "Hips" in obj.pose.bones:
+                    orig = obj.pose.bones["Hips"].matrix.translation
+                    root_positions_all.append([orig.x, orig.y, orig.z])
                 else:
-                    frame_rot_list.append([0.0, 0.0, 0.0])
-            local_joints_rot_all.append(frame_rot_list)
-            
-            if "Hips" in obj.pose.bones:
-                # Get the translation of the Hips bone in the armature's local space (representing the BVH global root position)
-                orig = obj.pose.bones["Hips"].matrix.translation
-                # We save it directly
-                root_positions_all.append([orig.x, orig.y, orig.z])
-            else:
-                root_positions_all.append([0.0, 0.0, 0.0])
+                    root_positions_all.append([0.0, 0.0, 0.0])
+                    
+            constraints_data.append({
+                "type": "full_body",
+                "frame_indices": pose_indices,
+                "local_joints_rot": local_joints_rot_all,
+                "root_positions": root_positions_all
+            })
+
+        # 2. Process Root 2D Trajectory Constraints
+        if settings.export_root and traj_keyframes:
+            import math
+            traj_keyframes = sorted(list(traj_keyframes))
+            root_indices = []
+            smooth_root_2d = []
+            global_root_heading = []
+
+            for frame in traj_keyframes:
+                context.scene.frame_set(frame)
+                
+                time_sec = (frame - min_frame) / scene_fps
+                kimodo_frame = int(round(time_sec * 30.0))
+                root_indices.append(kimodo_frame)
+                
+                loc = tracker.location
+                smooth_root_2d.append([loc.x, loc.y]) # Blender X, Y correspond natively to ground plane mapping
+                
+                rot_z = tracker.rotation_euler.z 
+                global_root_heading.append([math.cos(rot_z), math.sin(rot_z)])
+                
+            constraints_data.append({
+                "type": "root2d",
+                "frame_indices": root_indices,
+                "smooth_root_2d": smooth_root_2d,
+                "global_root_heading": global_root_heading
+            })
 
         context.scene.frame_set(original_frame)
 
         # Write constraints.json
-        constraints_data = [{
-            "type": "fullbody",
-            "frame_indices": frame_indices,
-            "local_joints_rot": local_joints_rot_all,
-            "root_positions": root_positions_all
-        }]
-        
         with open(os.path.join(temp_dir, "constraints.json"), 'w') as f:
             json.dump(constraints_data, f)
             
@@ -229,14 +333,14 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         
         # Write meta.json
         meta_data = {
-            "num_samples": 1,
-            "diffusion_steps": 100,
+            "num_samples": settings.num_samples,
+            "diffusion_steps": settings.diffusion_steps,
             "seed": settings.seed if settings.seed >= 0 else None,
             "text": settings.prompt,
             "duration": str(calculated_duration),
             "cfg": {
                 "enabled": True,
-                "text_weight": 2.0,
+                "text_weight": settings.cfg_weight,
                 "constraint_weight": 2.0
             }
         }
@@ -249,41 +353,47 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         self.report({'INFO'}, "Exported constraints! Generation running in background. See terminal for output.")
         return {'FINISHED'}
 
-class VIEW3D_PT_kimodo_panel(bpy.types.Panel):
+class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
+    bl_label = "Kimodo AI Motion"
+    bl_idname = "DUMBTOOLS_PT_kimodo_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'DumbTools'
-    bl_label = "Kimodo AI Motion"
-
+    
     def draw(self, context):
         layout = self.layout
         settings = context.scene.kimodo_settings
-
-        layout.operator("dumbtools.generate_soma_skeleton", icon='ARMATURE_DATA')
+        
+        layout.operator(DUMBTOOLS_OT_generate_soma_skeleton.bl_idname)
+        layout.operator(DUMBTOOLS_OT_create_kimodo_trajectory.bl_idname)
+        
+        layout.separator()
+        layout.prop(settings, "export_pose")
+        layout.prop(settings, "export_root")
         
         layout.separator()
         layout.prop(settings, "prompt")
         layout.prop(settings, "seed")
+        layout.prop(settings, "num_samples")
+        layout.prop(settings, "diffusion_steps")
+        layout.prop(settings, "cfg_weight")
         layout.prop(settings, "transition_frames")
         
         layout.separator()
-        layout.operator("dumbtools.generate_kimodo_motion", icon='PLAY', text="Export & Generate Motion")
-
-classes = (
-    KimodoSettings,
-    DUMBTOOLS_OT_generate_soma_skeleton,
-    DUMBTOOLS_OT_generate_motion_from_pose,
-    VIEW3D_PT_kimodo_panel
-)
+        layout.operator(DUMBTOOLS_OT_generate_motion_from_pose.bl_idname, icon='PLAY', text="Export & Generate Motion")
 
 def register():
-    for cls in classes:
-        bpy.utils.register_class(cls)
+    bpy.utils.register_class(KimodoSettings)
     bpy.types.Scene.kimodo_settings = bpy.props.PointerProperty(type=KimodoSettings)
+    bpy.utils.register_class(DUMBTOOLS_OT_generate_soma_skeleton)
+    bpy.utils.register_class(DUMBTOOLS_OT_create_kimodo_trajectory)
+    bpy.utils.register_class(DUMBTOOLS_OT_generate_motion_from_pose)
+    bpy.utils.register_class(DUMBTOOLS_PT_kimodo_panel)
 
 def unregister():
-    for cls in reversed(classes):
-        bpy.utils.unregister_class(cls)
+    bpy.utils.unregister_class(DUMBTOOLS_PT_kimodo_panel)
+    bpy.utils.unregister_class(DUMBTOOLS_OT_generate_motion_from_pose)
+    bpy.utils.unregister_class(DUMBTOOLS_OT_create_kimodo_trajectory)
+    bpy.utils.unregister_class(DUMBTOOLS_OT_generate_soma_skeleton)
     del bpy.types.Scene.kimodo_settings
-
 register()

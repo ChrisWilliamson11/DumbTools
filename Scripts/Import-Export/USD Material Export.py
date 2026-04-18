@@ -59,6 +59,7 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
         
         # 1. Non-destructive Collection Instance Processor
         instances = [obj for obj in original_selection if getattr(obj, "instance_type", "") == 'COLLECTION' and obj.instance_collection]
+        stored_collections = {}
         
         for instance_empty in instances:
             bpy.ops.object.select_all(action='DESELECT')
@@ -72,19 +73,19 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
             dummy_empty = context.active_object
             
             # CRITICAL: Blender hasn't populated this new dummy empty into the scene graph yet. 
-            # Make Instances Real will return completely empty if we don't aggressively update the view_layer.
             context.view_layer.update()
+            
+            # Use strict set subtraction to perfectly isolate what Make Instances Real actually creates
+            objs_before = set(context.scene.objects)
             
             # Explode the duplicate into real geometry
             try:
                 bpy.ops.object.duplicates_make_real(use_hierarchy=True)
             except Exception:
                 bpy.ops.object.duplicates_make_real()
-            
-            realized_objects = []
-            for obj in context.selected_objects:
-                if obj != dummy_empty:
-                    realized_objects.append(obj)
+                
+            objs_after = set(context.scene.objects)
+            realized_objects = list(objs_after - objs_before)
             
             for real_obj in realized_objects:
                 temp_objects_to_delete.append(real_obj)
@@ -96,6 +97,13 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
                 real_obj.parent = instance_empty
                 real_obj.matrix_parent_inverse = instance_empty.matrix_world.inverted()
                 real_obj.matrix_world = real_matrix
+                
+            # Temporarily strip the original Empty of its exact "Collection Instance" properties.
+            # If we don't do this, the USD Exporter sees it's a Collection Instance and aggressively 
+            # ignores/culls all its children, causing an empty 1kb export!
+            stored_collections[instance_empty] = instance_empty.instance_collection
+            instance_empty.instance_type = 'NONE'
+            instance_empty.instance_collection = None
                 
             # Queue the sacrifical dummy empty for cleanup
             try:
@@ -197,6 +205,15 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
                     bpy.data.objects.remove(obj, do_unlink=True)
                 else:    
                     bpy.data.objects.remove(obj, do_unlink=True)
+            except ReferenceError:
+                pass
+                
+        # Restore the stripped Collection Instances
+        for instance_empty, col in stored_collections.items():
+            try:
+                if instance_empty and getattr(instance_empty, "name", None):
+                    instance_empty.instance_type = 'COLLECTION'
+                    instance_empty.instance_collection = col
             except ReferenceError:
                 pass
                 

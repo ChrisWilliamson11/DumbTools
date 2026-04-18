@@ -151,6 +151,11 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
             try: obj.select_set(True)
             except: pass
 
+        # Change to a loading cursor and force Blender to redraw the interface.
+        # This gives visual feedback during the heavy synchronous Python C++ block!
+        context.window.cursor_set('WAIT')
+        bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
+
         # 4. Trigger Synchronous Native USD Export
         try:
             try:
@@ -174,6 +179,10 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
             self.report({'INFO'}, f"Smoothly exported {len(context.selected_objects)} total objects with {tagged_count} material tags.")
         except Exception as e:
             self.report({'ERROR'}, f"Failed to export USD: {e}")
+            
+        finally:
+            # Restore the standard Blender cursor
+            context.window.cursor_set('DEFAULT')
         
         # 5. Perfect Deep Clean!
         # Quietly annihilate all the temporary realized geometry we created

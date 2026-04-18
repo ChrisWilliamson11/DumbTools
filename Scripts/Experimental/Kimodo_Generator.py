@@ -232,21 +232,31 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         # Discover universal start frame anchor to sync pose and trajectory timelines
         min_frame = 99999999
         keyframes = set()
-        if settings.export_pose and obj.animation_data and obj.animation_data.action:
-            for fcurve in iter_fcurves(obj.animation_data.action):
-                for kp in fcurve.keyframe_points:
-                    fr = int(kp.co[0])
-                    keyframes.add(fr)
-                    min_frame = min(min_frame, fr)
+        if settings.export_pose:
+            if obj.animation_data and obj.animation_data.action:
+                for fcurve in iter_fcurves(obj.animation_data.action):
+                    for kp in fcurve.keyframe_points:
+                        fr = int(kp.co[0])
+                        keyframes.add(fr)
+                        min_frame = min(min_frame, fr)
+            if not keyframes:
+                fr = int(context.scene.frame_current)
+                keyframes.add(fr)
+                min_frame = min(min_frame, fr)
                     
         tracker = bpy.data.objects.get("Kimodo_Trajectory")
         traj_keyframes = set()
-        if settings.export_root and tracker and tracker.animation_data and tracker.animation_data.action:
-            for fcurve in iter_fcurves(tracker.animation_data.action):
-                for kp in fcurve.keyframe_points:
-                    fr = int(kp.co[0])
-                    traj_keyframes.add(fr)
-                    min_frame = min(min_frame, fr)
+        if settings.export_root and tracker:
+            if tracker.animation_data and tracker.animation_data.action:
+                for fcurve in iter_fcurves(tracker.animation_data.action):
+                    for kp in fcurve.keyframe_points:
+                        fr = int(kp.co[0])
+                        traj_keyframes.add(fr)
+                        min_frame = min(min_frame, fr)
+            if not traj_keyframes:
+                fr = int(context.scene.frame_current)
+                traj_keyframes.add(fr)
+                min_frame = min(min_frame, fr)
                     
         if min_frame == 99999999:
             min_frame = context.scene.frame_start

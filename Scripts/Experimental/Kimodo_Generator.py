@@ -148,6 +148,9 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         bvh_path = r"g:\Kimodo\kimodo\kimodo\assets\skeletons\somaskel77\somaskel77_standard_tpose.bvh"
         try:
             joint_order = scrape_bvh_joint_names(bvh_path)
+            # Blender's BVH importer adds a dummy 'Root' node. We must strip it so the array represents the exact 77 SOMA joints where Hips is index 0.
+            if "Root" in joint_order:
+                joint_order.remove("Root")
         except Exception as e:
             self.report({'ERROR'}, f"Could not read SOMA joint order: {e}")
             return {'CANCELLED'}
@@ -196,9 +199,9 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                     frame_rot_list.append([0.0, 0.0, 0.0])
             local_joints_rot_all.append(frame_rot_list)
             
-            if "Root" in obj.pose.bones:
-                # Get the translation of the root bone in the armature's local space
-                orig = obj.pose.bones["Root"].matrix.translation
+            if "Hips" in obj.pose.bones:
+                # Get the translation of the Hips bone in the armature's local space (representing the BVH global root position)
+                orig = obj.pose.bones["Hips"].matrix.translation
                 # We save it directly
                 root_positions_all.append([orig.x, orig.y, orig.z])
             else:

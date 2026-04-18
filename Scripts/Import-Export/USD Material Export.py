@@ -160,14 +160,33 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
             except: pass
 
         # Change to a loading cursor and force Blender to redraw the interface.
-        # This gives visual feedback during the heavy synchronous Python C++ block!
         context.window.cursor_set('WAIT')
         bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
         
         # CRITICAL: We've spawned raw meshes, altered parents, and changed selection states. 
-        # The underlying Dependency Graph and ViewLayer requires a hard flush BEFORE the C++ exporter runs
-        # otherwise the USD compiler literally cannot see the newly spawned memory blocks!
         context.view_layer.update()
+        
+        # DEBUG LOGGER
+        try:
+            log_path = self.filepath + ".log.txt"
+            with open(log_path, "w") as f:
+                f.write("--- DUMBTOOLS USD DEBUG LOG ---\n")
+                f.write(f"Export Animation: {self.export_animation}\n")
+                f.write(f"Original Collection Instances detected: {len(instances)}\n")
+                f.write(f"Target Export Objects set count: {len(objects_to_export)}\n")
+                f.write(f"Current Context Selected Objects count: {len(context.selected_objects)}\n\n")
+                
+                f.write("--- OBJECTS TO EXPORT SET ---\n")
+                for obj in objects_to_export:
+                    parent_name = obj.parent.name if obj.parent else "None"
+                    f.write(f"Name: {obj.name} | Type: {obj.type} | Sel: {obj.select_get()} | Parent: {parent_name}\n")
+                    
+                f.write("\n--- CONTEXT SELECTED OBJECTS LIST ---\n")
+                for obj in context.selected_objects:
+                    parent_name = obj.parent.name if obj.parent else "None"
+                    f.write(f"Name: {obj.name} | Type: {obj.type} | Sel: {obj.select_get()} | Parent: {parent_name}\n")
+        except Exception:
+            pass
 
         # 4. Trigger Synchronous Native USD Export
         try:

@@ -227,12 +227,8 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             "num_samples": 1,
             "diffusion_steps": 100,
             "seed": settings.seed if settings.seed >= 0 else None,
-            "prompts": [
-                {
-                    "text": settings.prompt,
-                    "duration": str(calculated_duration)
-                }
-            ],
+            "text": settings.prompt,
+            "duration": str(calculated_duration),
             "cfg": {
                 "enabled": True,
                 "text_weight": 2.0,

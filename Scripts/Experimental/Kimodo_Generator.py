@@ -47,9 +47,20 @@ class KimodoSettings(bpy.types.PropertyGroup):
         description="Use sequential Timeline Markers instead of the single global prompt",
         default=False
     )
-    model_name: bpy.props.StringProperty(
-        name="Target Model",
-        description="Target model slug explicitly. Using kimodo-soma-bones triggers native BONES-SEED weights natively.",
+    model_name: bpy.props.EnumProperty(
+        name="Model",
+        description="Kimodo model to generate with",
+        items=[
+            ("kimodo-soma-rp",      "SOMA – Rigplay (latest)",    "Best for complex text prompts"),
+            ("kimodo-soma-rp-v1.1", "SOMA – Rigplay v1.1",        "Pinned Rigplay version 1.1"),
+            ("kimodo-soma-rp-v1",   "SOMA – Rigplay v1",          "Pinned Rigplay version 1"),
+            ("kimodo-soma-seed",    "SOMA – BONES-SEED (latest)", "Production mocap dataset, best for physics realism"),
+            ("kimodo-soma-seed-v1.1","SOMA – BONES-SEED v1.1",    "Pinned BONES-SEED version 1.1"),
+            ("kimodo-soma-seed-v1", "SOMA – BONES-SEED v1",       "Pinned BONES-SEED version 1"),
+            ("kimodo-smplx-rp",     "SMPLX – Rigplay",            "SMPLX body shape model"),
+            ("kimodo-g1-rp",        "G1 Robot – Rigplay",         "Unitree G1 humanoid robot"),
+            ("kimodo-g1-seed",      "G1 Robot – BONES-SEED",      "Unitree G1 robot with SEED dataset"),
+        ],
         default="kimodo-soma-rp"
     )
     seed: bpy.props.IntProperty(

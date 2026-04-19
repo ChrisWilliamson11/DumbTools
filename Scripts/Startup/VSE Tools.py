@@ -445,19 +445,19 @@ def _on_frame_change(scene, depsgraph=None):
     frame = scene.frame_current
     sfp = scene.vse_selection_follows_playhead
     ab = scene.vse_auto_browse_source
-    print(f"[VSE] frame={frame}  selection_follows={sfp}  auto_browse={ab}")
+    #print(f"[VSE] frame={frame}  selection_follows={sfp}  auto_browse={ab}")
 
     top_strip = get_topmost_strip_at_frame(context, frame)
-    print(f"[VSE] top_strip={top_strip.name if top_strip else None}  (ch={top_strip.channel if top_strip else '-'})")
+    #print(f"[VSE] top_strip={top_strip.name if top_strip else None}  (ch={top_strip.channel if top_strip else '-'})")
 
     if sfp and top_strip:
-        print(f"[VSE] Setting active_strip -> {top_strip.name}")
+        #print(f"[VSE] Setting active_strip -> {top_strip.name}")
         se.active_strip = top_strip
-        print(f"[VSE] active_strip is now: {se.active_strip}")
+        #print(f"[VSE] active_strip is now: {se.active_strip}")
 
     if ab and top_strip:
         directory = _get_strip_source_directory(top_strip)
-        print(f"[VSE] strip type={top_strip.type}  directory={directory}")
+        #print(f"[VSE] strip type={top_strip.type}  directory={directory}")
         if directory and os.path.exists(directory):
             dir_bytes = bytes(directory, "utf-8")
             found_browser = False
@@ -467,7 +467,7 @@ def _on_frame_change(scene, depsgraph=None):
                         found_browser = True
                         try:
                             area.spaces.active.params.directory = dir_bytes
-                            print(f"[VSE] Set FILE_BROWSER dir -> {directory}")
+                            #print(f"[VSE] Set FILE_BROWSER dir -> {directory}")
                         except Exception as e:
                             print(f"[VSE] FILE_BROWSER set failed: {e}")
             if not found_browser:

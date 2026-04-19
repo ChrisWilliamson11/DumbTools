@@ -65,31 +65,11 @@ class KimodoSettings(bpy.types.PropertyGroup):
         default=2.0,
         min=1.0, max=10.0
     )
-    export_pose: bpy.props.BoolProperty(
-        name="Skeletal Posing",
-        description="Export the animated dummy skeleton as full-body keyframe constraints",
-        default=True
-    )
     export_root: bpy.props.BoolProperty(
         name="Root Trajectory",
-        description="Export the animated 'Kimodo_Trajectory' Empty as continuous 2D plane constraints",
+        description="Export the animated Skeleton path natively as continuous 2D plane constraints",
         default=True
     )
-
-class DUMBTOOLS_OT_create_kimodo_trajectory(bpy.types.Operator):
-    """Generate an animatable Empty tracking root trajectory dynamically"""
-    bl_idname = "dumbtools.create_kimodo_trajectory"
-    bl_label = "Create Trajectory Control"
-
-    def execute(self, context):
-        if "Kimodo_Trajectory" in bpy.data.objects:
-            self.report({'WARNING'}, "Trajectory control already exists!")
-            return {'CANCELLED'}
-        bpy.ops.object.empty_add(type='CIRCLE', radius=1.0, align='WORLD', location=(0, 0, 0))
-        tracker = context.active_object
-        tracker.name = "Kimodo_Trajectory"
-        self.report({'INFO'}, "Created Trajectory Tracking Empty!")
-        return {'FINISHED'}
 
 class DUMBTOOLS_OT_generate_soma_skeleton(bpy.types.Operator):
     bl_idname = "dumbtools.generate_soma_skeleton"
@@ -229,74 +209,101 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
 
         scene_fps = context.scene.render.fps / context.scene.render.fps_base
         
-        # Discover universal start frame anchor to sync pose and trajectory timelines
-        min_frame = 99999999
+        # Discover universal start frame anchor
         keyframes = set()
-        if settings.export_pose:
-            if obj.animation_data and obj.animation_data.action:
-                for fcurve in iter_fcurves(obj.animation_data.action):
-                    for kp in fcurve.keyframe_points:
-                        fr = int(kp.co[0])
-                        keyframes.add(fr)
-                        min_frame = min(min_frame, fr)
-            if not keyframes:
-                fr = int(context.scene.frame_current)
-                keyframes.add(fr)
-                min_frame = min(min_frame, fr)
+        if obj.animation_data and obj.animation_data.action:
+            for fcurve in iter_fcurves(obj.animation_data.action):
+                for kp in fcurve.keyframe_points:
+                    fr = int(kp.co[0])
+                    keyframes.add(fr)
                     
-        tracker = bpy.data.objects.get("Kimodo_Trajectory")
-        traj_keyframes = set()
-        if settings.export_root and tracker:
-            if tracker.animation_data and tracker.animation_data.action:
-                for fcurve in iter_fcurves(tracker.animation_data.action):
-                    for kp in fcurve.keyframe_points:
-                        fr = int(kp.co[0])
-                        traj_keyframes.add(fr)
-                        min_frame = min(min_frame, fr)
-            if not traj_keyframes:
-                fr = int(context.scene.frame_current)
-                traj_keyframes.add(fr)
-                min_frame = min(min_frame, fr)
-                    
-        if min_frame == 99999999:
-            min_frame = context.scene.frame_start
+        if not keyframes:
+            keyframes.add(int(context.scene.frame_current))
+            
+        min_frame = min(keyframes)
+        keyframes = sorted(list(keyframes))
 
         original_frame = context.scene.frame_current
 
         constraints_data = []
 
-        # 1. Process Skeleton Pose Constraints
-        if settings.export_pose and keyframes:
-            keyframes = sorted(list(keyframes))
-            local_joints_rot_all = []
-            root_positions_all = []
-            pose_indices = []
+        local_joints_rot_all = []
+        root_positions_all = []
+        pose_indices = []
+        
+        root_indices = []
+        smooth_root_2d = []
+        global_root_heading = []
 
-            for frame in keyframes:
-                context.scene.frame_set(frame)
+        import math, mathutils
+        # The base resting state matrix for the standard Kimodo BVH format aligned back into Blender World Space
+        Base_Armature_Matrix = mathutils.Matrix.Rotation(math.pi/2, 4, 'X')
+
+        for frame in keyframes:
+            context.scene.frame_set(frame)
+            
+            time_sec = (frame - min_frame) / scene_fps
+            kimodo_frame = int(round(time_sec * 30.0))
+            
+            # --- Global Spatial Resolution ---
+            kimodo_global_rots = {}
+            for pb in obj.pose.bones:
+                # Capture the explicit absolute world coordinate matrices
+                M_posed_world = obj.matrix_world @ pb.matrix
+                M_pure_rest_world = Base_Armature_Matrix @ pb.bone.matrix_local
                 
-                time_sec = (frame - min_frame) / scene_fps
-                kimodo_frame = int(round(time_sec * 30.0))
+                # Derive isolation deflection angular matrix 
+                R_pose = M_posed_world.to_3x3()
+                R_rest = M_pure_rest_world.to_3x3()
+                R_applied = R_pose @ R_rest.inverted()
+                kimodo_global_rots[pb.name] = R_applied
+
+            if "Hips" not in obj.pose.bones:
+                continue
+                
+            pb_hips = obj.pose.bones["Hips"]    
+            # Exact 3D World vector mapped into Kimodo Ground Space natively (-Z forward, Y up)
+            global_orig = obj.matrix_world @ pb_hips.matrix.translation
+            kimodo_pos = [global_orig.x, global_orig.z, -global_orig.y]
+            
+            # --- Trajectory Constraint Scraping ---
+            if settings.export_root:
+                root_indices.append(kimodo_frame)
+                smooth_root_2d.append([kimodo_pos[0], kimodo_pos[2]]) # X and Z
+                
+                # Extract Forward pointing vector from the Hips globally applied World mapping
+                R_applied_hips = kimodo_global_rots["Hips"]
+                new_forward_blender = R_applied_hips @ mathutils.Vector((0.0, 1.0, 0.0))
+                # Map Blender pointer vector into Kimodo 2D Header pointing vector [X, Z]!
+                global_root_heading.append([new_forward_blender.x, -new_forward_blender.y])
+
+            # --- Skeletal Constraint Scraping ---
+            if settings.export_pose:
                 pose_indices.append(kimodo_frame)
-                
+                root_positions_all.append(kimodo_pos)
+            
                 frame_rot_list = []
                 for j_name in joint_order:
                     if j_name in obj.pose.bones:
                         pb = obj.pose.bones[j_name]
-                        quat = pb.matrix_basis.to_quaternion()
+                        R_child = kimodo_global_rots[j_name]
+                        
+                        # Apply parent inverse matrix isolation for pure recursive Kimodo-native angular deflections
+                        if pb.parent and pb.parent.name in kimodo_global_rots:
+                            R_parent = kimodo_global_rots[pb.parent.name]
+                            L_child = R_parent.inverted() @ R_child
+                        else:
+                            L_child = R_child
+                            
+                        quat = L_child.to_quaternion()
                         axis = quat.axis
                         angle = quat.angle
                         frame_rot_list.append([axis.x * angle, axis.y * angle, axis.z * angle])
                     else:
                         frame_rot_list.append([0.0, 0.0, 0.0])
                 local_joints_rot_all.append(frame_rot_list)
-                
-                if "Hips" in obj.pose.bones:
-                    orig = obj.pose.bones["Hips"].matrix.translation
-                    root_positions_all.append([orig.x, orig.y, orig.z])
-                else:
-                    root_positions_all.append([0.0, 0.0, 0.0])
-                    
+
+        if settings.export_pose and keyframes:
             constraints_data.append({
                 "type": "fullbody",
                 "frame_indices": pose_indices,
@@ -304,32 +311,7 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 "root_positions": root_positions_all
             })
 
-        # 2. Process Root 2D Trajectory Constraints
-        if settings.export_root and traj_keyframes:
-            import math
-            traj_keyframes = sorted(list(traj_keyframes))
-            root_indices = []
-            smooth_root_2d = []
-            global_root_heading = []
-
-            for frame in traj_keyframes:
-                context.scene.frame_set(frame)
-                
-                time_sec = (frame - min_frame) / scene_fps
-                kimodo_frame = int(round(time_sec * 30.0))
-                root_indices.append(kimodo_frame)
-                
-                loc = tracker.location
-                # Kimodo space natively considers -Z as forward (Blender +Y). 
-                # Therefore Kimodo X = Blender X, Kimodo Z = -Blender Y
-                smooth_root_2d.append([loc.x, -loc.y])
-                
-                # Blender Empty forward rotation vector mapped into Kimodo [X, Z] pointing vector 
-                rot_z = tracker.rotation_euler.z 
-                hx = -math.sin(rot_z)
-                hz = -math.cos(rot_z)
-                global_root_heading.append([hx, hz])
-                
+        if settings.export_root and keyframes:
             constraints_data.append({
                 "type": "root2d",
                 "frame_indices": root_indices,
@@ -382,7 +364,6 @@ class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
         settings = context.scene.kimodo_settings
         
         layout.operator(DUMBTOOLS_OT_generate_soma_skeleton.bl_idname)
-        layout.operator(DUMBTOOLS_OT_create_kimodo_trajectory.bl_idname)
         
         layout.separator()
         layout.prop(settings, "export_pose")
@@ -402,14 +383,12 @@ def register():
     bpy.utils.register_class(KimodoSettings)
     bpy.types.Scene.kimodo_settings = bpy.props.PointerProperty(type=KimodoSettings)
     bpy.utils.register_class(DUMBTOOLS_OT_generate_soma_skeleton)
-    bpy.utils.register_class(DUMBTOOLS_OT_create_kimodo_trajectory)
     bpy.utils.register_class(DUMBTOOLS_OT_generate_motion_from_pose)
     bpy.utils.register_class(DUMBTOOLS_PT_kimodo_panel)
 
 def unregister():
     bpy.utils.unregister_class(DUMBTOOLS_PT_kimodo_panel)
     bpy.utils.unregister_class(DUMBTOOLS_OT_generate_motion_from_pose)
-    bpy.utils.unregister_class(DUMBTOOLS_OT_create_kimodo_trajectory)
     bpy.utils.unregister_class(DUMBTOOLS_OT_generate_soma_skeleton)
     del bpy.types.Scene.kimodo_settings
 register()

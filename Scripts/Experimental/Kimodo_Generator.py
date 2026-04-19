@@ -120,18 +120,17 @@ def run_kimodo_generation(filepath_dir, scene):
     if not model_string:
         model_string = "kimodo-soma-rp"
         
-    cmd = [
-        "/home/chris/Kimodo_WSL/kimodo/venv/bin/kimodo_gen",
-        "--input_folder", "/mnt/g/Kimodo/temp",
-        "--output", "/mnt/g/Kimodo/temp/motion",
-        "--bvh",
-        "--bvh_standard_tpose",
-        "--model", model_string
-    ]
+    wsl_cmd = (
+        f'wsl -d Ubuntu -e bash -c "'
+        f'cd ~/Kimodo_WSL/kimodo && '
+        f'source venv/bin/activate && '
+        f'kimodo_gen --input_folder /mnt/g/Kimodo/temp --output /mnt/g/Kimodo/temp/motion --bvh --bvh_standard_tpose --model {model_string}'
+        f'"'
+    )
     
     def background_task():
         print("Starting Kimodo Generation in WSL...")
-        process = subprocess.Popen(cmd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        process = subprocess.Popen(wsl_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in process.stdout:
             print("[Kimodo WSL]:", line.strip())
         process.wait()

@@ -65,6 +65,11 @@ class KimodoSettings(bpy.types.PropertyGroup):
         default=2.0,
         min=1.0, max=10.0
     )
+    export_pose: bpy.props.BoolProperty(
+        name="Skeletal Posing",
+        description="Export the animated dummy skeleton as full-body keyframe constraints",
+        default=True
+    )
     export_root: bpy.props.BoolProperty(
         name="Root Trajectory",
         description="Export the animated Skeleton path natively as continuous 2D plane constraints",

@@ -268,8 +268,8 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         for frame in keyframes:
             context.scene.frame_set(frame)
             
-            time_sec = (frame - min_frame) / scene_fps
-            kimodo_frame = int(round(time_sec * 30.0))
+            # Map Blender frame to Kimodo frame index using the same FPS as the duration calculation
+            kimodo_frame = int(round(frame - min_frame))
             
             # --- Global Spatial Resolution ---
             kimodo_global_rots = {}

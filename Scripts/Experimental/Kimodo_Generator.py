@@ -39,8 +39,18 @@ def iter_fcurves(action):
 class KimodoSettings(bpy.types.PropertyGroup):
     prompt: bpy.props.StringProperty(
         name="Prompt",
-        description="Text prompt for motion generation",
-        default="A person waving their hand"
+        description="Describe the motion mathematically",
+        default="A person walking forward"
+    )
+    use_markers: bpy.props.BoolProperty(
+        name="Prompt via Timeline Markers",
+        description="Use sequential Timeline Markers instead of the single global prompt",
+        default=False
+    )
+    model_name: bpy.props.StringProperty(
+        name="Target Model",
+        description="Target model slug explicitly. Using kimodo-soma-bones triggers native BONES-SEED weights natively.",
+        default="kimodo-soma-rp"
     )
     seed: bpy.props.IntProperty(
         name="Seed",
@@ -69,6 +79,11 @@ class KimodoSettings(bpy.types.PropertyGroup):
         name="Skeletal Posing",
         description="Export the animated dummy skeleton as full-body keyframe constraints",
         default=True
+    )
+    export_selected_bones_only: bpy.props.BoolProperty(
+        name="Selected Bones Only (End-Effector)",
+        description="Apply native Kimodo constraints exclusively to actively selected Pose Bones instead of the full body",
+        default=False
     )
     export_root: bpy.props.BoolProperty(
         name="Root Trajectory",
@@ -100,16 +115,23 @@ class DUMBTOOLS_OT_generate_soma_skeleton(bpy.types.Operator):
         return {'FINISHED'}
 
 def run_kimodo_generation(filepath_dir, scene):
-    # This runs the WSL command in a separate thread so Blender does not freeze indefinitely
-    wsl_cmd = (
-        'wsl -d Ubuntu -e bash -c "cd ~/Kimodo_WSL/kimodo && '
-        'source venv/bin/activate && '
-        'kimodo_gen --input_folder /mnt/g/Kimodo/temp --output /mnt/g/Kimodo/temp/motion --bvh --bvh_standard_tpose"'
-    )
+    settings = scene.kimodo_settings
+    model_string = settings.model_name.strip()
+    if not model_string:
+        model_string = "kimodo-soma-rp"
+        
+    cmd = [
+        "/home/chris/Kimodo_WSL/kimodo/venv/bin/kimodo_gen",
+        "--input_folder", "/mnt/g/Kimodo/temp",
+        "--output", "/mnt/g/Kimodo/temp/motion",
+        "--bvh",
+        "--bvh_standard_tpose",
+        "--model", model_string
+    ]
     
     def background_task():
         print("Starting Kimodo Generation in WSL...")
-        process = subprocess.Popen(wsl_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        process = subprocess.Popen(cmd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in process.stdout:
             print("[Kimodo WSL]:", line.strip())
         process.wait()
@@ -263,21 +285,22 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 R_applied = R_pose @ R_rest.inverted()
                 kimodo_global_rots[pb.name] = R_applied
 
-            if "Hips" not in obj.pose.bones:
-                continue
+            if "Hips" in obj.pose.bones:
+                pb = obj.pose.bones["Hips"]
+                # Extract the explicit global world coordinates representing the exact 3D location in Blender
+                global_orig = obj.matrix_world @ pb.matrix.translation
+                # Map into Kimodo Ground Space natively (-Z forward, Y up)
+                root_positions_all.append([global_orig.x, global_orig.z, -global_orig.y])
+            else:
+                root_positions_all.append([0.0, 0.0, 0.0])
                 
-            pb_hips = obj.pose.bones["Hips"]    
-            # Exact 3D World vector mapped into Kimodo Ground Space natively (-Z forward, Y up)
-            global_orig = obj.matrix_world @ pb_hips.matrix.translation
-            kimodo_pos = [global_orig.x, global_orig.z, -global_orig.y]
-            
             # --- Trajectory Constraint Scraping ---
             if settings.export_root:
                 root_indices.append(kimodo_frame)
-                smooth_root_2d.append([kimodo_pos[0], kimodo_pos[2]]) # X and Z
+                smooth_root_2d.append([root_positions_all[-1][0], root_positions_all[-1][2]]) # X and Z
                 
                 # Extract Forward pointing vector from the Hips globally applied World mapping
-                R_applied_hips = kimodo_global_rots["Hips"]
+                R_applied_hips = kimodo_global_rots.get("Hips", mathutils.Matrix.Identity(3))
                 new_forward_blender = R_applied_hips @ mathutils.Vector((0.0, 1.0, 0.0))
                 # Map Blender pointer vector into Kimodo 2D Header pointing vector [X, Z]!
                 global_root_heading.append([new_forward_blender.x, -new_forward_blender.y])
@@ -285,7 +308,6 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             # --- Skeletal Constraint Scraping ---
             if settings.export_pose:
                 pose_indices.append(kimodo_frame)
-                root_positions_all.append(kimodo_pos)
             
                 frame_rot_list = []
                 for j_name in joint_order:
@@ -309,12 +331,25 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 local_joints_rot_all.append(frame_rot_list)
 
         if settings.export_pose and keyframes:
-            constraints_data.append({
-                "type": "fullbody",
+            if settings.export_selected_bones_only:
+                c_type = "end-effector"
+                j_names = [b.name for b in context.selected_pose_bones]
+                if not j_names:
+                    self.report({'WARNING'}, "End-Effector enabled but no pose bones are selected!")
+                    return {'CANCELLED'}
+            else:
+                c_type = "fullbody"
+
+            dict_full = {
+                "type": c_type,
                 "frame_indices": pose_indices,
                 "local_joints_rot": local_joints_rot_all,
                 "root_positions": root_positions_all
-            })
+            }
+            if c_type == "end-effector":
+                dict_full["joint_names"] = j_names
+                
+            constraints_data.append(dict_full)
 
         if settings.export_root and keyframes:
             constraints_data.append({
@@ -330,25 +365,41 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         with open(os.path.join(temp_dir, "constraints.json"), 'w') as f:
             json.dump(constraints_data, f)
             
-        # Calculate duration based on scene length
-        fps = context.scene.render.fps / context.scene.render.fps_base
-        total_frames = context.scene.frame_end - context.scene.frame_start + 1
-        calculated_duration = total_frames / fps
-        
         # Write meta.json
-        meta_data = {
-            "num_samples": settings.num_samples,
-            "diffusion_steps": settings.diffusion_steps,
-            "seed": settings.seed if settings.seed >= 0 else None,
-            "text": settings.prompt,
-            "duration": str(calculated_duration),
-            "cfg": {
-                "enabled": True,
-                "text_weight": settings.cfg_weight,
-                "constraint_weight": 2.0
+        meta_path = os.path.join(temp_dir, "meta.json")
+        dist = context.scene.frame_end - context.scene.frame_start
+        scene_fps = context.scene.render.fps / context.scene.render.fps_base
+
+        if settings.use_markers and len(context.scene.timeline_markers) > 0:
+            texts = []
+            dur_list = []
+            markers = sorted(list(context.scene.timeline_markers), key=lambda m: m.frame)
+            end_frame = context.scene.frame_end
+            for i in range(len(markers)):
+                m = markers[i]
+                texts.append(m.name)
+                next_f = markers[i+1].frame if i+1 < len(markers) else end_frame
+                d_frames = max(1, next_f - m.frame)
+                dur_list.append(d_frames / scene_fps)
+            meta_data = {
+                "texts": texts,
+                "durations": dur_list,
+                "num_samples": settings.num_samples,
+                "diffusion_steps": settings.diffusion_steps,
+                "seed": settings.seed if settings.seed >= 0 else None,
+                "cfg": {"enabled": True, "text_weight": settings.cfg_weight, "constraint_weight": 2.0}
             }
-        }
-        with open(os.path.join(temp_dir, "meta.json"), 'w') as f:
+        else:
+            meta_data = {
+                "text": settings.prompt,
+                "duration": dist / scene_fps,
+                "num_samples": settings.num_samples,
+                "diffusion_steps": settings.diffusion_steps,
+                "seed": settings.seed if settings.seed >= 0 else None,
+                "cfg": {"enabled": True, "text_weight": settings.cfg_weight, "constraint_weight": 2.0}
+            }
+
+        with open(meta_path, 'w') as f:
             json.dump(meta_data, f, indent=4)
 
         # Trigger background WSL command
@@ -371,17 +422,21 @@ class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
         layout.operator(DUMBTOOLS_OT_generate_soma_skeleton.bl_idname)
         
         layout.separator()
-        layout.prop(settings, "export_pose")
-        layout.prop(settings, "export_root")
-        
-        layout.separator()
+        layout.prop(settings, "model_name")
         layout.prop(settings, "prompt")
+        layout.prop(settings, "use_markers")
+        layout.separator()
         layout.prop(settings, "seed")
         layout.prop(settings, "num_samples")
         layout.prop(settings, "diffusion_steps")
         layout.prop(settings, "cfg_weight")
-        
         layout.separator()
+        layout.prop(settings, "export_pose")
+        if settings.export_pose:
+            layout.prop(settings, "export_selected_bones_only")
+        layout.prop(settings, "export_root")
+        layout.separator()
+        
         layout.operator(DUMBTOOLS_OT_generate_motion_from_pose.bl_idname, icon='PLAY', text="Export & Generate Motion")
 
 def register():

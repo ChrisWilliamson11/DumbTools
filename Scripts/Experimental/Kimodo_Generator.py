@@ -325,7 +325,8 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                         quat = L_child.to_quaternion()
                         axis = quat.axis
                         angle = quat.angle
-                        frame_rot_list.append([axis.x * angle, axis.y * angle, axis.z * angle])
+                        # Transpose the Blender World Axis natively into the Kimodo World Axis geometry Space (Y up, -Z forward)
+                        frame_rot_list.append([axis.x * angle, axis.z * angle, -axis.y * angle])
                     else:
                         frame_rot_list.append([0.0, 0.0, 0.0])
                 local_joints_rot_all.append(frame_rot_list)

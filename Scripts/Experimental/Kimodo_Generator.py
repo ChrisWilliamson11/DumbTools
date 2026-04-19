@@ -87,14 +87,18 @@ class KimodoSettings(bpy.types.PropertyGroup):
         min=1.0, max=10.0
     )
     export_pose: bpy.props.BoolProperty(
-        name="Skeletal Posing",
-        description="Export the animated dummy skeleton as full-body keyframe constraints",
+        name="Pose Constraint",
+        description="Export non-Root bone keyframes as pose constraints. Key any bones you want to constrain",
         default=True
     )
-    export_selected_bones_only: bpy.props.BoolProperty(
-        name="Selected Bones Only (End-Effector)",
-        description="Apply native Kimodo constraints exclusively to actively selected Pose Bones instead of the full body",
-        default=False
+    pose_mode: bpy.props.EnumProperty(
+        name="Pose Mode",
+        description="How to interpret keyed non-Root bones",
+        items=[
+            ("fullbody",     "Full Body",              "Constrain all 77 SOMA joints (strongest, ignores which bones are actually keyed)"),
+            ("end_effector", "End Effector (Keyed Bones)", "Constrain only the specific bones you keyed — rest of body is free"),
+        ],
+        default="fullbody"
     )
     export_root: bpy.props.BoolProperty(
         name="Root Trajectory",
@@ -245,20 +249,43 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             os.makedirs(temp_dir)
 
         scene_fps = context.scene.render.fps / context.scene.render.fps_base
-        
-        # Discover universal start frame anchor
-        keyframes = set()
+
+        # Keyframe discovery — split by bone role:
+        #   Root bone keyed → trajectory waypoint (root_frames)
+        #   Any other bone keyed → pose constraint frame (pose_frames)
+        #   pose_frame_bones tracks which bones are keyed per frame (for end-effector mode)
+        ROOT_BONE = "Root"
+        root_frames = set()
+        pose_frames = set()
+        pose_frame_bones = {}   # frame → set of non-Root bone names keyed on that frame
+
         if obj.animation_data and obj.animation_data.action:
             for fcurve in iter_fcurves(obj.animation_data.action):
+                dp = fcurve.data_path
+                bone_name = None
+                if dp.startswith('pose.bones["'):
+                    bone_name = dp.split('"')[1]
                 for kp in fcurve.keyframe_points:
                     fr = int(kp.co[0])
-                    keyframes.add(fr)
-                    
-        if not keyframes:
-            keyframes.add(int(context.scene.frame_current))
-            
-        min_frame = min(keyframes)
-        keyframes = sorted(list(keyframes))
+                    if bone_name == ROOT_BONE:
+                        root_frames.add(fr)
+                    elif bone_name is not None:
+                        pose_frames.add(fr)
+                        pose_frame_bones.setdefault(fr, set()).add(bone_name)
+
+        # Fallback: no animation → treat current frame as both root and pose
+        if not root_frames and not pose_frames:
+            fr = int(context.scene.frame_current)
+            root_frames.add(fr)
+            pose_frames.add(fr)
+
+        all_frames = sorted(root_frames | pose_frames)
+        min_frame = min(all_frames)
+
+        # Union of all keyed bone names across all pose frames (used for end-effector mode)
+        all_keyed_bones = set()
+        for bones in pose_frame_bones.values():
+            all_keyed_bones |= bones
 
         original_frame = context.scene.frame_current
 
@@ -276,7 +303,7 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         # The base resting state matrix for the standard Kimodo BVH format aligned back into Blender World Space
         Base_Armature_Matrix = mathutils.Matrix.Rotation(math.pi/2, 4, 'X')
 
-        for frame in keyframes:
+        for frame in all_frames:
             context.scene.frame_set(frame)
             
             # Map Blender frame to Kimodo frame index using the same FPS as the duration calculation
@@ -295,30 +322,36 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 R_applied = R_pose @ R_rest.inverted()
                 kimodo_global_rots[pb.name] = R_applied
 
-            if "Hips" in obj.pose.bones:
-                pb = obj.pose.bones["Hips"]
-                # Extract the explicit global world coordinates representing the exact 3D location in Blender
-                global_orig = obj.matrix_world @ pb.matrix.translation
-                # Map into Kimodo Ground Space natively (-Z forward, Y up)
-                root_positions_all.append([global_orig.x, global_orig.z, -global_orig.y])
-            else:
-                root_positions_all.append([0.0, 0.0, 0.0])
-                
             # --- Trajectory Constraint Scraping ---
-            if settings.export_root:
+            # Only emit a trajectory point if Root bone was keyed on this frame.
+            if settings.export_root and frame in root_frames:
+                # Use Root bone world XZ position for trajectory
+                if ROOT_BONE in obj.pose.bones:
+                    pb_root = obj.pose.bones[ROOT_BONE]
+                    root_world = obj.matrix_world @ pb_root.matrix.translation
+                else:
+                    # Fallback to Hips if no Root bone exists
+                    pb_root = obj.pose.bones.get("Hips")
+                    root_world = (obj.matrix_world @ pb_root.matrix.translation) if pb_root else mathutils.Vector((0,0,0))
                 root_indices.append(kimodo_frame)
-                smooth_root_2d.append([root_positions_all[-1][0], root_positions_all[-1][2]]) # X and Z
-                
-                # Extract Forward pointing vector from the Hips globally applied World mapping
-                R_applied_hips = kimodo_global_rots.get("Hips", mathutils.Matrix.Identity(3))
-                new_forward_blender = R_applied_hips @ mathutils.Vector((0.0, 1.0, 0.0))
-                # Map Blender pointer vector into Kimodo 2D Header pointing vector [X, Z]!
-                global_root_heading.append([new_forward_blender.x, -new_forward_blender.y])
+                smooth_root_2d.append([root_world.x, -root_world.y])  # Kimodo XZ = Blender X, -Y
+
+                # Heading from Root bone forward vector
+                R_root = kimodo_global_rots.get(ROOT_BONE, kimodo_global_rots.get("Hips", mathutils.Matrix.Identity(3)))
+                forward = R_root @ mathutils.Vector((0.0, 1.0, 0.0))
+                global_root_heading.append([forward.x, -forward.y])
 
             # --- Skeletal Constraint Scraping ---
-            if settings.export_pose:
+            # Only lock a full-body pose on this frame if a non-Hips bone was keyed here.
+            if settings.export_pose and frame in pose_frames:
                 pose_indices.append(kimodo_frame)
-            
+                # Root position for this pose frame
+                if "Hips" in obj.pose.bones:
+                    pb = obj.pose.bones["Hips"]
+                    global_orig = obj.matrix_world @ pb.matrix.translation
+                    root_positions_all.append([global_orig.x, global_orig.z, -global_orig.y])
+                else:
+                    root_positions_all.append([0.0, 0.0, 0.0])
                 frame_rot_list = []
                 for j_name in joint_order:
                     if j_name in obj.pose.bones:
@@ -341,12 +374,12 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                         frame_rot_list.append([0.0, 0.0, 0.0])
                 local_joints_rot_all.append(frame_rot_list)
 
-        if settings.export_pose and keyframes:
-            if settings.export_selected_bones_only:
+        if settings.export_pose and pose_frames:
+            if settings.pose_mode == "end_effector":
                 c_type = "end-effector"
-                j_names = [b.name for b in context.selected_pose_bones]
+                j_names = sorted(all_keyed_bones)  # union of all keyed bones across pose frames
                 if not j_names:
-                    self.report({'WARNING'}, "End-Effector enabled but no pose bones are selected!")
+                    self.report({'WARNING'}, "End-Effector mode but no non-Root bones were keyed!")
                     return {'CANCELLED'}
             else:
                 c_type = "fullbody"
@@ -359,10 +392,10 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             }
             if c_type == "end-effector":
                 dict_full["joint_names"] = j_names
-                
+
             constraints_data.append(dict_full)
 
-        if settings.export_root and keyframes:
+        if settings.export_root and root_frames:
             constraints_data.append({
                 "type": "root2d",
                 "frame_indices": root_indices,
@@ -442,10 +475,10 @@ class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
         layout.prop(settings, "diffusion_steps")
         layout.prop(settings, "cfg_weight")
         layout.separator()
+        layout.prop(settings, "export_root")
         layout.prop(settings, "export_pose")
         if settings.export_pose:
-            layout.prop(settings, "export_selected_bones_only")
-        layout.prop(settings, "export_root")
+            layout.prop(settings, "pose_mode", expand=True)
         layout.separator()
         
         layout.operator(DUMBTOOLS_OT_generate_motion_from_pose.bl_idname, icon='PLAY', text="Export & Generate Motion")

@@ -348,7 +348,7 @@ class DumbToolsDocsOperator(bpy.types.Operator):
 class DumbToolsUpdateScriptsOperator(bpy.types.Operator):
     """Sync entire extension from GitHub (replaces scripts, assets, docs, and extension files with the latest version)"""
     bl_idname = "dumbtools.update_scripts"
-    bl_label = "Sync Extension from GitHub"
+    bl_label = "Update!"
 
     def execute(self, context):
         addon_id = __package__ if __package__ else __name__

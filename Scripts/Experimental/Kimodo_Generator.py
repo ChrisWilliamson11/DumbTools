@@ -129,7 +129,10 @@ class DUMBTOOLS_OT_generate_soma_skeleton(bpy.types.Operator):
             self.report({'INFO'}, "Successfully generated SOMA77 skeleton")
         return {'FINISHED'}
 
-def run_kimodo_generation(filepath_dir, scene):
+import urllib.request
+import urllib.error
+
+def start_kimodo_server(scene):
     settings = scene.kimodo_settings
     model_string = settings.model_name.strip()
     if not model_string:
@@ -139,23 +142,73 @@ def run_kimodo_generation(filepath_dir, scene):
         f'wsl -d Ubuntu -e bash -c "'
         f'cd ~/Kimodo_WSL/kimodo && '
         f'source venv/bin/activate && '
-        f'kimodo_gen --input_folder /mnt/g/Kimodo/temp --output /mnt/g/Kimodo/temp/motion --bvh --bvh_standard_tpose --model {model_string}'
-        f'"'
+        f'python kimodo/scripts/blender_server.py"'
     )
     
     def background_task():
-        print("Starting Kimodo Generation in WSL...")
+        print("Starting Kimodo API Server in WSL...")
         process = subprocess.Popen(wsl_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in process.stdout:
-            print("[Kimodo WSL]:", line.strip())
+            print("[Kimodo Server]:", line.strip())
         process.wait()
-        print("Kimodo Generation completed with exit code", process.returncode)
         
-        # We must explicitly read settings.num_samples inside the operator, so pass it through
-        num_samples = scene.kimodo_settings.num_samples
-        bpy.app.timers.register(lambda: import_generated_bvh(filepath_dir, num_samples), first_interval=0.1)
-
     thread = threading.Thread(target=background_task)
+    thread.daemon = True
+    thread.start()
+    
+    # Ping to load the exact model
+    def ping_load():
+        import time
+        import urllib.request
+        import json
+        for _ in range(15):
+            try:
+                data = json.dumps({"model_name": model_string}).encode('utf-8')
+                req = urllib.request.Request("http://localhost:8000/load_model", data=data, headers={'Content-Type': 'application/json'})
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    print("Model Pre-loaded:", resp.read().decode())
+                return
+            except Exception:
+                time.sleep(1)
+        print("Failed to pre-load model, server took too long to start.")
+        
+    threading.Thread(target=ping_load).start()
+
+class DUMBTOOLS_OT_start_kimodo_server(bpy.types.Operator):
+    bl_idname = "dumbtools.start_kimodo_server"
+    bl_label = "Start Kimodo Server"
+    bl_description = "Starts the background Kimodo generation server in WSL for instant generation"
+    
+    def execute(self, context):
+        start_kimodo_server(context.scene)
+        self.report({'INFO'}, "Starting Kimodo API server... Check terminal.")
+        return {'FINISHED'}
+
+class DUMBTOOLS_OT_kill_kimodo_server(bpy.types.Operator):
+    bl_idname = "dumbtools.kill_kimodo_server"
+    bl_label = "Kill Server"
+    bl_description = "Kills the running Kimodo server to free up VRAM"
+    
+    def execute(self, context):
+        subprocess.run(['wsl', '-d', 'Ubuntu', '-e', 'pkill', '-f', 'blender_server.py'])
+        self.report({'INFO'}, "Kimodo server killed.")
+        return {'FINISHED'}
+
+def run_kimodo_generation(filepath_dir, scene, payload):
+    def background_request():
+        print("Sending generation request to Kimodo API...")
+        try:
+            req = urllib.request.Request("http://localhost:8000/generate", data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req) as resp:
+                result = json.loads(resp.read().decode())
+                print("Generation complete:", result)
+                
+            num_samples = scene.kimodo_settings.num_samples
+            bpy.app.timers.register(lambda: import_generated_bvh(filepath_dir, num_samples), first_interval=0.1)
+        except urllib.error.URLError as e:
+            print(f"Server Error: {e.reason}. Please ensure the Kimodo server is started.")
+            
+    thread = threading.Thread(target=background_request)
     thread.start()
 
 def import_generated_bvh(filepath_dir, num_samples):
@@ -203,11 +256,22 @@ def import_generated_bvh(filepath_dir, num_samples):
             # Map the generated action into the track
             strip = track.strips.new(action.name, 1, action)
             
+            # Offset imported armature along X axis to match web app behavior for multiple samples
+            if num_samples > 1:
+                spread_factor = 0.8
+                center_idx = num_samples // 2
+                x_trans = (i - center_idx) * spread_factor
+                imported_obj.location.x += x_trans
+                imported_obj.keyframe_insert(data_path="location", frame=1)
+
             # Visually mute all but the first track so the user can easily toggle / solo them to compare
             if i > 0:
                 track.mute = True
                 
-            # Delete imported armature to keep scene clean
+            # Clear location on NLA strips if we want them locked, but actually Kimodo baked the root motion into the BVH.
+            # Leaving as is works fine because imported_obj location offsets the whole clip.
+            
+            # Delete imported armature to keep scene clean (but preserve its action!)
             bpy.data.objects.remove(imported_obj, do_unlink=True)
 
     # Set context object back
@@ -291,8 +355,8 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
 
         constraints_data = []
 
-        local_joints_rot_all = []
-        root_positions_all = []
+        global_joints_rot_all = []
+        global_joints_pos_all = []
         pose_indices = []
         
         root_indices = []
@@ -302,6 +366,12 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         import math, mathutils
         # The base resting state matrix for the standard Kimodo BVH format aligned back into Blender World Space
         Base_Armature_Matrix = mathutils.Matrix.Rotation(math.pi/2, 4, 'X')
+        
+        kimodo_T_blender = mathutils.Matrix((
+            (1.0, 0.0, 0.0),
+            (0.0, 0.0, -1.0),
+            (0.0, 1.0, 0.0)
+        ))
 
         for frame in all_frames:
             context.scene.frame_set(frame)
@@ -311,6 +381,7 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             
             # --- Global Spatial Resolution ---
             kimodo_global_rots = {}
+            kimodo_global_pos = {}
             for pb in obj.pose.bones:
                 # Capture the explicit absolute world coordinate matrices
                 M_posed_world = obj.matrix_world @ pb.matrix
@@ -320,59 +391,52 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 R_pose = M_posed_world.to_3x3()
                 R_rest = M_pure_rest_world.to_3x3()
                 R_applied = R_pose @ R_rest.inverted()
-                kimodo_global_rots[pb.name] = R_applied
+                
+                # Conjugate into Kimodo Space
+                R_kimodo = kimodo_T_blender @ R_applied @ kimodo_T_blender.inverted()
+                kimodo_global_rots[pb.name] = R_kimodo
+                
+                # Position into Kimodo space
+                P_blender = M_posed_world.translation
+                P_kimodo = kimodo_T_blender @ P_blender
+                kimodo_global_pos[pb.name] = P_kimodo
 
             # --- Trajectory Constraint Scraping ---
             # Only emit a trajectory point if Root bone was keyed on this frame.
             if settings.export_root and frame in root_frames:
                 # Use Root bone world XZ position for trajectory
                 if ROOT_BONE in obj.pose.bones:
-                    pb_root = obj.pose.bones[ROOT_BONE]
-                    root_world = obj.matrix_world @ pb_root.matrix.translation
+                    pos = kimodo_global_pos[ROOT_BONE]
                 else:
-                    # Fallback to Hips if no Root bone exists
-                    pb_root = obj.pose.bones.get("Hips")
-                    root_world = (obj.matrix_world @ pb_root.matrix.translation) if pb_root else mathutils.Vector((0,0,0))
+                    pos = kimodo_global_pos.get("Hips", mathutils.Vector((0,0,0)))
                 root_indices.append(kimodo_frame)
-                smooth_root_2d.append([root_world.x, -root_world.y])  # Kimodo XZ = Blender X, -Y
+                smooth_root_2d.append([pos.x, pos.z])
 
-                # Heading from Root bone forward vector
+                # Heading from Root bone forward vector (which is Z in Kimodo space, wait no, Kimodo uses -Z forward)
                 R_root = kimodo_global_rots.get(ROOT_BONE, kimodo_global_rots.get("Hips", mathutils.Matrix.Identity(3)))
-                forward = R_root @ mathutils.Vector((0.0, 1.0, 0.0))
-                global_root_heading.append([forward.x, -forward.y])
+                # Viser expects heading natively, web app uses forward vector as Z?
+                forward = R_root @ mathutils.Vector((0.0, 0.0, -1.0))
+                global_root_heading.append([forward.x, forward.z])
 
             # --- Skeletal Constraint Scraping ---
-            # Only lock a full-body pose on this frame if a non-Hips bone was keyed here.
             if settings.export_pose and frame in pose_frames:
                 pose_indices.append(kimodo_frame)
-                # Root position for this pose frame
-                if "Hips" in obj.pose.bones:
-                    pb = obj.pose.bones["Hips"]
-                    global_orig = obj.matrix_world @ pb.matrix.translation
-                    root_positions_all.append([global_orig.x, global_orig.z, -global_orig.y])
-                else:
-                    root_positions_all.append([0.0, 0.0, 0.0])
                 frame_rot_list = []
+                frame_pos_list = []
                 for j_name in joint_order:
                     if j_name in obj.pose.bones:
-                        pb = obj.pose.bones[j_name]
                         R_child = kimodo_global_rots[j_name]
+                        P_child = kimodo_global_pos[j_name]
                         
-                        # Apply parent inverse matrix isolation for pure recursive Kimodo-native angular deflections
-                        if pb.parent and pb.parent.name in kimodo_global_rots:
-                            R_parent = kimodo_global_rots[pb.parent.name]
-                            L_child = R_parent.inverted() @ R_child
-                        else:
-                            L_child = R_child
-                            
-                        quat = L_child.to_quaternion()
-                        axis = quat.axis
-                        angle = quat.angle
-                        # Transpose the Blender World Axis natively into the Kimodo World Axis geometry Space (Y up, -Z forward)
-                        frame_rot_list.append([axis.x * angle, axis.z * angle, -axis.y * angle])
+                        # Pack into exact flat matrices required by Kimodo
+                        frame_rot_list.append([list(R_child[0]), list(R_child[1]), list(R_child[2])])
+                        frame_pos_list.append([P_child.x, P_child.y, P_child.z])
                     else:
-                        frame_rot_list.append([0.0, 0.0, 0.0])
-                local_joints_rot_all.append(frame_rot_list)
+                        frame_rot_list.append([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+                        frame_pos_list.append([0.0, 0.0, 0.0])
+                
+                global_joints_rot_all.append(frame_rot_list)
+                global_joints_pos_all.append(frame_pos_list)
 
         if settings.export_pose and pose_frames:
             if settings.pose_mode == "end_effector":
@@ -387,8 +451,8 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             dict_full = {
                 "type": c_type,
                 "frame_indices": pose_indices,
-                "local_joints_rot": local_joints_rot_all,
-                "root_positions": root_positions_all
+                "global_joints_rot": global_joints_rot_all,
+                "global_joints_pos": global_joints_pos_all
             }
             if c_type == "end-effector":
                 dict_full["joint_names"] = j_names
@@ -405,18 +469,14 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
 
         context.scene.frame_set(original_frame)
 
-        # Write constraints.json
-        with open(os.path.join(temp_dir, "constraints.json"), 'w') as f:
-            json.dump(constraints_data, f)
-            
-        # Write meta.json
-        meta_path = os.path.join(temp_dir, "meta.json")
+        # Prepare Generation Payload for API Server
         dist = context.scene.frame_end - context.scene.frame_start
         scene_fps = context.scene.render.fps / context.scene.render.fps_base
-
+        
+        texts = []
+        dur_list = []
+        
         if settings.use_markers and len(context.scene.timeline_markers) > 0:
-            texts = []
-            dur_list = []
             markers = sorted(list(context.scene.timeline_markers), key=lambda m: m.frame)
             end_frame = context.scene.frame_end
             for i in range(len(markers)):
@@ -424,32 +484,27 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 texts.append(m.name)
                 next_f = markers[i+1].frame if i+1 < len(markers) else end_frame
                 d_frames = max(1, next_f - m.frame)
-                dur_list.append(d_frames / scene_fps)
-            meta_data = {
-                "texts": texts,
-                "durations": dur_list,
-                "num_samples": settings.num_samples,
-                "diffusion_steps": settings.diffusion_steps,
-                "seed": settings.seed if settings.seed >= 0 else None,
-                "cfg": {"enabled": True, "text_weight": settings.cfg_weight, "constraint_weight": 2.0}
-            }
+                dur_list.append(int(d_frames))
         else:
-            meta_data = {
-                "text": settings.prompt,
-                "duration": dist / scene_fps,
-                "num_samples": settings.num_samples,
-                "diffusion_steps": settings.diffusion_steps,
-                "seed": settings.seed if settings.seed >= 0 else None,
-                "cfg": {"enabled": True, "text_weight": settings.cfg_weight, "constraint_weight": 2.0}
-            }
+            texts.append(settings.prompt)
+            dur_list.append(int(dist))
 
-        with open(meta_path, 'w') as f:
-            json.dump(meta_data, f, indent=4)
+        payload = {
+            "prompts": texts,
+            "num_frames": dur_list,
+            "num_samples": settings.num_samples,
+            "diffusion_steps": settings.diffusion_steps,
+            "seed": settings.seed if settings.seed >= 0 else None,
+            "cfg_weight": [settings.cfg_weight, 2.0],
+            "cfg_type": "separated",
+            "out_dir": "/mnt/g/Kimodo/temp/motion",
+            "constraints": constraints_data
+        }
 
-        # Trigger background WSL command
-        run_kimodo_generation(temp_dir, context.scene)
+        # Trigger background HTTP hit
+        run_kimodo_generation(temp_dir, context.scene, payload)
 
-        self.report({'INFO'}, "Exported constraints! Generation running in background. See terminal for output.")
+        self.report({'INFO'}, "Constraints sent to API Server. Generating...")
         return {'FINISHED'}
 
 class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
@@ -462,6 +517,11 @@ class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         settings = context.scene.kimodo_settings
+        
+        row = layout.row(align=True)
+        row.operator(DUMBTOOLS_OT_start_kimodo_server.bl_idname, icon='PLAY')
+        row.operator(DUMBTOOLS_OT_kill_kimodo_server.bl_idname, icon='CANCEL')
+        layout.separator()
         
         layout.operator(DUMBTOOLS_OT_generate_soma_skeleton.bl_idname)
         
@@ -486,6 +546,8 @@ class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
 def register():
     bpy.utils.register_class(KimodoSettings)
     bpy.types.Scene.kimodo_settings = bpy.props.PointerProperty(type=KimodoSettings)
+    bpy.utils.register_class(DUMBTOOLS_OT_start_kimodo_server)
+    bpy.utils.register_class(DUMBTOOLS_OT_kill_kimodo_server)
     bpy.utils.register_class(DUMBTOOLS_OT_generate_soma_skeleton)
     bpy.utils.register_class(DUMBTOOLS_OT_generate_motion_from_pose)
     bpy.utils.register_class(DUMBTOOLS_PT_kimodo_panel)
@@ -494,5 +556,7 @@ def unregister():
     bpy.utils.unregister_class(DUMBTOOLS_PT_kimodo_panel)
     bpy.utils.unregister_class(DUMBTOOLS_OT_generate_motion_from_pose)
     bpy.utils.unregister_class(DUMBTOOLS_OT_generate_soma_skeleton)
+    bpy.utils.unregister_class(DUMBTOOLS_OT_kill_kimodo_server)
+    bpy.utils.unregister_class(DUMBTOOLS_OT_start_kimodo_server)
     del bpy.types.Scene.kimodo_settings
 register()

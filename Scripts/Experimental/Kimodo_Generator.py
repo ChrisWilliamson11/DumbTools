@@ -161,10 +161,10 @@ def start_kimodo_server(scene):
         import time
         import urllib.request
         import json
-        for _ in range(15):
+        for _ in range(60):
             try:
                 data = json.dumps({"model_name": model_string}).encode('utf-8')
-                req = urllib.request.Request("http://localhost:8000/load_model", data=data, headers={'Content-Type': 'application/json'})
+                req = urllib.request.Request("http://localhost:8055/load_model", data=data, headers={'Content-Type': 'application/json'})
                 with urllib.request.urlopen(req, timeout=5) as resp:
                     print("Model Pre-loaded:", resp.read().decode())
                 return
@@ -198,8 +198,8 @@ def run_kimodo_generation(filepath_dir, scene, payload):
     def background_request():
         print("Sending generation request to Kimodo API...")
         try:
-            req = urllib.request.Request("http://localhost:8000/generate", data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req) as resp:
+            req = urllib.request.Request("http://localhost:8055/generate", data=json.dumps(payload).encode('utf-8'), headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=300) as resp:
                 result = json.loads(resp.read().decode())
                 print("Generation complete:", result)
                 
@@ -490,6 +490,7 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             dur_list.append(int(dist))
 
         payload = {
+            "model_name": context.scene.kimodo_settings.model_name.strip() or "kimodo-soma-rp",
             "prompts": texts,
             "num_frames": dur_list,
             "num_samples": settings.num_samples,

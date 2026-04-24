@@ -37,7 +37,7 @@ class DUMBTOOLS_OT_CopyCollectionsToObject(bpy.types.Operator):
             # Grab the modifier that was just appended
             mod = obj.modifiers[-1]
 
-            mod["Socket_6"] = 'Collection'   # Input Type
+            mod["Socket_6"] = 1              # Input Type: 0=Object, 1=Collection
             mod["Socket_3"] = col            # Collection reference
             mod["Socket_4"] = True           # Relative Space — ON
             mod["Socket_5"] = False          # As Instance — OFF

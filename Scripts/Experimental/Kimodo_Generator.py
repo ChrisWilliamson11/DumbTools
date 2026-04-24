@@ -142,7 +142,7 @@ def start_kimodo_server(scene):
         "pkill -f blender_server.py ; "
         "cd ~/Kimodo_WSL/kimodo && "
         "source venv/bin/activate && "
-        "python kimodo/scripts/blender_server.py"
+        "PYTHONUNBUFFERED=1 python -u kimodo/scripts/blender_server.py"
     )
     wsl_cmd = ["wsl", "-d", "Ubuntu", "-e", "bash", "-c", bash_script]
     

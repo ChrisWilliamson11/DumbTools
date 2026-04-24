@@ -140,6 +140,7 @@ def start_kimodo_server(scene):
         
     wsl_cmd = (
         f'wsl -d Ubuntu -e bash -c "'
+        f'pkill -f blender_server.py ; '
         f'cd ~/Kimodo_WSL/kimodo && '
         f'source venv/bin/activate && '
         f'python kimodo/scripts/blender_server.py"'

@@ -138,17 +138,17 @@ def start_kimodo_server(scene):
     if not model_string:
         model_string = "kimodo-soma-rp"
         
-    wsl_cmd = (
-        f'wsl -d Ubuntu -e bash -c "'
-        f'pkill -f blender_server.py ; '
-        f'cd ~/Kimodo_WSL/kimodo && '
-        f'source venv/bin/activate && '
-        f'python kimodo/scripts/blender_server.py"'
+    bash_script = (
+        "pkill -f blender_server.py ; "
+        "cd ~/Kimodo_WSL/kimodo && "
+        "source venv/bin/activate && "
+        "python kimodo/scripts/blender_server.py"
     )
+    wsl_cmd = ["wsl", "-d", "Ubuntu", "-e", "bash", "-c", bash_script]
     
     def background_task():
         print("Starting Kimodo API Server in WSL...")
-        process = subprocess.Popen(wsl_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        process = subprocess.Popen(wsl_cmd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         for line in process.stdout:
             print("[Kimodo Server]:", line.strip())
         process.wait()

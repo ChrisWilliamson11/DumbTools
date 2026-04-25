@@ -172,17 +172,27 @@ def start_kimodo_server(scene):
         import time
         import urllib.request
         import json
+        # Phase 1: wait for uvicorn to be reachable (up to 60s)
+        print("Waiting for Kimodo server to come online...")
         for _ in range(60):
             try:
-                data = json.dumps({"model_name": model_string}).encode('utf-8')
-                req = urllib.request.Request("http://localhost:8055/load_model", data=data, headers={'Content-Type': 'application/json'})
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    print("Model Pre-loaded:", resp.read().decode())
-                return
+                urllib.request.urlopen("http://localhost:8055/status", timeout=2)
+                print("Kimodo server is up. Sending load_model request...")
+                break
             except Exception:
                 time.sleep(1)
-        print("Failed to pre-load model, server took too long to start.")
-        
+        else:
+            print("Kimodo server did not come online within 60 seconds.")
+            return
+        # Phase 2: send ONE load_model request and wait patiently (up to 5 mins)
+        try:
+            data = json.dumps({"model_name": model_string}).encode('utf-8')
+            req = urllib.request.Request("http://localhost:8055/load_model", data=data, headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                print("Model pre-loaded:", resp.read().decode())
+        except Exception as e:
+            print(f"Failed to pre-load model: {e}")
+
     threading.Thread(target=ping_load).start()
 
 class DUMBTOOLS_OT_start_kimodo_server(bpy.types.Operator):

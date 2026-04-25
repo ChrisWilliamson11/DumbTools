@@ -62,17 +62,23 @@ def get_outliner_collections(context):
     with context.temp_override(area=outliner, region=window_region):
         return [item for item in context.selected_ids if isinstance(item, bpy.types.Collection)]
 
-def add_geometry_input_modifier(context, obj, view3d_area):
-    mod_count_before = len(obj.modifiers)
-    with context.temp_override(area=view3d_area, active_object=obj, object=obj, selected_objects=[obj]):
-        bpy.ops.object.modifier_add_node_group(
-            asset_library_type='ESSENTIALS',
-            asset_library_identifier="",
-            relative_asset_identifier="nodes\\geometry_nodes_essentials.blend\\NodeTree\\Geometry Input"
-        )
-    if len(obj.modifiers) == mod_count_before:
-        return None
-    return obj.modifiers[-1]
+def add_geometry_input_modifier(context, obj, view3d_area, max_retries=3):
+    """Add one Geometry Input modifier, retrying up to max_retries times if the asset isn't ready."""
+    for attempt in range(max_retries):
+        mod_count_before = len(obj.modifiers)
+        try:
+            with context.temp_override(area=view3d_area, active_object=obj, object=obj, selected_objects=[obj]):
+                bpy.ops.object.modifier_add_node_group(
+                    asset_library_type='ESSENTIALS',
+                    asset_library_identifier="",
+                    relative_asset_identifier="nodes\\geometry_nodes_essentials.blend\\NodeTree\\Geometry Input"
+                )
+        except Exception as e:
+            print(f"  [!] modifier_add_node_group exception (attempt {attempt+1}): {e}")
+        if len(obj.modifiers) > mod_count_before:
+            return obj.modifiers[-1]
+        print(f"  [!] Modifier not added (attempt {attempt+1}/{max_retries}) — asset may still be loading.")
+    return None
 
 def apply_socket_settings(mod, input_type_int, reference, relative_space, as_instance, replace_original):
     mod["Socket_6"] = input_type_int
@@ -107,49 +113,68 @@ def collect_materials_from_objects(objects):
     return materials
 
 def material_has_emission(mat):
-    if not mat.use_nodes or not mat.node_tree:
-        return False
-    for node in mat.node_tree.nodes:
-        if node.type == 'BSDF_PRINCIPLED':
-            s = node.inputs.get('Emission Strength')
-            if s and (s.is_linked or s.default_value > 0.0):
-                return True
-        elif node.type == 'EMISSION':
-            s = node.inputs.get('Strength')
-            if s and (s.is_linked or s.default_value > 0.0):
-                return True
-    return False
-
-def get_or_create_no_emit_material(mat):
-    no_emit_name = mat.name + ".no_emit"
-    existing = bpy.data.materials.get(no_emit_name)
-    if existing:
-        return existing
-    no_emit = mat.copy()
-    no_emit.name = no_emit_name
-    if no_emit.node_tree:
-        links = no_emit.node_tree.links
-        for node in no_emit.node_tree.nodes:
+    try:
+        if not mat.use_nodes or not mat.node_tree:
+            return False
+        for node in mat.node_tree.nodes:
             if node.type == 'BSDF_PRINCIPLED':
-                for sname in ('Emission Strength', 'Emission Color'):
-                    sock = node.inputs.get(sname)
-                    if sock:
-                        for lnk in [l for l in links if l.to_socket == sock]:
-                            links.remove(lnk)
                 s = node.inputs.get('Emission Strength')
-                if s:
-                    s.default_value = 0.0
+                if s and (s.is_linked or s.default_value > 0.0):
+                    return True
             elif node.type == 'EMISSION':
                 s = node.inputs.get('Strength')
-                if s:
-                    for lnk in [l for l in links if l.to_socket == s]:
-                        links.remove(lnk)
-                    s.default_value = 0.0
-    print(f"  → Created no-emit material: '{no_emit_name}'")
-    return no_emit
+                if s and (s.is_linked or s.default_value > 0.0):
+                    return True
+        return False
+    except Exception as e:
+        print(f"  [!] Error checking emission on '{getattr(mat, 'name', '?')}': {e}")
+        return False
+
+def get_or_create_no_emit_material(mat):
+    try:
+        no_emit_name = mat.name + ".no_emit"
+        existing = bpy.data.materials.get(no_emit_name)
+        if existing:
+            return existing
+        no_emit = mat.copy()
+        no_emit.name = no_emit_name
+        if no_emit.node_tree:
+            links = no_emit.node_tree.links
+            for node in no_emit.node_tree.nodes:
+                try:
+                    if node.type == 'BSDF_PRINCIPLED':
+                        for sname in ('Emission Strength', 'Emission Color'):
+                            sock = node.inputs.get(sname)
+                            if sock:
+                                for lnk in [l for l in links if l.to_socket == sock]:
+                                    links.remove(lnk)
+                        s = node.inputs.get('Emission Strength')
+                        if s:
+                            s.default_value = 0.0
+                    elif node.type == 'EMISSION':
+                        s = node.inputs.get('Strength')
+                        if s:
+                            for lnk in [l for l in links if l.to_socket == s]:
+                                links.remove(lnk)
+                            s.default_value = 0.0
+                except Exception as node_err:
+                    print(f"  [!] Skipping node '{node.name}' in '{mat.name}': {node_err}")
+        print(f"  → Created no-emit material: '{no_emit_name}'")
+        return no_emit
+    except Exception as e:
+        print(f"  [!] Could not create no-emit copy of '{getattr(mat, 'name', '?')}': {e} — skipping.")
+        return None
 
 def build_no_emission_gn_modifier(obj, source_materials):
-    pairs = [(m, get_or_create_no_emit_material(m)) for m in source_materials if material_has_emission(m)]
+    pairs = []
+    for m in source_materials:
+        if not material_has_emission(m):
+            continue
+        no_emit = get_or_create_no_emit_material(m)
+        if no_emit is not None:
+            pairs.append((m, no_emit))
+        else:
+            print(f"  [!] Skipped '{m.name}' — no-emit copy could not be created.")
     if not pairs:
         print("  → No emitting materials found.")
         return

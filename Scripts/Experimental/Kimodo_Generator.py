@@ -144,14 +144,20 @@ def start_kimodo_server(scene):
         "source venv/bin/activate && "
         "PYTHONUNBUFFERED=1 python -u kimodo/scripts/blender_server.py"
     )
-    wsl_cmd = ["wsl", "-d", "Ubuntu", "-e", "bash", "-c", bash_script]
+    wsl_exe = r"C:\Windows\System32\wsl.exe"
+    wsl_cmd = [wsl_exe, "-d", "Ubuntu", "-e", "bash", "-c", bash_script]
     
     def background_task():
         print("Starting Kimodo API Server in WSL...")
-        process = subprocess.Popen(wsl_cmd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        for line in process.stdout:
-            print("[Kimodo Server]:", line.strip())
-        process.wait()
+        try:
+            process = subprocess.Popen(wsl_cmd, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            print(f"[Kimodo Server]: Process started, PID={process.pid}")
+            for line in process.stdout:
+                print("[Kimodo Server]:", line.strip())
+            ret = process.wait()
+            print(f"[Kimodo Server]: Process exited with code {ret}")
+        except Exception as e:
+            print(f"[Kimodo Server]: FAILED TO START - {e}")
         
     thread = threading.Thread(target=background_task)
     thread.daemon = True

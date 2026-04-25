@@ -40,7 +40,13 @@ class DUMBTOOLS_OT_relink_shapekey_drivers(bpy.types.Operator):
                 driver_modified = False
                 for var in fcurve.driver.variables:
                     for target in var.targets:
-                        if target.id is None:
+                        is_eye_bone = hasattr(target, 'bone_target') and target.bone_target in ('EyeBoneRight', 'EyeBoneLeft')
+                        
+                        if is_eye_bone:
+                            if obj.parent and target.id != obj.parent:
+                                target.id = obj.parent
+                                driver_modified = True
+                        elif target.id is None:
                             target.id = target_obj
                             driver_modified = True
                 

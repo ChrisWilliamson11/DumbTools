@@ -385,42 +385,35 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         global_root_heading = []
 
         import math, mathutils
-        # The base resting state matrix for the standard Kimodo BVH format aligned back into Blender World Space
-        Base_Armature_Matrix = mathutils.Matrix.Rotation(math.pi/2, 4, 'X')
-        
+        # BVH importer applies Rx(+90°) to convert Y-up BVH → Z-up Blender.
+        # To go back from Blender → Kimodo (Y-up) we apply the inverse: Rx(-90°).
+        # Kimodo X = Blender X,  Kimodo Y = Blender Z,  Kimodo Z = -Blender Y
         kimodo_T_blender = mathutils.Matrix((
-            (1.0, 0.0, 0.0),
-            (0.0, 0.0, -1.0),
-            (0.0, 1.0, 0.0)
-        ))
+            (1.0,  0.0, 0.0),
+            (0.0,  0.0, 1.0),
+            (0.0, -1.0, 0.0)))
 
         for frame in all_frames:
             context.scene.frame_set(frame)
             
-            # Map Blender frame to Kimodo frame index using the same FPS as the duration calculation
+            # Map Blender frame to Kimodo frame index
             kimodo_frame = int(round(frame - min_frame))
             
-            # --- Global Spatial Resolution ---
             kimodo_global_rots = {}
             kimodo_global_pos = {}
             for pb in obj.pose.bones:
-                # Capture the explicit absolute world coordinate matrices
-                M_posed_world = obj.matrix_world @ pb.matrix
-                M_pure_rest_world = Base_Armature_Matrix @ pb.bone.matrix_local
-                
-                # Derive isolation deflection angular matrix 
-                R_pose = M_posed_world.to_3x3()
-                R_rest = M_pure_rest_world.to_3x3()
-                R_applied = R_pose @ R_rest.inverted()
-                
-                # Conjugate into Kimodo Space
-                R_kimodo = kimodo_T_blender @ R_applied @ kimodo_T_blender.inverted()
+                # Absolute world-space pose matrix (normalize to remove any scale)
+                M_world = obj.matrix_world @ pb.matrix
+                R_world = M_world.to_3x3().normalized()
+                P_world = M_world.translation
+
+                # Convert to Kimodo's native Y-up coordinate space
+                R_kimodo = kimodo_T_blender @ R_world @ kimodo_T_blender.transposed()
+                P_kimodo = kimodo_T_blender @ P_world
+
                 kimodo_global_rots[pb.name] = R_kimodo
-                
-                # Position into Kimodo space
-                P_blender = M_posed_world.translation
-                P_kimodo = kimodo_T_blender @ P_blender
                 kimodo_global_pos[pb.name] = P_kimodo
+
 
             # --- Trajectory Constraint Scraping ---
             # Only emit a trajectory point if Root bone was keyed on this frame.

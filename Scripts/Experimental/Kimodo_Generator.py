@@ -245,17 +245,11 @@ def import_generated_bvh(filepath_dir, num_samples):
     original_obj.animation_data.action = None
 
     bvh_files = []
-    if num_samples == 1:
-        single_path = os.path.join(filepath_dir, "motion.bvh")
-        if os.path.exists(single_path):
-            bvh_files.append(single_path)
-    else:
-        motion_dir = os.path.join(filepath_dir, "motion")
-        if os.path.isdir(motion_dir):
-            for i in range(num_samples):
-                p = os.path.join(motion_dir, f"motion_{i:02d}.bvh")
-                if os.path.exists(p):
-                    bvh_files.append(p)
+    motion_dir = os.path.join(filepath_dir, "motion")
+    for i in range(num_samples):
+        p = os.path.join(motion_dir, f"motion_{i:02d}.bvh")
+        if os.path.exists(p):
+            bvh_files.append(p)
 
     if not bvh_files:
         print("Error: No BVH files found in temp directory!")

@@ -178,14 +178,11 @@ def build_no_emission_gn_modifier(obj, source_materials):
 
 
 # ---------------------------------------------------------------------------
-# Shared operator mixin for dialog draw
+# Shared draw helper (NOT a mixin with annotations — __annotations__ is not
+# inherited in Python, so BoolProps must be declared on each class directly)
 # ---------------------------------------------------------------------------
 
 class GeoInputSettings:
-    relative_space:   BoolProperty(name="Relative Space",   default=True)
-    as_instance:      BoolProperty(name="As Instance",      default=False)
-    disable_emission: BoolProperty(name="Disable Emission", default=False)
-
     def draw_base(self, layout):
         layout.prop(self, "relative_space")
         layout.prop(self, "as_instance")
@@ -201,6 +198,10 @@ class DUMBTOOLS_OT_CopyCollectionsToObject(GeoInputSettings, bpy.types.Operator)
     bl_label   = "Copy Collections To Object"
     bl_description = "Creates a plane with one Geometry Input modifier per selected collection"
     bl_options = {'REGISTER', 'UNDO'}
+
+    relative_space:   BoolProperty(name="Relative Space",   default=True)
+    as_instance:      BoolProperty(name="As Instance",      default=False)
+    disable_emission: BoolProperty(name="Disable Emission", default=False)
 
     @classmethod
     def poll(cls, context):
@@ -257,6 +258,9 @@ class DUMBTOOLS_OT_AddCollectionsToObjects(GeoInputSettings, bpy.types.Operator)
     bl_description = "Adds a Geometry Input modifier per selected collection onto each selected viewport object"
     bl_options = {'REGISTER', 'UNDO'}
 
+    relative_space:   BoolProperty(name="Relative Space",   default=True)
+    as_instance:      BoolProperty(name="As Instance",      default=False)
+    disable_emission: BoolProperty(name="Disable Emission", default=False)
     replace_original: BoolProperty(name="Replace Original", default=False)
 
     @classmethod
@@ -319,6 +323,9 @@ class DUMBTOOLS_OT_AttachSelectedToActive(GeoInputSettings, bpy.types.Operator):
     bl_description = "Adds a Geometry Input modifier (Object mode) to the active object for each other selected object"
     bl_options = {'REGISTER', 'UNDO'}
 
+    relative_space:   BoolProperty(name="Relative Space",   default=True)
+    as_instance:      BoolProperty(name="As Instance",      default=False)
+    disable_emission: BoolProperty(name="Disable Emission", default=False)
     replace_original: BoolProperty(name="Replace Original", default=False)
 
     @classmethod

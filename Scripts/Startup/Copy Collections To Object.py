@@ -56,7 +56,10 @@ def get_outliner_collections(context):
     outliner = get_outliner_area(context)
     if outliner is None:
         return []
-    with context.temp_override(area=outliner):
+    window_region = next((r for r in outliner.regions if r.type == 'WINDOW'), None)
+    if window_region is None:
+        return []
+    with context.temp_override(area=outliner, region=window_region):
         return [item for item in context.selected_ids if isinstance(item, bpy.types.Collection)]
 
 def add_geometry_input_modifier(context, obj, view3d_area):
@@ -208,7 +211,7 @@ class DUMBTOOLS_OT_CopyCollectionsToObject(GeoInputSettings, bpy.types.Operator)
         return any(a.type == 'OUTLINER' for a in context.screen.areas)
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_popup(self, event)
+        return context.window_manager.invoke_props_dialog(self)
 
     def draw(self, context):
         layout = self.layout
@@ -265,18 +268,10 @@ class DUMBTOOLS_OT_AddCollectionsToObjects(GeoInputSettings, bpy.types.Operator)
 
     @classmethod
     def poll(cls, context):
-        # Works from Outliner (selected_ids available) or viewport (check via override)
-        if hasattr(context, 'selected_ids') and any(isinstance(i, bpy.types.Collection) for i in context.selected_ids):
-            return True
-        # Try reading from Outliner area
-        outliner = next((a for a in context.screen.areas if a.type == 'OUTLINER'), None)
-        if outliner:
-            with context.temp_override(area=outliner):
-                return any(isinstance(i, bpy.types.Collection) for i in context.selected_ids)
-        return False
+        return any(a.type == 'OUTLINER' for a in context.screen.areas)
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_popup(self, event)
+        return context.window_manager.invoke_props_dialog(self)
 
     def draw(self, context):
         layout = self.layout
@@ -333,7 +328,7 @@ class DUMBTOOLS_OT_AttachSelectedToActive(GeoInputSettings, bpy.types.Operator):
         return context.active_object is not None and len(context.selected_objects) > 1
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_popup(self, event)
+        return context.window_manager.invoke_props_dialog(self)
 
     def draw(self, context):
         layout = self.layout

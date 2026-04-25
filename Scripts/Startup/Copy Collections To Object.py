@@ -205,7 +205,14 @@ class DUMBTOOLS_OT_CopyCollectionsToObject(GeoInputSettings, bpy.types.Operator)
 
     @classmethod
     def poll(cls, context):
-        return any(isinstance(i, bpy.types.Collection) for i in context.selected_ids)
+        # Works from Outliner (direct) or any other context (via temp_override)
+        if hasattr(context, 'selected_ids') and any(isinstance(i, bpy.types.Collection) for i in context.selected_ids):
+            return True
+        outliner = next((a for a in context.screen.areas if a.type == 'OUTLINER'), None)
+        if outliner:
+            with context.temp_override(area=outliner):
+                return any(isinstance(i, bpy.types.Collection) for i in context.selected_ids)
+        return False
 
     def invoke(self, context, event):
         return context.window_manager.invoke_props_popup(self, event)
@@ -218,7 +225,7 @@ class DUMBTOOLS_OT_CopyCollectionsToObject(GeoInputSettings, bpy.types.Operator)
         row.label(text="Replace Original: always ON for first modifier", icon='INFO')
 
     def execute(self, context):
-        cols = [i for i in context.selected_ids if isinstance(i, bpy.types.Collection)]
+        cols = get_outliner_collections(context)
         if not cols:
             self.report({'WARNING'}, "No collections selected in the Outliner.")
             return {'CANCELLED'}

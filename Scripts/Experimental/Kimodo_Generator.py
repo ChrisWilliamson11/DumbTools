@@ -379,9 +379,10 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         global_root_heading = []
 
         import math, mathutils
-        # BVH importer applies Rx(+90°) to convert Y-up BVH → Z-up Blender.
-        # To go back from Blender → Kimodo (Y-up) we apply the inverse: Rx(-90°).
-        # Kimodo X = Blender X,  Kimodo Y = Blender Z,  Kimodo Z = -Blender Y
+        # pb.matrix is in armature-local space which IS Kimodo's native Y-up space.
+        # The BVH importer applies Rx(+90°) to the *object*, but pb.matrix stays in
+        # armature/BVH space — so we read rotations directly from pb.matrix.
+        # For positions we still use world space → kimodo_T_blender conversion.
         kimodo_T_blender = mathutils.Matrix((
             (1.0,  0.0, 0.0),
             (0.0,  0.0, 1.0),
@@ -396,13 +397,10 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             kimodo_global_rots = {}
             kimodo_global_pos = {}
             for pb in obj.pose.bones:
-                # Absolute world-space pose matrix (normalize to remove any scale)
-                M_world = obj.matrix_world @ pb.matrix
-                R_world = M_world.to_3x3().normalized()
-                P_world = M_world.translation
-
-                # Convert to Kimodo's native Y-up coordinate space
-                R_kimodo = kimodo_T_blender @ R_world @ kimodo_T_blender.transposed()
+                # Rotation: pb.matrix is in armature space = Kimodo Y-up space directly
+                R_kimodo = pb.matrix.to_3x3().normalized()
+                # Position: use world space then convert to Kimodo Y-up
+                P_world = (obj.matrix_world @ pb.matrix).translation
                 P_kimodo = kimodo_T_blender @ P_world
 
                 kimodo_global_rots[pb.name] = R_kimodo
@@ -449,9 +447,11 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         if settings.export_pose and pose_frames:
             if settings.pose_mode == "end_effector":
                 c_type = "end-effector"
-                j_names = sorted(all_keyed_bones)  # union of all keyed bones across pose frames
+                # Kimodo only supports 5 end-effector joints
+                VALID_EE = {"LeftFoot", "RightFoot", "LeftHand", "RightHand", "Hips"}
+                j_names = sorted(b for b in all_keyed_bones if b in VALID_EE)
                 if not j_names:
-                    self.report({'WARNING'}, "End-Effector mode but no non-Root bones were keyed!")
+                    self.report({'WARNING'}, f"End-Effector mode: none of the keyed bones are valid Kimodo end-effectors. Valid: {sorted(VALID_EE)}")
                     return {'CANCELLED'}
             else:
                 c_type = "fullbody"

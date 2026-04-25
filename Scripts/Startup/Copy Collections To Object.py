@@ -24,7 +24,17 @@ def get_ancestor_chain(col, parent_map, root):
     chain.reverse()
     return chain
 
+def is_editable_collection(col):
+    """True if objects can be linked into this collection (local, not linked or overridden)."""
+    return col.library is None and col.override_library is None
+
 def find_target_collection(selected_collections, scene):
+    """
+    Deepest common ancestor of selected_collections that is:
+    - not one of the selected collections itself
+    - editable (not linked / not a library override)
+    Falls back to scene root, which is always local.
+    """
     root = scene.collection
     parent_map = build_parent_map(root)
     chains = [get_ancestor_chain(col, parent_map, root) for col in selected_collections]
@@ -35,9 +45,15 @@ def find_target_collection(selected_collections, scene):
             common = node
         else:
             break
+
     selected_set = set(selected_collections)
-    while common in selected_set:
+    # Walk up until we find a collection we can actually write into
+    while common != root and (common in selected_set or not is_editable_collection(common)):
         common = parent_map.get(common, root)
+
+    # Root is always editable; if even that fails something is very wrong
+    if not is_editable_collection(common):
+        common = root
     return common
 
 

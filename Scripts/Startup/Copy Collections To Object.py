@@ -16,7 +16,6 @@ def build_parent_map(root_collection):
     recurse(root_collection)
     return parent_map
 
-
 def get_ancestor_chain(col, parent_map, root):
     chain = [col]
     while col in parent_map:
@@ -25,13 +24,10 @@ def get_ancestor_chain(col, parent_map, root):
     chain.reverse()
     return chain
 
-
 def find_target_collection(selected_collections, scene):
-    """Deepest common ancestor of selected collections, guaranteed not to be one of them."""
     root = scene.collection
     parent_map = build_parent_map(root)
     chains = [get_ancestor_chain(col, parent_map, root) for col in selected_collections]
-
     common = root
     for level in range(min(len(c) for c in chains)):
         node = chains[0][level]
@@ -39,7 +35,6 @@ def find_target_collection(selected_collections, scene):
             common = node
         else:
             break
-
     selected_set = set(selected_collections)
     while common in selected_set:
         common = parent_map.get(common, root)
@@ -53,16 +48,20 @@ def find_target_collection(selected_collections, scene):
 def get_view3d_area(context):
     return next((a for a in context.screen.areas if a.type == 'VIEW_3D'), None)
 
+def get_outliner_area(context):
+    return next((a for a in context.screen.areas if a.type == 'OUTLINER'), None)
+
+def get_outliner_collections(context):
+    """Read collection selection from the Outliner regardless of current context area."""
+    outliner = get_outliner_area(context)
+    if outliner is None:
+        return []
+    with context.temp_override(area=outliner):
+        return [item for item in context.selected_ids if isinstance(item, bpy.types.Collection)]
 
 def add_geometry_input_modifier(context, obj, view3d_area):
-    """Add one Geometry Input (Essentials asset) modifier to obj. Returns it or None."""
     mod_count_before = len(obj.modifiers)
-    with context.temp_override(
-        area=view3d_area,
-        active_object=obj,
-        object=obj,
-        selected_objects=[obj],
-    ):
+    with context.temp_override(area=view3d_area, active_object=obj, object=obj, selected_objects=[obj]):
         bpy.ops.object.modifier_add_node_group(
             asset_library_type='ESSENTIALS',
             asset_library_identifier="",
@@ -72,14 +71,12 @@ def add_geometry_input_modifier(context, obj, view3d_area):
         return None
     return obj.modifiers[-1]
 
-
 def apply_socket_settings(mod, input_type_int, reference, relative_space, as_instance, replace_original):
-    """Write the standard Geometry Input socket values onto a modifier."""
-    mod["Socket_6"] = input_type_int   # 0=Object, 1=Collection
+    mod["Socket_6"] = input_type_int
     if input_type_int == 1:
-        mod["Socket_3"] = reference    # Collection reference
+        mod["Socket_3"] = reference
     else:
-        mod["Socket_2"] = reference    # Object reference (Socket_2 assumed — report if wrong)
+        mod["Socket_2"] = reference  # Socket_2 assumed for object — report if wrong
     mod["Socket_4"] = relative_space
     mod["Socket_5"] = as_instance
     mod["Socket_1"] = replace_original
@@ -90,7 +87,6 @@ def apply_socket_settings(mod, input_type_int, reference, relative_space, as_ins
 # ---------------------------------------------------------------------------
 
 def collect_materials_from_collections(collections):
-    """All unique material data blocks used by objects inside the given collections."""
     materials = set()
     for col in collections:
         for obj in col.all_objects:
@@ -99,9 +95,7 @@ def collect_materials_from_collections(collections):
                     materials.add(slot.material)
     return materials
 
-
 def collect_materials_from_objects(objects):
-    """All unique material data blocks used by the given objects."""
     materials = set()
     for obj in objects:
         for slot in obj.material_slots:
@@ -109,318 +103,256 @@ def collect_materials_from_objects(objects):
                 materials.add(slot.material)
     return materials
 
-
 def material_has_emission(mat):
-    """Return True if the material has any active emission contribution."""
     if not mat.use_nodes or not mat.node_tree:
         return False
     for node in mat.node_tree.nodes:
         if node.type == 'BSDF_PRINCIPLED':
-            strength = node.inputs.get('Emission Strength')
-            if strength and (strength.is_linked or strength.default_value > 0.0):
+            s = node.inputs.get('Emission Strength')
+            if s and (s.is_linked or s.default_value > 0.0):
                 return True
         elif node.type == 'EMISSION':
-            strength = node.inputs.get('Strength')
-            if strength and (strength.is_linked or strength.default_value > 0.0):
+            s = node.inputs.get('Strength')
+            if s and (s.is_linked or s.default_value > 0.0):
                 return True
     return False
 
-
 def get_or_create_no_emit_material(mat):
-    """Return a persistent emission-free copy of mat, creating it if needed."""
     no_emit_name = mat.name + ".no_emit"
     existing = bpy.data.materials.get(no_emit_name)
     if existing:
         return existing
-
     no_emit = mat.copy()
     no_emit.name = no_emit_name
-
     if no_emit.node_tree:
         links = no_emit.node_tree.links
         for node in no_emit.node_tree.nodes:
             if node.type == 'BSDF_PRINCIPLED':
-                for socket_name in ('Emission Strength', 'Emission Color'):
-                    socket = node.inputs.get(socket_name)
-                    if socket:
-                        for link in [l for l in links if l.to_socket == socket]:
-                            links.remove(link)
-                strength = node.inputs.get('Emission Strength')
-                if strength:
-                    strength.default_value = 0.0
+                for sname in ('Emission Strength', 'Emission Color'):
+                    sock = node.inputs.get(sname)
+                    if sock:
+                        for lnk in [l for l in links if l.to_socket == sock]:
+                            links.remove(lnk)
+                s = node.inputs.get('Emission Strength')
+                if s:
+                    s.default_value = 0.0
             elif node.type == 'EMISSION':
-                strength = node.inputs.get('Strength')
-                if strength:
-                    for link in [l for l in links if l.to_socket == strength]:
-                        links.remove(link)
-                    strength.default_value = 0.0
-
+                s = node.inputs.get('Strength')
+                if s:
+                    for lnk in [l for l in links if l.to_socket == s]:
+                        links.remove(lnk)
+                    s.default_value = 0.0
     print(f"  → Created no-emit material: '{no_emit_name}'")
     return no_emit
 
-
 def build_no_emission_gn_modifier(obj, source_materials):
-    """
-    Add/replace a 'No Emission Override' GN modifier on obj that chains Replace Material
-    nodes to swap every emitting material for its no-emit copy.
-    """
-    emitting_pairs = [
-        (mat, get_or_create_no_emit_material(mat))
-        for mat in source_materials
-        if material_has_emission(mat)
-    ]
-
-    if not emitting_pairs:
-        print("  → No emitting materials found — skipping No Emission Override.")
+    pairs = [(m, get_or_create_no_emit_material(m)) for m in source_materials if material_has_emission(m)]
+    if not pairs:
+        print("  → No emitting materials found.")
         return
-
-    # Remove any pre-existing override modifier so we always rebuild fresh
-    existing_mod = obj.modifiers.get("No Emission Override")
-    if existing_mod:
-        obj.modifiers.remove(existing_mod)
-
-    # Remove and recreate the node group so it always reflects current materials
+    existing = obj.modifiers.get("No Emission Override")
+    if existing:
+        obj.modifiers.remove(existing)
     ng_name = "No Emission Override"
-    existing_ng = bpy.data.node_groups.get(ng_name)
-    if existing_ng:
-        bpy.data.node_groups.remove(existing_ng)
-
+    old_ng = bpy.data.node_groups.get(ng_name)
+    if old_ng:
+        bpy.data.node_groups.remove(old_ng)
     ng = bpy.data.node_groups.new(ng_name, 'GeometryNodeTree')
-
-    # Define group sockets (Blender 4.0+ interface API)
     ng.interface.new_socket("Geometry", in_out='INPUT',  socket_type='NodeSocketGeometry')
     ng.interface.new_socket("Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
-
-    nodes = ng.nodes
-    links = ng.links
-
-    group_in  = nodes.new('NodeGroupInput')
-    group_in.location  = (-300, 0)
-    group_out = nodes.new('NodeGroupOutput')
-    group_out.location = (200 + len(emitting_pairs) * 220, 0)
-
-    prev_geo = group_in.outputs[0]
-    for i, (orig_mat, no_emit_mat) in enumerate(emitting_pairs):
+    nodes, links = ng.nodes, ng.links
+    gi = nodes.new('NodeGroupInput');  gi.location = (-300, 0)
+    go = nodes.new('NodeGroupOutput'); go.location = (200 + len(pairs) * 220, 0)
+    prev = gi.outputs[0]
+    for i, (orig, no_emit) in enumerate(pairs):
         rn = nodes.new('GeometryNodeReplaceMaterial')
         rn.location = (-100 + i * 220, 0)
-        rn.inputs['Old'].default_value = orig_mat
-        rn.inputs['New'].default_value = no_emit_mat
-        links.new(prev_geo, rn.inputs['Geometry'])
-        prev_geo = rn.outputs['Geometry']
-
-    links.new(prev_geo, group_out.inputs[0])
-
+        rn.inputs['Old'].default_value = orig
+        rn.inputs['New'].default_value = no_emit
+        links.new(prev, rn.inputs['Geometry'])
+        prev = rn.outputs['Geometry']
+    links.new(prev, go.inputs[0])
     mod = obj.modifiers.new("No Emission Override", type='NODES')
     mod.node_group = ng
-    print(f"  → Built No Emission Override ({len(emitting_pairs)} material(s) replaced)")
+    print(f"  → Built No Emission Override ({len(pairs)} material(s))")
 
 
 # ---------------------------------------------------------------------------
-# Operator 1 — Copy Collections To Object
+# Shared operator mixin for dialog draw
 # ---------------------------------------------------------------------------
 
-class DUMBTOOLS_OT_CopyCollectionsToObject(bpy.types.Operator):
-    bl_idname = "outliner.copy_collections_to_object"
-    bl_label = "Copy Collections To Object"
-    bl_description = (
-        "Creates a plane with a Geometry Input modifier for each selected collection. "
-        "First modifier replaces plane geometry."
-    )
-    bl_options = {'REGISTER', 'UNDO'}
+class GeoInputSettings:
+    relative_space:   BoolProperty(name="Relative Space",   default=True)
+    as_instance:      BoolProperty(name="As Instance",      default=False)
+    disable_emission: BoolProperty(name="Disable Emission", default=False)
 
-    relative_space:    BoolProperty(name="Relative Space",    default=True)
-    as_instance:       BoolProperty(name="As Instance",       default=False)
-    disable_emission:  BoolProperty(name="Disable Emission",  default=False,
-                                    description="Add a GN Replace Material chain to zero emission on all source materials")
-
-    @classmethod
-    def poll(cls, context):
-        return any(isinstance(item, bpy.types.Collection) for item in context.selected_ids)
-
-    def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self)
-
-    def draw(self, context):
-        layout = self.layout
+    def draw_base(self, layout):
         layout.prop(self, "relative_space")
         layout.prop(self, "as_instance")
         layout.prop(self, "disable_emission")
+
+
+# ---------------------------------------------------------------------------
+# Operator 1 — Copy Collections To Object  (Outliner right-click)
+# ---------------------------------------------------------------------------
+
+class DUMBTOOLS_OT_CopyCollectionsToObject(GeoInputSettings, bpy.types.Operator):
+    bl_idname  = "outliner.copy_collections_to_object"
+    bl_label   = "Copy Collections To Object"
+    bl_description = "Creates a plane with one Geometry Input modifier per selected collection"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return any(isinstance(i, bpy.types.Collection) for i in context.selected_ids)
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_popup(self, event)
+
+    def draw(self, context):
+        layout = self.layout
+        self.draw_base(layout)
         layout.separator()
-        row = layout.row()
-        row.enabled = False
+        row = layout.row(); row.enabled = False
         row.label(text="Replace Original: always ON for first modifier", icon='INFO')
 
     def execute(self, context):
-        selected_collections = [
-            item for item in context.selected_ids
-            if isinstance(item, bpy.types.Collection)
-        ]
-        if not selected_collections:
+        cols = [i for i in context.selected_ids if isinstance(i, bpy.types.Collection)]
+        if not cols:
             self.report({'WARNING'}, "No collections selected in the Outliner.")
             return {'CANCELLED'}
-
-        view3d_area = get_view3d_area(context)
-        if view3d_area is None:
+        view3d = get_view3d_area(context)
+        if not view3d:
             self.report({'ERROR'}, "No 3D Viewport found on screen.")
             return {'CANCELLED'}
-
-        target_col = find_target_collection(selected_collections, context.scene)
-
+        target_col = find_target_collection(cols, context.scene)
         bpy.ops.mesh.primitive_plane_add(size=1, enter_editmode=False, align='WORLD')
         obj = context.active_object
         obj.name = "Combined_Collections"
         for c in list(obj.users_collection):
             c.objects.unlink(obj)
         target_col.objects.link(obj)
-        print(f"  → Object placed in: '{target_col.name}'")
-
-        for i, col in enumerate(selected_collections):
-            mod = add_geometry_input_modifier(context, obj, view3d_area)
+        print(f"  → Placed in: '{target_col.name}'")
+        for i, col in enumerate(cols):
+            mod = add_geometry_input_modifier(context, obj, view3d)
             if mod is None:
-                self.report({'ERROR'}, "Failed to add modifier — asset library may not be loaded yet. Try again.")
+                self.report({'ERROR'}, "Failed to add modifier — try again.")
                 return {'CANCELLED'}
             apply_socket_settings(mod, 1, col, self.relative_space, self.as_instance, (i == 0))
-            print(f"  → Geometry Input: '{col.name}'" + (" [Replace Original]" if i == 0 else ""))
-
+            print(f"  → Geometry Input: '{col.name}'" + (" [Replace]" if i == 0 else ""))
         if self.disable_emission:
-            mats = collect_materials_from_collections(selected_collections)
-            build_no_emission_gn_modifier(obj, mats)
-
-        self.report({'INFO'}, f"Created '{obj.name}' with {len(selected_collections)} Geometry Input modifier(s).")
+            build_no_emission_gn_modifier(obj, collect_materials_from_collections(cols))
+        self.report({'INFO'}, f"Created '{obj.name}' with {len(cols)} modifier(s).")
         return {'FINISHED'}
 
 
 # ---------------------------------------------------------------------------
 # Operator 2 — Add Collections to Object(s)
+# Outliner right-click AND viewport right-click (reads Outliner selection via override)
 # ---------------------------------------------------------------------------
 
-class DUMBTOOLS_OT_AddCollectionsToObjects(bpy.types.Operator):
-    bl_idname = "outliner.add_collections_to_objects"
-    bl_label = "Add Collections to Object(s)"
-    bl_description = (
-        "Adds a Geometry Input modifier (Collection) for each selected collection "
-        "onto every currently selected viewport object."
-    )
+class DUMBTOOLS_OT_AddCollectionsToObjects(GeoInputSettings, bpy.types.Operator):
+    bl_idname  = "outliner.add_collections_to_objects"
+    bl_label   = "Add Collections to Object(s)"
+    bl_description = "Adds a Geometry Input modifier per selected collection onto each selected viewport object"
     bl_options = {'REGISTER', 'UNDO'}
 
-    relative_space:    BoolProperty(name="Relative Space",    default=True)
-    as_instance:       BoolProperty(name="As Instance",       default=False)
-    replace_original:  BoolProperty(name="Replace Original",  default=False)
-    disable_emission:  BoolProperty(name="Disable Emission",  default=False,
-                                    description="Add a GN Replace Material chain to zero emission on all source materials")
+    replace_original: BoolProperty(name="Replace Original", default=False)
 
     @classmethod
     def poll(cls, context):
-        return any(isinstance(item, bpy.types.Collection) for item in context.selected_ids)
+        # Works from Outliner (selected_ids available) or viewport (check via override)
+        if hasattr(context, 'selected_ids') and any(isinstance(i, bpy.types.Collection) for i in context.selected_ids):
+            return True
+        # Try reading from Outliner area
+        outliner = next((a for a in context.screen.areas if a.type == 'OUTLINER'), None)
+        if outliner:
+            with context.temp_override(area=outliner):
+                return any(isinstance(i, bpy.types.Collection) for i in context.selected_ids)
+        return False
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self)
+        return context.window_manager.invoke_props_popup(self, event)
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "relative_space")
-        layout.prop(self, "as_instance")
+        self.draw_base(layout)
         layout.prop(self, "replace_original")
-        layout.prop(self, "disable_emission")
 
     def execute(self, context):
-        selected_collections = [
-            item for item in context.selected_ids
-            if isinstance(item, bpy.types.Collection)
-        ]
-        if not selected_collections:
+        cols = get_outliner_collections(context)
+        if not cols:
             self.report({'WARNING'}, "No collections selected in the Outliner.")
             return {'CANCELLED'}
-
-        view3d_area = get_view3d_area(context)
-        if view3d_area is None:
+        view3d = get_view3d_area(context)
+        if not view3d:
             self.report({'ERROR'}, "No 3D Viewport found on screen.")
             return {'CANCELLED'}
-
-        target_objects = list(context.selected_objects)
-        if not target_objects:
+        targets = list(context.selected_objects)
+        if not targets:
             self.report({'WARNING'}, "No objects selected in the 3D Viewport.")
             return {'CANCELLED'}
-
-        source_mats = collect_materials_from_collections(selected_collections) if self.disable_emission else set()
-
-        total_added = 0
-        for obj in target_objects:
-            for col in selected_collections:
-                mod = add_geometry_input_modifier(context, obj, view3d_area)
+        src_mats = collect_materials_from_collections(cols) if self.disable_emission else set()
+        total = 0
+        for obj in targets:
+            for col in cols:
+                mod = add_geometry_input_modifier(context, obj, view3d)
                 if mod is None:
-                    self.report({'ERROR'}, "Failed to add modifier — asset library may not be loaded yet. Try again.")
+                    self.report({'ERROR'}, "Failed to add modifier — try again.")
                     return {'CANCELLED'}
                 apply_socket_settings(mod, 1, col, self.relative_space, self.as_instance, self.replace_original)
                 print(f"  → Geometry Input: '{col.name}' → '{obj.name}'")
-                total_added += 1
-
+                total += 1
             if self.disable_emission:
-                build_no_emission_gn_modifier(obj, source_mats)
-
-        self.report({'INFO'}, f"Added {total_added} Geometry Input modifier(s) across {len(target_objects)} object(s).")
+                build_no_emission_gn_modifier(obj, src_mats)
+        self.report({'INFO'}, f"Added {total} modifier(s) across {len(targets)} object(s).")
         return {'FINISHED'}
 
 
 # ---------------------------------------------------------------------------
-# Operator 3 — Attach Selected to Active
+# Operator 3 — Attach Selected to Active  (viewport right-click)
 # ---------------------------------------------------------------------------
 
-class DUMBTOOLS_OT_AttachSelectedToActive(bpy.types.Operator):
-    bl_idname = "object.attach_selected_to_active_geo_input"
-    bl_label = "Attach Selected to Active"
-    bl_description = (
-        "Adds a Geometry Input modifier (Object mode) to the active object "
-        "for each other selected object."
-    )
+class DUMBTOOLS_OT_AttachSelectedToActive(GeoInputSettings, bpy.types.Operator):
+    bl_idname  = "object.attach_selected_to_active_geo_input"
+    bl_label   = "Attach Selected to Active"
+    bl_description = "Adds a Geometry Input modifier (Object mode) to the active object for each other selected object"
     bl_options = {'REGISTER', 'UNDO'}
 
-    relative_space:    BoolProperty(name="Relative Space",    default=True)
-    as_instance:       BoolProperty(name="As Instance",       default=False)
-    replace_original:  BoolProperty(name="Replace Original",  default=False)
-    disable_emission:  BoolProperty(name="Disable Emission",  default=False,
-                                    description="Add a GN Replace Material chain to zero emission on all source materials")
+    replace_original: BoolProperty(name="Replace Original", default=False)
 
     @classmethod
     def poll(cls, context):
         return context.active_object is not None and len(context.selected_objects) > 1
 
     def invoke(self, context, event):
-        return context.window_manager.invoke_props_dialog(self)
+        return context.window_manager.invoke_props_popup(self, event)
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, "relative_space")
-        layout.prop(self, "as_instance")
+        self.draw_base(layout)
         layout.prop(self, "replace_original")
-        layout.prop(self, "disable_emission")
 
     def execute(self, context):
         active  = context.active_object
         sources = [o for o in context.selected_objects if o is not active]
-
         if not sources:
             self.report({'WARNING'}, "Select at least one other object alongside the active object.")
             return {'CANCELLED'}
-
-        view3d_area = get_view3d_area(context)
-        if view3d_area is None:
+        view3d = get_view3d_area(context)
+        if not view3d:
             self.report({'ERROR'}, "No 3D Viewport found on screen.")
             return {'CANCELLED'}
-
         for src in sources:
-            mod = add_geometry_input_modifier(context, active, view3d_area)
+            mod = add_geometry_input_modifier(context, active, view3d)
             if mod is None:
-                self.report({'ERROR'}, "Failed to add modifier — asset library may not be loaded yet. Try again.")
+                self.report({'ERROR'}, "Failed to add modifier — try again.")
                 return {'CANCELLED'}
             apply_socket_settings(mod, 0, src, self.relative_space, self.as_instance, self.replace_original)
-            print(f"  → Geometry Input: object '{src.name}' → '{active.name}'")
-
+            print(f"  → Geometry Input: '{src.name}' → '{active.name}'")
         if self.disable_emission:
-            mats = collect_materials_from_objects(sources)
-            build_no_emission_gn_modifier(active, mats)
-
-        self.report({'INFO'}, f"Attached {len(sources)} object(s) to '{active.name}' via Geometry Input.")
+            build_no_emission_gn_modifier(active, collect_materials_from_objects(sources))
+        self.report({'INFO'}, f"Attached {len(sources)} object(s) to '{active.name}'.")
         return {'FINISHED'}
 
 
@@ -430,13 +362,13 @@ class DUMBTOOLS_OT_AttachSelectedToActive(bpy.types.Operator):
 
 def draw_outliner_menu(self, context):
     self.layout.separator()
-    self.layout.operator(DUMBTOOLS_OT_CopyCollectionsToObject.bl_idname,  icon='OUTLINER_COLLECTION')
+    self.layout.operator(DUMBTOOLS_OT_CopyCollectionsToObject.bl_idname, icon='OUTLINER_COLLECTION')
     self.layout.operator(DUMBTOOLS_OT_AddCollectionsToObjects.bl_idname,  icon='MODIFIER')
-
 
 def draw_viewport_menu(self, context):
     self.layout.separator()
-    self.layout.operator(DUMBTOOLS_OT_AttachSelectedToActive.bl_idname, icon='MODIFIER')
+    self.layout.operator(DUMBTOOLS_OT_AddCollectionsToObjects.bl_idname,  icon='OUTLINER_COLLECTION')
+    self.layout.operator(DUMBTOOLS_OT_AttachSelectedToActive.bl_idname,   icon='MODIFIER')
 
 
 # ---------------------------------------------------------------------------
@@ -455,13 +387,11 @@ def register():
     bpy.types.OUTLINER_MT_collection.append(draw_outliner_menu)
     bpy.types.VIEW3D_MT_object_context_menu.append(draw_viewport_menu)
 
-
 def unregister():
     bpy.types.OUTLINER_MT_collection.remove(draw_outliner_menu)
     bpy.types.VIEW3D_MT_object_context_menu.remove(draw_viewport_menu)
     for cls in reversed(classes):
         if cls.is_registered:
             bpy.utils.unregister_class(cls)
-
 
 register()

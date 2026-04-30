@@ -5,6 +5,9 @@ import subprocess
 import threading
 from mathutils import Matrix
 
+# Tracks the Windows-native server process so we can cleanly terminate it
+_kimodo_win_proc = {"proc": None}
+
 def scrape_bvh_joint_names(filepath):
     names = []
     with open(filepath, 'r') as f:
@@ -105,6 +108,24 @@ class KimodoSettings(bpy.types.PropertyGroup):
         description="Export the animated Skeleton path natively as continuous 2D plane constraints",
         default=True
     )
+    # --- Backend selector ---
+    use_wsl: bpy.props.BoolProperty(
+        name="Use WSL Backend",
+        description="Run the server inside WSL (Linux). Uncheck to use a native Windows Python venv instead",
+        default=False
+    )
+    win_python_path: bpy.props.StringProperty(
+        name="Python Executable",
+        description="Path to the Python executable inside the Windows server venv",
+        default=r"G:\Kimodo\kimodo\venv_server\Scripts\python.exe",
+        subtype='FILE_PATH'
+    )
+    win_kimodo_path: bpy.props.StringProperty(
+        name="Kimodo Repo Path",
+        description="Root of the Kimodo repository on Windows (contains kimodo/ subfolder)",
+        default=r"G:\Kimodo\kimodo",
+        subtype='DIR_PATH'
+    )
 
 class DUMBTOOLS_OT_generate_soma_skeleton(bpy.types.Operator):
     bl_idname = "dumbtools.generate_soma_skeleton"
@@ -134,23 +155,18 @@ import urllib.error
 
 def start_kimodo_server(scene):
     settings = scene.kimodo_settings
-    model_string = settings.model_name.strip()
-    if not model_string:
-        model_string = "kimodo-soma-rp"
-        
-    bash_server = (
-        "cd ~/Kimodo_WSL/kimodo && "
-        "source venv/bin/activate && "
-        "PYTHONUNBUFFERED=1 python -u kimodo/scripts/blender_server.py"
-    )
-    wsl_exe = r"C:\Windows\System32\wsl.exe"
-    
-    def background_task():
+    model_string = settings.model_name.strip() or "kimodo-soma-rp"
+
+    def background_task_wsl():
+        wsl_exe = r"C:\Windows\System32\wsl.exe"
+        bash_server = (
+            "cd ~/Kimodo_WSL/kimodo && "
+            "source venv/bin/activate && "
+            "PYTHONUNBUFFERED=1 python -u kimodo/scripts/blender_server.py"
+        )
         print("Starting Kimodo API Server in WSL...")
         try:
-            # Kill any zombie server first (separate process so pkill can't SIGTERM us)
             subprocess.run([wsl_exe, "-d", "Ubuntu", "-e", "bash", "-c", "pkill -f blender_server.py"], timeout=5)
-            # Now start the fresh server
             process = subprocess.Popen(
                 [wsl_exe, "-d", "Ubuntu", "-e", "bash", "-c", bash_server],
                 shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -158,21 +174,50 @@ def start_kimodo_server(scene):
             print(f"[Kimodo Server]: Process started, PID={process.pid}")
             for line in process.stdout:
                 print("[Kimodo Server]:", line.strip())
-            ret = process.wait()
-            print(f"[Kimodo Server]: Process exited with code {ret}")
+            print(f"[Kimodo Server]: Process exited with code {process.wait()}")
         except Exception as e:
             print(f"[Kimodo Server]: FAILED TO START - {e}")
-        
-    thread = threading.Thread(target=background_task)
+
+    def background_task_windows():
+        python_exe = settings.win_python_path or r"G:\Kimodo\kimodo\venv_server\Scripts\python.exe"
+        repo_path  = settings.win_kimodo_path  or r"G:\Kimodo\kimodo"
+        server_script = os.path.join(repo_path, "kimodo", "scripts", "blender_server.py")
+        print(f"Starting Kimodo API Server (Windows native)...")
+        print(f"  Python : {python_exe}")
+        print(f"  Script : {server_script}")
+        # Kill any leftover process from a previous run
+        old = _kimodo_win_proc["proc"]
+        if old and old.poll() is None:
+            old.terminate()
+        try:
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+            process = subprocess.Popen(
+                [python_exe, "-u", server_script],
+                shell=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+            )
+            _kimodo_win_proc["proc"] = process
+            print(f"[Kimodo Server]: Process started, PID={process.pid}")
+            for line in process.stdout:
+                print("[Kimodo Server]:", line.strip())
+            print(f"[Kimodo Server]: Process exited with code {process.wait()}")
+        except Exception as e:
+            print(f"[Kimodo Server]: FAILED TO START - {e}")
+        finally:
+            _kimodo_win_proc["proc"] = None
+
+    task = background_task_wsl if settings.use_wsl else background_task_windows
+    thread = threading.Thread(target=task)
     thread.daemon = True
     thread.start()
-    
-    # Ping to load the exact model
+
+    # Phase 2: wait for server, then pre-load the model
     def ping_load():
-        import time
-        import urllib.request
-        import json
-        # Phase 1: wait for uvicorn to be reachable (up to 60s)
+        import time, urllib.request, json
         print("Waiting for Kimodo server to come online...")
         for _ in range(60):
             try:
@@ -184,7 +229,6 @@ def start_kimodo_server(scene):
         else:
             print("Kimodo server did not come online within 60 seconds.")
             return
-        # Phase 2: send ONE load_model request and wait patiently (up to 5 mins)
         try:
             data = json.dumps({"model_name": model_string}).encode('utf-8')
             req = urllib.request.Request("http://localhost:8055/load_model", data=data, headers={'Content-Type': 'application/json'})
@@ -211,7 +255,16 @@ class DUMBTOOLS_OT_kill_kimodo_server(bpy.types.Operator):
     bl_description = "Kills the running Kimodo server to free up VRAM"
     
     def execute(self, context):
-        subprocess.run(['wsl', '-d', 'Ubuntu', '-e', 'pkill', '-f', 'blender_server.py'])
+        if context.scene.kimodo_settings.use_wsl:
+            subprocess.run(['wsl', '-d', 'Ubuntu', '-e', 'pkill', '-f', 'blender_server.py'])
+        else:
+            proc = _kimodo_win_proc.get("proc")
+            if proc and proc.poll() is None:
+                proc.terminate()
+                _kimodo_win_proc["proc"] = None
+                print("[Kimodo Server]: Windows server process terminated.")
+            else:
+                print("[Kimodo Server]: No running Windows server process found.")
         self.report({'INFO'}, "Kimodo server killed.")
         return {'FINISHED'}
 
@@ -323,7 +376,8 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             self.report({'ERROR'}, "Active object is not an Armature")
             return {'CANCELLED'}
 
-        temp_dir = r"g:\Kimodo\temp"
+        _kimodo_repo = settings.win_kimodo_path.rstrip("\\/") if not settings.use_wsl and settings.win_kimodo_path else r"G:\Kimodo\kimodo"
+        temp_dir = os.path.join(os.path.dirname(_kimodo_repo), "temp")
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
 
@@ -506,7 +560,7 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             "seed": settings.seed if settings.seed >= 0 else None,
             "cfg_weight": [settings.cfg_weight, 2.0],
             "cfg_type": "separated",
-            "out_dir": "/mnt/g/Kimodo/temp/motion",
+            "out_dir": os.path.join(temp_dir, "motion").replace("\\", "/") if settings.use_wsl else os.path.join(temp_dir, "motion"),
             "constraints": constraints_data
         }
 
@@ -526,15 +580,24 @@ class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         settings = context.scene.kimodo_settings
-        
+
         row = layout.row(align=True)
         row.operator(DUMBTOOLS_OT_start_kimodo_server.bl_idname, icon='PLAY')
         row.operator(DUMBTOOLS_OT_kill_kimodo_server.bl_idname, icon='CANCEL')
         layout.separator()
-        
+
         layout.operator(DUMBTOOLS_OT_generate_soma_skeleton.bl_idname)
-        
         layout.separator()
+
+        # Backend selector
+        box = layout.box()
+        box.label(text="Backend", icon='PREFERENCES')
+        box.prop(settings, "use_wsl")
+        if not settings.use_wsl:
+            box.prop(settings, "win_python_path")
+            box.prop(settings, "win_kimodo_path")
+        layout.separator()
+
         layout.prop(settings, "model_name")
         layout.prop(settings, "prompt")
         layout.prop(settings, "use_markers")
@@ -549,7 +612,7 @@ class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
         if settings.export_pose:
             layout.prop(settings, "pose_mode", expand=True)
         layout.separator()
-        
+
         layout.operator(DUMBTOOLS_OT_generate_motion_from_pose.bl_idname, icon='PLAY', text="Export & Generate Motion")
 
 def register():

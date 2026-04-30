@@ -419,8 +419,13 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 for kp in fcurve.keyframe_points:
                     fr = int(kp.co[0])
                     if bone_name == ROOT_BONE:
+                        # Dummy Root bone — always trajectory
+                        root_frames.add(fr)
+                    elif bone_name == "Hips" and "location" in dp:
+                        # Hips location keyframes drive trajectory (XZ position)
                         root_frames.add(fr)
                     elif bone_name is not None:
+                        # All other bones (incl. Hips rotation) → pose constraint
                         pose_frames.add(fr)
                         pose_frame_bones.setdefault(fr, set()).add(bone_name)
 

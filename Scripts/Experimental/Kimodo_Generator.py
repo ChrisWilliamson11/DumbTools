@@ -335,12 +335,30 @@ def import_generated_bvh(filepath_dir, num_samples):
             # Visually mute all but the first track so the user can easily toggle / solo them to compare
             if i > 0:
                 track.mute = True
-                
-            # Clear location on NLA strips if we want them locked, but actually Kimodo baked the root motion into the BVH.
-            # Leaving as is works fine because imported_obj location offsets the whole clip.
-            
-            # Delete imported armature to keep scene clean (but preserve its action!)
+
+            # Delete imported armature to keep scene clean (the action is now in the NLA)
             bpy.data.objects.remove(imported_obj, do_unlink=True)
+
+    # For multiple samples: duplicate the original armature and give each copy
+    # exactly one unmuted NLA track so all variations are visible side by side.
+    if num_samples > 1 and len(original_obj.animation_data.nla_tracks) > 1:
+        spread_x = 1.5  # metres between each duplicate
+        tracks = list(original_obj.animation_data.nla_tracks)
+        for i, track in enumerate(tracks):
+            if i == 0:
+                track.mute = False
+                continue
+            dup = original_obj.copy()
+            dup.animation_data_clear()
+            dup.animation_data_create()
+            dup.name = f"{original_obj.name}_v{i+1}"
+            bpy.context.collection.objects.link(dup)
+            new_track = dup.animation_data.nla_tracks.new()
+            new_track.name = track.name
+            for s in track.strips:
+                new_track.strips.new(s.action.name, int(s.frame_start), s.action)
+            dup.location.x = original_obj.location.x + i * spread_x
+            track.mute = True  # hide extra tracks on the original
 
     # Set context object back
     bpy.context.view_layer.objects.active = original_obj
@@ -451,8 +469,12 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             kimodo_global_rots = {}
             kimodo_global_pos = {}
             for pb in obj.pose.bones:
-                # Rotation: pb.matrix is in armature space = Kimodo Y-up space directly
-                R_kimodo = pb.matrix.to_3x3().normalized()
+                # Rotation: strip the Blender bone-rest matrix so T-pose → identity in Kimodo space.
+                # In BVH standard T-pose all global rotations = identity; pb.bone.matrix_local
+                # encodes the rest offset Blender adds when importing the BVH. Removing it leaves
+                # only the user-applied pose rotation, which is what Kimodo expects.
+                R_rest_inv = pb.bone.matrix_local.to_3x3().inverted()
+                R_kimodo = (R_rest_inv @ pb.matrix.to_3x3()).normalized()
                 # Position: use world space then convert to Kimodo Y-up
                 P_world = (obj.matrix_world @ pb.matrix).translation
                 P_kimodo = kimodo_T_blender @ P_world
@@ -462,20 +484,17 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
 
 
             # --- Trajectory Constraint Scraping ---
-            # Only emit a trajectory point if Root bone was keyed on this frame.
             if settings.export_root and frame in root_frames:
-                # Use Root bone world XZ position for trajectory
-                if ROOT_BONE in obj.pose.bones:
-                    pos = kimodo_global_pos[ROOT_BONE]
-                else:
-                    pos = kimodo_global_pos.get("Hips", mathutils.Vector((0,0,0)))
+                # Use Hips (joint-0, what the model actually constrains) for XZ position.
+                # Fall back to Root dummy if Hips isn't in the armature.
+                traj_pos = kimodo_global_pos.get("Hips", kimodo_global_pos.get(ROOT_BONE, mathutils.Vector((0,0,0))))
                 root_indices.append(kimodo_frame)
-                smooth_root_2d.append([pos.x, pos.z])
+                smooth_root_2d.append([traj_pos.x, traj_pos.z])
 
-                # Heading from Root bone forward vector (which is Z in Kimodo space, wait no, Kimodo uses -Z forward)
-                R_root = kimodo_global_rots.get(ROOT_BONE, kimodo_global_rots.get("Hips", mathutils.Matrix.Identity(3)))
-                # Viser expects heading natively, web app uses forward vector as Z?
-                forward = R_root @ mathutils.Vector((0.0, 0.0, -1.0))
+                # Heading: forward direction of Hips/Root in Kimodo XZ plane.
+                # Kimodo heading format = [cos(angle), sin(angle)] of the 2D direction vector.
+                R_root = kimodo_global_rots.get("Hips", kimodo_global_rots.get(ROOT_BONE, mathutils.Matrix.Identity(3)))
+                forward = R_root @ mathutils.Vector((0.0, 0.0, -1.0))  # character faces -Z in Kimodo
                 global_root_heading.append([forward.x, forward.z])
 
             # --- Skeletal Constraint Scraping ---

@@ -493,18 +493,17 @@ class RETARGET_OT_multiple_fbx(Operator):
             if baked:
                 baked_actions.append(baked)
 
-            # Restore constraints between clips so the next import can drive
-            # the target rig again. But DON'T restore after the last clip
-            # unless we're continuing to NLA/save — otherwise the constraints
-            # fight the baked keys and make it look like the bake failed.
+            # Restore constraints ONLY between clips — to prime the rig for
+            # the next FBX import. After the last clip, constraints stay off
+            # so the saved .blend shows clean NLA playback without constraints
+            # fighting or hiding the baked animation tracks.
             is_last_clip = (i == total - 1)
-            continuing   = props.do_nla_push or props.do_save
-            if props.do_bake and (not is_last_clip or continuing):
-                print("[RetargetFBX] Restoring constraints (next clip prep)...")
+            if props.do_bake and not is_last_clip:
+                print("[RetargetFBX] Restoring constraints (preparing for next clip)...")
                 restore_constraints(target_rig, constraint_snapshot)
-            elif props.do_bake and is_last_clip and not continuing:
-                print("[RetargetFBX] Constraints NOT restored — inspect baked result, "
-                      "constraints will not override baked keys.")
+            elif props.do_bake and is_last_clip:
+                print("[RetargetFBX] Last clip done — constraints left off for clean NLA playback.")
+
 
         wm.progress_update(total)
         wm.progress_end()

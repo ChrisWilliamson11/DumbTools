@@ -1,4 +1,4 @@
-# Tooltip: If you have x2 collections of objects with the same names (ignoring suffixes .001, .002 etc), this will copy the materials from the objects in the first collection to the objects in the second collection.
+# Tooltip: If you have x2 collections of objects with the same names, this will copy the materials and face assignments from the objects in the first collection to the objects in the second collection. Supports stripping namespaces, custom prefixes, and custom suffixes before name matching.
 import bpy
 
 class CopyMaterialsOperator(bpy.types.Operator):
@@ -24,6 +24,18 @@ class CopyMaterialsOperator(bpy.types.Operator):
         items=get_collections
     )
 
+    strip_prefix: bpy.props.StringProperty(
+        name="Strip Prefix",
+        description="Optional prefix to ignore when matching names (e.g. 'CHR_'). Applied to both collections.",
+        default=""
+    )
+
+    strip_suffix: bpy.props.StringProperty(
+        name="Strip Suffix",
+        description="Optional suffix to ignore when matching names (e.g. '_LO'). Applied to both collections.",
+        default=""
+    )
+
     def execute(self, context):
         source_collection = bpy.data.collections.get(self.source_collection)
         target_collection = bpy.data.collections.get(self.target_collection)
@@ -32,7 +44,11 @@ class CopyMaterialsOperator(bpy.types.Operator):
             self.report({'ERROR'}, f"Either {self.source_collection} or {self.target_collection} is not found!")
             return {'CANCELLED'}
 
-        copy_materials_from_source_to_target(source_collection, target_collection)
+        copy_materials_from_source_to_target(
+            source_collection, target_collection,
+            strip_prefix=self.strip_prefix,
+            strip_suffix=self.strip_suffix
+        )
         self.report({'INFO'}, f"Materials copied from {self.source_collection} to {self.target_collection}.")
         return {'FINISHED'}
 
@@ -40,29 +56,42 @@ class CopyMaterialsOperator(bpy.types.Operator):
         return context.window_manager.invoke_props_dialog(self)
 
 
-def get_base_name(name):
+def get_base_name(name, strip_prefix="", strip_suffix=""):
     """
-    Strips namespace prefixes (e.g. 'NS:Body') and numeric suffixes (e.g. '.001')
-    to get a bare base name for comparison.
-    'NS:Body.001' -> 'Body', 'Cube.001' -> 'Cube', 'Body' -> 'Body'
+    Strips (in order):
+      1. Namespace prefix  - everything up to and including ':' (automatic)
+      2. User prefix       - e.g. 'CHR_'
+      3. User suffix       - e.g. '_LO'
+      4. Numeric suffix    - e.g. '.001'
+
+    Examples (prefix='CHR_', suffix='_LO'):
+      'NS:CHR_Body_LO.001' -> 'Body'
+      'CHR_Body_LO'        -> 'Body'
+      'Body.001'           -> 'Body'
+      'Body'               -> 'Body'
     """
-    # Strip namespace prefix (everything up to and including ':')
+    # 1. Strip namespace prefix (everything up to and including ':')
     if ":" in name:
         name = name.split(":", 1)[1]
-    # Strip numeric suffix (.001, .002, etc.)
+    # 2. Strip user-supplied prefix
+    if strip_prefix and name.startswith(strip_prefix):
+        name = name[len(strip_prefix):]
+    # 3. Strip user-supplied suffix (before numeric suffix so order is predictable)
+    if strip_suffix and name.endswith(strip_suffix):
+        name = name[:-len(strip_suffix)]
+    # 4. Strip numeric Blender duplicate suffix (.001, .002, etc.)
     if "." in name and name.split(".")[-1].isdigit():
         name = ".".join(name.split(".")[:-1])
     return name
 
 
-def copy_materials_from_source_to_target(source_collection, target_collection):
+def copy_materials_from_source_to_target(source_collection, target_collection, strip_prefix="", strip_suffix=""):
     """
     Copies material slots AND per-face material assignments from objects in the
-    source collection to matching objects in the target collection (matched by
-    base name, ignoring numeric suffixes like .001/.002).
+    source collection to matching objects in the target collection.
 
-    Handles sources that have had new materials added and re-assigned to faces
-    after the duplicates were created.
+    Name matching strips (automatically) namespace prefixes and Blender numeric
+    suffixes, plus any user-supplied strip_prefix / strip_suffix strings.
     """
     unmatched_objects = []
 
@@ -70,13 +99,13 @@ def copy_materials_from_source_to_target(source_collection, target_collection):
         if source_obj.type != 'MESH':
             continue
 
-        base_name = get_base_name(source_obj.name)
+        base_name = get_base_name(source_obj.name, strip_prefix, strip_suffix)
         found_match = False
 
         for target_obj in target_collection.objects:
             if target_obj.type != 'MESH':
                 continue
-            if get_base_name(target_obj.name) != base_name:
+            if get_base_name(target_obj.name, strip_prefix, strip_suffix) != base_name:
                 continue
 
             source_mesh = source_obj.data

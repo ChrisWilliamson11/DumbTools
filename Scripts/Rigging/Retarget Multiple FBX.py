@@ -101,11 +101,12 @@ def restore_constraints(arm_obj, snapshot):
 #  Per-FBX processing helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def import_fbx_clean(fbx_path):
+def import_fbx_clean(fbx_path, delete_arm=True):
     """
-    Import one FBX. Returns (imported_action, base_name).
-    Deletes every new non-armature object (Rokoko mesh junk etc.)
-    Also deletes the imported armature object after detaching its action.
+    Import one FBX. Returns (imported_action, base_name, arm_obj).
+    Deletes non-armature junk objects always.
+    Deletes the imported armature only when delete_arm=True (full pipeline).
+    When delete_arm=False the armature stays in the scene for inspection.
     """
     before_objs = set(o.name for o in bpy.data.objects)
 
@@ -120,7 +121,7 @@ def import_fbx_clean(fbx_path):
         )
     except Exception as e:
         print(f"[RetargetFBX] Import failed for {fbx_path}: {e}")
-        return None, None
+        return None, None, None
 
     base_name = os.path.splitext(os.path.basename(fbx_path))[0]
 
@@ -133,24 +134,41 @@ def import_fbx_clean(fbx_path):
     kept_arm = new_arms[0] if new_arms else None
 
     if kept_arm:
-        # Grab action before renaming / deleting the armature
+        # Rename armature to match FBX base name
+        try:
+            kept_arm.name = base_name
+        except Exception:
+            pass
+        # Grab and rename the action
         if kept_arm.animation_data and kept_arm.animation_data.action:
             imported_action = kept_arm.animation_data.action
             try:
                 imported_action.name = base_name
             except Exception:
                 pass
+        if delete_arm:
             # Detach so the action survives object deletion
             kept_arm.animation_data.action = None
 
-    # Delete every new object (armature and junk)
+    # Always delete non-armature junk
     for o in new_objs:
-        try:
-            bpy.data.objects.remove(o, do_unlink=True)
-        except Exception:
-            pass
+        if kept_arm and o.name == kept_arm.name:
+            if delete_arm:
+                # Delete the arm too
+                try:
+                    bpy.data.objects.remove(o, do_unlink=True)
+                except Exception:
+                    pass
+        else:
+            try:
+                bpy.data.objects.remove(o, do_unlink=True)
+            except Exception:
+                pass
 
-    return imported_action, base_name
+    arm_in_scene = None if delete_arm else kept_arm
+    print(f"[RetargetFBX]   Imported '{base_name}' — "
+          f"{'armature deleted (action kept)' if delete_arm else 'armature kept in scene for inspection'}")
+    return imported_action, base_name, arm_in_scene
 
 
 def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
@@ -162,9 +180,16 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
 
     # ── STAGE 1: Import & clean ───────────────────────────────────────────────
     if props.do_import:
-        imported_action, base_name = import_fbx_clean(fbx_path)
-        if imported_action is None:
+        # delete_arm only when we're going to proceed — otherwise keep it
+        # in the scene so the user can inspect the imported skeleton
+        delete_arm = props.do_assign
+        imported_action, base_name, _ = import_fbx_clean(fbx_path, delete_arm=delete_arm)
+        if imported_action is None and props.do_assign:
             print(f"[RetargetFBX] No action found in {fbx_path} — skipping.")
+            return None
+        if not props.do_assign:
+            print(f"[RetargetFBX]   Import-only mode: armature left in scene. "
+                  f"Action found: {imported_action.name if imported_action else 'NONE'}")
             return None
     else:
         # Reuse whatever is already on the source rig

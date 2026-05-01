@@ -153,30 +153,56 @@ def import_fbx_clean(fbx_path):
     return imported_action, base_name
 
 
-def process_one_fbx(fbx_path, source_rig, target_rig, context):
+def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
     """
-    Full pipeline for a single FBX clip.
-    Returns the baked *_remap action or None on failure.
+    Full pipeline for a single FBX clip, gated by stage flags on props.
+    Returns the baked *_remap action or None on failure / bake disabled.
     """
     scn = context.scene
-    imported_action, base_name = import_fbx_clean(fbx_path)
 
-    if imported_action is None:
-        print(f"[RetargetFBX] No action found in {fbx_path} — skipping.")
+    # ── STAGE 1: Import & clean ───────────────────────────────────────────────
+    if props.do_import:
+        imported_action, base_name = import_fbx_clean(fbx_path)
+        if imported_action is None:
+            print(f"[RetargetFBX] No action found in {fbx_path} — skipping.")
+            return None
+    else:
+        # Reuse whatever is already on the source rig
+        base_name = os.path.splitext(os.path.basename(fbx_path))[0]
+        imported_action = (source_rig.animation_data.action
+                           if source_rig.animation_data else None)
+        if imported_action is None:
+            print(f"[RetargetFBX] do_import is OFF but no action on source rig — skipping.")
+            return None
+
+    # ── STAGE 2: Assign to source rig ────────────────────────────────────────
+    if props.do_assign:
+        if not source_rig.animation_data:
+            source_rig.animation_data_create()
+
+        # KEY FIX: disable NLA so direct action assignment isn't overridden
+        src_anim = source_rig.animation_data
+        nla_was_active = src_anim.use_nla
+        src_anim.use_nla = False
+        src_anim.action  = imported_action
+
+        # Set timeline
+        fr = imported_action.frame_range
+        scn.frame_start = int(fr[0])
+        scn.frame_end   = int(fr[1])
+        print(f"[RetargetFBX]   Assigned action '{imported_action.name}'  "
+              f"frames {scn.frame_start}–{scn.frame_end}")
+        print(f"[RetargetFBX]   Source NLA was {'active' if nla_was_active else 'already off'} "
+              f"— disabled for bake")
+    else:
+        nla_was_active = False
+        print(f"[RetargetFBX]   do_assign is OFF — using existing source rig state")
+
+    # ── STAGE 3: Bake ─────────────────────────────────────────────────────────
+    if not props.do_bake:
+        print(f"[RetargetFBX]   do_bake is OFF — stopping after assign stage.")
         return None
 
-    # ── Assign imported action → source rig ──────────────────────────────────
-    if not source_rig.animation_data:
-        source_rig.animation_data_create()
-    source_rig.animation_data.action = imported_action
-
-    # ── Timeline from action ──────────────────────────────────────────────────
-    fr = imported_action.frame_range
-    scn.frame_start = int(fr[0])
-    scn.frame_end   = int(fr[1])
-    print(f"[RetargetFBX] '{base_name}'  frames {scn.frame_start}–{scn.frame_end}")
-
-    # ── New empty action on target ────────────────────────────────────────────
     remap_name   = base_name + "_remap"
     remap_action = bpy.data.actions.new(name=remap_name)
     remap_action.use_fake_user = True
@@ -184,23 +210,23 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context):
         target_rig.animation_data_create()
     target_rig.animation_data.action = remap_action
 
-    # ── Pose mode, select all visible bones ──────────────────────────────────
-    # Set active object FIRST — after import_fbx_clean deletes everything the
-    # active object is None, so mode_set would fail its poll otherwise.
+    # Ensure target_rig is active and in pose mode, all visible bones selected
     bpy.ops.object.select_all(action='DESELECT')
     target_rig.select_set(True)
     context.view_layer.objects.active = target_rig
     bpy.ops.object.mode_set(mode='POSE')
     bpy.ops.pose.select_all(action='SELECT')
 
-    # ── Bake ──────────────────────────────────────────────────────────────────
+    n_selected = sum(1 for pb in target_rig.pose.bones if pb.bone.select)
+    print(f"[RetargetFBX]   Selected {n_selected} bones on target rig for bake")
+
     try:
         bpy.ops.nla.bake(
             frame_start=scn.frame_start,
             frame_end=scn.frame_end,
             only_selected=True,
             visual_keying=True,
-            clear_constraints=True,   # constraints gone — we restore them after
+            clear_constraints=True,   # constraints gone — restored after
             clear_parents=False,
             use_current_action=True,
             bake_types={'POSE'},
@@ -208,20 +234,28 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context):
     except Exception as e:
         print(f"[RetargetFBX] Bake failed for '{base_name}': {e}")
         bpy.ops.object.mode_set(mode='OBJECT')
+        # Restore NLA state even on failure
+        if props.do_assign and source_rig.animation_data:
+            source_rig.animation_data.use_nla = nla_was_active
         return None
 
     bpy.ops.object.mode_set(mode='OBJECT')
 
-    # Retrieve the action that was actually written (bake may have swapped it)
+    # Restore source rig NLA state
+    if props.do_assign and source_rig.animation_data:
+        source_rig.animation_data.use_nla = nla_was_active
+
+    # Retrieve the action actually written (bake may have swapped it)
     baked = target_rig.animation_data.action
     if baked:
         baked.name = remap_name
         baked.use_fake_user = True
-        print(f"[RetargetFBX] Baked → '{remap_name}'")
+        print(f"[RetargetFBX]   Baked → '{remap_name}'")
     else:
-        print(f"[RetargetFBX] Warning: no action found on target after bake.")
+        print(f"[RetargetFBX]   Warning: no action found on target after bake.")
 
     return baked
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -317,7 +351,7 @@ class RETARGET_OT_multiple_fbx(Operator):
             print(f"\n[RetargetFBX] [{i + 1}/{total}] {fname}")
             wm.progress_update(i)
 
-            baked = process_one_fbx(fbx_path, source_rig, target_rig, context)
+            baked = process_one_fbx(fbx_path, source_rig, target_rig, context, props)
             if baked:
                 baked_actions.append(baked)
 
@@ -337,31 +371,32 @@ class RETARGET_OT_multiple_fbx(Operator):
             return {'CANCELLED'}
 
         # ── Push all baked actions as NLA tracks ──────────────────────────────
-        print(f"[RetargetFBX] Pushing {len(baked_actions)} actions to NLA...")
-        push_to_nla(target_rig, baked_actions)
+        if props.do_nla_push:
+            print(f"[RetargetFBX] Pushing {len(baked_actions)} actions to NLA...")
+            push_to_nla(target_rig, baked_actions)
+        else:
+            print(f"[RetargetFBX] do_nla_push is OFF — skipping NLA push.")
 
 
-        # ── Save combined .blend alongside the FBX files ──────────────────────
-        # Build filename from the common prefix of all FBX base names,
-        # padding the variable tail with 'x' characters.
-        # e.g. AG_UR_015_T201_I + AG_UR_015_T203_I  →  AG_UR_015_T20xxx
-        base_names   = [os.path.splitext(os.path.basename(p))[0] for p in fbx_files]
-        common       = os.path.commonprefix(base_names)          # shared leading chars
-        max_tail_len = max(len(n) - len(common) for n in base_names)
-        blend_stem   = (common + 'x' * max_tail_len) if common else "combined_retarget"
-        combined_path = os.path.join(output_folder, blend_stem + ".blend")
-        try:
-            bpy.ops.wm.save_as_mainfile(filepath=combined_path, copy=True)
-            print(f"[RetargetFBX] Combined file saved → {combined_path}")
-        except Exception as e:
-            self.report({'WARNING'}, f"Could not save combined file: {e}")
-
-        self.report(
-            {'INFO'},
-            f"Done! Baked {len(baked_actions)} clip(s). "
-            f"Combined file: {combined_path}"
-        )
+        if props.do_save:
+            base_names    = [os.path.splitext(os.path.basename(p))[0] for p in fbx_files]
+            common        = os.path.commonprefix(base_names)
+            max_tail_len  = max(len(n) - len(common) for n in base_names)
+            blend_stem    = (common + 'x' * max_tail_len) if common else "combined_retarget"
+            combined_path = os.path.join(output_folder, blend_stem + ".blend")
+            try:
+                bpy.ops.wm.save_as_mainfile(filepath=combined_path, copy=True)
+                print(f"[RetargetFBX] Combined file saved → {combined_path}")
+            except Exception as e:
+                self.report({'WARNING'}, f"Could not save combined file: {e}")
+            self.report(
+                {'INFO'},
+                f"Done! Baked {len(baked_actions)} clip(s). Combined: {combined_path}"
+            )
+        else:
+            self.report({'INFO'}, f"Done! Baked {len(baked_actions)} clip(s). (Save skipped)")
         return {'FINISHED'}
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -371,7 +406,7 @@ class RETARGET_OT_multiple_fbx(Operator):
 class RetargetFBXProperties(PropertyGroup):
     source_rig: PointerProperty(
         name="Source Rig",
-        description="Armature that receives the imported mocap action (has constraints on it or drives the target)",
+        description="Armature that receives the imported mocap action",
         type=bpy.types.Object,
         poll=lambda self, obj: obj.type == 'ARMATURE',
     )
@@ -380,6 +415,32 @@ class RetargetFBXProperties(PropertyGroup):
         description="Armature constrained TO the source — this is what gets baked",
         type=bpy.types.Object,
         poll=lambda self, obj: obj.type == 'ARMATURE',
+    )
+    # ── Stage gates ───────────────────────────────────────────────────────────
+    do_import: bpy.props.BoolProperty(
+        name="Import FBX & clean",
+        description="Import each FBX, delete junk objects, rename armature/action",
+        default=True,
+    )
+    do_assign: bpy.props.BoolProperty(
+        name="Assign action to source rig",
+        description="Assign the imported action to the source rig (disables NLA override) and set timeline",
+        default=True,
+    )
+    do_bake: bpy.props.BoolProperty(
+        name="Bake to target rig",
+        description="Enter pose mode on target, select all visible bones, bake with visual keying",
+        default=True,
+    )
+    do_nla_push: bpy.props.BoolProperty(
+        name="Push to NLA",
+        description="Push all baked actions as stacked NLA tracks on the target rig",
+        default=True,
+    )
+    do_save: bpy.props.BoolProperty(
+        name="Save combined .blend",
+        description="Save a copy of the scene (with NLA tracks) alongside the FBX files",
+        default=True,
     )
 
 
@@ -404,22 +465,28 @@ class RETARGET_PT_panel(Panel):
         col.prop(props, "target_rig", text="Target  (constrained → baked)")
 
         layout.separator()
-
-        # Quick-fill from selection
         row = layout.row(align=True)
         row.operator("retarget.pick_rigs_from_selection", text="Pick from Selection",
                      icon='EYEDROPPER')
 
         layout.separator()
+        layout.label(text="Stages:", icon='SETTINGS')
+        col = layout.column(align=True)
+        col.prop(props, "do_import")
+        col.prop(props, "do_assign")
+        col.prop(props, "do_bake")
+        col.prop(props, "do_nla_push")
+        col.prop(props, "do_save")
 
+        layout.separator()
         ready = bool(props.source_rig and props.target_rig)
         col2  = layout.column()
         col2.enabled = ready
         col2.operator("retarget.multiple_fbx", text="Select FBX Files & Retarget",
                       icon='IMPORT')
-
         if not ready:
             layout.label(text="Set both rigs above first.", icon='ERROR')
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────

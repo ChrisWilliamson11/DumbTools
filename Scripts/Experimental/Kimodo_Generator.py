@@ -459,27 +459,49 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
 
         for frame in all_frames:
             context.scene.frame_set(frame)
-            
-            # Map Blender frame to Kimodo frame index
             kimodo_frame = int(round(frame - min_frame))
-            
-            kimodo_global_rots = {}
-            kimodo_global_pos = {}
-            for pb in obj.pose.bones:
-                # Rotation: strip the Blender bone-rest matrix so T-pose → identity in Kimodo space.
-                # In BVH standard T-pose all global rotations = identity; pb.bone.matrix_local
-                # encodes the rest offset Blender adds when importing the BVH. Removing it leaves
-                # only the user-applied pose rotation, which is what Kimodo expects.
-                R_rest_inv = pb.bone.matrix_local.to_3x3().inverted()
-                R_kimodo = (R_rest_inv @ pb.matrix.to_3x3()).normalized()
-                # Position: use world space then convert to Kimodo Y-up
-                P_world = (obj.matrix_world @ pb.matrix).translation
-                P_kimodo = kimodo_T_blender @ P_world
 
-                kimodo_global_rots[pb.name] = R_kimodo
-                kimodo_global_pos[pb.name] = P_kimodo
+            # --- Compute Kimodo global rotations via hierarchical FK ---
+            # Blender stores pb.matrix in armature-local (= Kimodo Y-up) space.
+            # pb.bone.matrix_local (rest matrix) is NOT identity for most bones after
+            # BVH import, so we cannot use pb.matrix directly as the Kimodo global rot.
+            #
+            # Correct derivation (process parent-before-child):
+            #   root:  b[i] = r[i].inv @ R[i]          (strips rest offset)
+            #   child: b[i] = r[i].inv @ r[p] @ R[p].inv @ R[i]   (local pose delta)
+            #   K[i]  = K[parent] @ b[i]                (accumulate global)
+            #
+            # At T-pose: b[i] = identity for every bone → K[i] = identity ✓
 
+            kimodo_global_rots = {}  # bone_name → 3x3 mathutils.Matrix (Kimodo global rot)
+            kimodo_global_pos  = {}  # bone_name → mathutils.Vector (Kimodo Y-up position)
 
+            # Sort bones parent-first (depth 0 = root)
+            def bone_depth(pb):
+                d, p = 0, pb
+                while p.parent: d += 1; p = p.parent
+                return d
+
+            for pb in sorted(obj.pose.bones, key=bone_depth):
+                R_i = pb.matrix.to_3x3()          # armature-space global rot
+                r_i = pb.bone.matrix_local.to_3x3()  # bone rest matrix
+
+                if pb.parent is None:
+                    # Root bone (Hips / dummy Root)
+                    b_i = r_i.inverted() @ R_i
+                    K_i = b_i.copy()
+                else:
+                    R_p = pb.parent.matrix.to_3x3()
+                    r_p = pb.parent.bone.matrix_local.to_3x3()
+                    b_i  = r_i.inverted() @ r_p @ R_p.inverted() @ R_i
+                    K_p  = kimodo_global_rots.get(pb.parent.name, mathutils.Matrix.Identity(3))
+                    K_i  = K_p @ b_i
+
+                K_i.normalize()
+                kimodo_global_rots[pb.name] = K_i
+
+                # Position: armature-local space = Kimodo Y-up space directly
+                kimodo_global_pos[pb.name] = pb.matrix.translation.copy()
             # --- Trajectory Constraint Scraping ---
             if settings.export_root and frame in root_frames:
                 # Use Hips (joint-0, what the model actually constrains) for XZ position.

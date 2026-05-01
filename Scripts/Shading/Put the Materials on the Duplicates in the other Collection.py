@@ -42,11 +42,16 @@ class CopyMaterialsOperator(bpy.types.Operator):
 
 def get_base_name(name):
     """
-    Removes any numeric suffix from the object's name to get the base name.
-    For example: 'Cube.001' will return 'Cube'
+    Strips namespace prefixes (e.g. 'NS:Body') and numeric suffixes (e.g. '.001')
+    to get a bare base name for comparison.
+    'NS:Body.001' -> 'Body', 'Cube.001' -> 'Cube', 'Body' -> 'Body'
     """
+    # Strip namespace prefix (everything up to and including ':')
+    if ":" in name:
+        name = name.split(":", 1)[1]
+    # Strip numeric suffix (.001, .002, etc.)
     if "." in name and name.split(".")[-1].isdigit():
-        return ".".join(name.split(".")[:-1])
+        name = ".".join(name.split(".")[:-1])
     return name
 
 

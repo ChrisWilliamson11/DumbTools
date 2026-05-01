@@ -321,8 +321,10 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
     bpy.ops.object.mode_set(mode='POSE')
     bpy.ops.pose.select_all(action='SELECT')
 
-    n_selected = sum(1 for pb in target_rig.pose.bones if pb.bone.select)
-    print(f"[RetargetFBX]   Selected {n_selected} bones on target rig for bake")
+    # All visible bones were just selected above; bone.select was removed in
+    # Blender 5 so we can't check it — count total pose bones instead.
+    n_total = len(target_rig.pose.bones)
+    print(f"[RetargetFBX]   Baking {n_total} bones on target rig")
 
     try:
         bpy.ops.nla.bake(
@@ -486,8 +488,10 @@ class RETARGET_OT_multiple_fbx(Operator):
         wm.progress_update(total)
         wm.progress_end()
 
-        # Restore source rig to its original action
-        if source_rig.animation_data:
+        # Restore source rig to its original action — only when we actually
+        # ran the bake. If bake is disabled we leave the imported action on
+        # the source rig so the user can inspect it in the viewport.
+        if props.do_bake and source_rig.animation_data:
             source_rig.animation_data.action = original_source_action
 
         if not baked_actions:

@@ -52,9 +52,11 @@ def snapshot_constraints(arm_obj):
 
 def restore_constraints(arm_obj, snapshot):
     """Re-apply constraints from a snapshot dict."""
-    # Must be in object mode to manipulate constraints safely
-    prev_mode = bpy.context.object.mode if bpy.context.object else 'OBJECT'
-    if prev_mode != 'OBJECT':
+    # Ensure we have an active object in object mode before touching constraints
+    if bpy.context.object is None:
+        arm_obj.select_set(True)
+        bpy.context.view_layer.objects.active = arm_obj
+    if bpy.context.object and bpy.context.object.mode != 'OBJECT':
         bpy.ops.object.mode_set(mode='OBJECT')
 
     for bone_name, clist in snapshot.items():
@@ -183,7 +185,8 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context):
     target_rig.animation_data.action = remap_action
 
     # ── Pose mode, select all visible bones ──────────────────────────────────
-    bpy.ops.object.mode_set(mode='OBJECT')
+    # Set active object FIRST — after import_fbx_clean deletes everything the
+    # active object is None, so mode_set would fail its poll otherwise.
     bpy.ops.object.select_all(action='DESELECT')
     target_rig.select_set(True)
     context.view_layer.objects.active = target_rig

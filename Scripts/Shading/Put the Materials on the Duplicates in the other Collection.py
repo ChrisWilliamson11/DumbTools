@@ -117,26 +117,37 @@ def copy_materials_from_source_to_target(source_collection, target_collection, s
                 target_mesh.materials.append(mat)
 
             # --- Sync per-face material assignments ---
-            src_polys = source_mesh.polygons
-            tgt_polys = target_mesh.polygons
-            src_count = len(src_polys)
-            tgt_count = len(tgt_polys)
+            # Only needed when there are multiple material slots; with a single
+            # slot every face is implicitly index 0 regardless of face count.
+            if len(source_mesh.materials) > 1:
+                src_polys = source_mesh.polygons
+                tgt_polys = target_mesh.polygons
+                src_count = len(src_polys)
+                tgt_count = len(tgt_polys)
 
-            if src_count != tgt_count:
-                print(
-                    f"  WARNING: '{source_obj.name}' has {src_count} faces but "
-                    f"'{target_obj.name}' has {tgt_count} faces. "
-                    f"Copying face assignments up to the shorter count; "
-                    f"any extra target faces keep their current index."
-                )
+                if src_count != tgt_count:
+                    print(
+                        f"  WARNING: '{source_obj.name}' has {src_count} faces but "
+                        f"'{target_obj.name}' has {tgt_count} faces. "
+                        f"Copying face assignments up to the shorter count; "
+                        f"any extra target faces keep their current index."
+                    )
 
-            copy_count = min(src_count, tgt_count)
-            if copy_count > 0:
-                # foreach_get/foreach_set is the fastest bulk-attribute API in Blender
-                indices = [0] * src_count
-                src_polys.foreach_get("material_index", indices)
-                tgt_polys.foreach_set("material_index", indices[:copy_count])
-                target_mesh.update()
+                copy_count = min(src_count, tgt_count)
+                if copy_count > 0:
+                    # Read source indices
+                    src_indices = [0] * src_count
+                    src_polys.foreach_get("material_index", src_indices)
+
+                    # foreach_set requires an array exactly equal to the full
+                    # polygon count of the target mesh - partial writes aren't
+                    # supported. So we read the existing target indices first,
+                    # overlay only the faces we're copying, then write it all back.
+                    tgt_indices = [0] * tgt_count
+                    tgt_polys.foreach_get("material_index", tgt_indices)
+                    tgt_indices[:copy_count] = src_indices[:copy_count]
+                    tgt_polys.foreach_set("material_index", tgt_indices)
+                    target_mesh.update()
 
             found_match = True
             break

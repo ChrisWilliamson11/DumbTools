@@ -291,12 +291,6 @@ def import_generated_bvh(filepath_dir, num_samples):
         print("Error: Active object is not a valid Armature!")
         return None
 
-    if not original_obj.animation_data:
-        original_obj.animation_data_create()
-
-    # Clear active action to prevent it entirely overriding our new NLA strips
-    original_obj.animation_data.action = None
-
     bvh_files = []
     motion_dir = os.path.join(filepath_dir, "motion")
     for i in range(num_samples):
@@ -308,62 +302,60 @@ def import_generated_bvh(filepath_dir, num_samples):
         print("Error: No BVH files found in temp directory!")
         return None
 
+    spread_x = 1.5  # metres between each generated copy along X
+
+    # Find the rightmost existing generated rig so repeated runs stack correctly
+    base_name = original_obj.name
+    rightmost_x = original_obj.location.x
+    for obj in bpy.context.scene.objects:
+        if obj.type == 'ARMATURE' and obj.name.startswith(base_name + "_Gen"):
+            rightmost_x = max(rightmost_x, obj.location.x)
+    # New copies start one spread_x gap after the rightmost existing one
+    start_x = rightmost_x + spread_x
+
     for i, bvh_path in enumerate(bvh_files):
-        # Import the BVH
-        bpy.ops.import_anim.bvh(filepath=bvh_path, global_scale=0.01, use_fps_scale=True, update_scene_fps=False, update_scene_duration=False)
-        
+        # Import the BVH — Blender makes a new armature object and sets it active
+        bpy.ops.import_anim.bvh(
+            filepath=bvh_path,
+            global_scale=0.01,
+            use_fps_scale=True,
+            update_scene_fps=False,
+            update_scene_duration=False,
+        )
+
         imported_obj = bpy.context.active_object
-        if imported_obj and imported_obj != original_obj and imported_obj.animation_data and imported_obj.animation_data.action:
-            action = imported_obj.animation_data.action
-            action.name = f"Kimodo_Gen_v{i+1}"
-            
-            # Create an isolated NLA track for this variation
-            track = original_obj.animation_data.nla_tracks.new()
-            track.name = f"Kimodo Variation {i+1}"
-            
-            # Map the generated action into the track
-            strip = track.strips.new(action.name, 1, action)
-            
-            # Offset imported armature along X axis to match web app behavior for multiple samples
-            if num_samples > 1:
-                spread_factor = 0.8
-                center_idx = num_samples // 2
-                x_trans = (i - center_idx) * spread_factor
-                imported_obj.location.x += x_trans
-                imported_obj.keyframe_insert(data_path="location", frame=1)
+        if not (imported_obj and imported_obj != original_obj
+                and imported_obj.animation_data
+                and imported_obj.animation_data.action):
+            print(f"Warning: could not import sample {i}")
+            continue
 
-            # Visually mute all but the first track so the user can easily toggle / solo them to compare
-            if i > 0:
-                track.mute = True
+        action = imported_obj.animation_data.action
+        action.name = f"Kimodo_Gen_v{i + 1}"
 
-            # Delete imported armature to keep scene clean (the action is now in the NLA)
-            bpy.data.objects.remove(imported_obj, do_unlink=True)
+        # Duplicate the ORIGINAL rig so it keeps all its mesh children,
+        # bone groups, etc., but start with clean animation data.
+        dup = original_obj.copy()
+        dup.animation_data_clear()
+        dup.animation_data_create()
+        dup.name = f"{original_obj.name}_Gen{i + 1}"
+        bpy.context.collection.objects.link(dup)
 
-    # For multiple samples: duplicate the original armature and give each copy
-    # exactly one unmuted NLA track so all variations are visible side by side.
-    if num_samples > 1 and len(original_obj.animation_data.nla_tracks) > 1:
-        spread_x = 1.5  # metres between each duplicate
-        tracks = list(original_obj.animation_data.nla_tracks)
-        for i, track in enumerate(tracks):
-            if i == 0:
-                track.mute = False
-                continue
-            dup = original_obj.copy()
-            dup.animation_data_clear()
-            dup.animation_data_create()
-            dup.name = f"{original_obj.name}_v{i+1}"
-            bpy.context.collection.objects.link(dup)
-            new_track = dup.animation_data.nla_tracks.new()
-            new_track.name = track.name
-            for s in track.strips:
-                new_track.strips.new(s.action.name, int(s.frame_start), s.action)
-            dup.location.x = original_obj.location.x + i * spread_x
-            track.mute = True  # hide extra tracks on the original
+        # Place the duplicate to the right of all previous generated rigs
+        dup.location.x = start_x + i * spread_x
 
-    # Set context object back
+        # Apply the generated action as a single NLA strip on the duplicate
+        track = dup.animation_data.nla_tracks.new()
+        track.name = f"Kimodo Generation {i + 1}"
+        track.strips.new(action.name, 1, action)
+
+        # Clean up the raw BVH import object (action is now referenced by the strip)
+        bpy.data.objects.remove(imported_obj, do_unlink=True)
+
+    # Leave the original selected and active — ready for another generation
     bpy.context.view_layer.objects.active = original_obj
     original_obj.select_set(True)
-    print("Successfully applied Kimodo motion(s) to skeleton NLA.")
+    print(f"Successfully imported {len(bvh_files)} Kimodo generation(s). Original rig untouched.")
     return None
 
 class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):

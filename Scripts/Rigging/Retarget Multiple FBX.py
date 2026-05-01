@@ -340,8 +340,16 @@ class RETARGET_OT_multiple_fbx(Operator):
         print(f"[RetargetFBX] Pushing {len(baked_actions)} actions to NLA...")
         push_to_nla(target_rig, baked_actions)
 
+
         # ── Save combined .blend alongside the FBX files ──────────────────────
-        combined_path = os.path.join(output_folder, "combined_retarget.blend")
+        # Build filename from the common prefix of all FBX base names,
+        # padding the variable tail with 'x' characters.
+        # e.g. AG_UR_015_T201_I + AG_UR_015_T203_I  →  AG_UR_015_T20xxx
+        base_names   = [os.path.splitext(os.path.basename(p))[0] for p in fbx_files]
+        common       = os.path.commonprefix(base_names)          # shared leading chars
+        max_tail_len = max(len(n) - len(common) for n in base_names)
+        blend_stem   = (common + 'x' * max_tail_len) if common else "combined_retarget"
+        combined_path = os.path.join(output_folder, blend_stem + ".blend")
         try:
             bpy.ops.wm.save_as_mainfile(filepath=combined_path, copy=True)
             print(f"[RetargetFBX] Combined file saved → {combined_path}")

@@ -321,18 +321,22 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
     bpy.ops.object.mode_set(mode='POSE')
     bpy.ops.pose.select_all(action='SELECT')
 
-    # ── Force depsgraph evaluation ────────────────────────────────────────────
-    # When the action was just assigned in this same script execution, Blender
-    # hasn't evaluated the animation yet. The constraints on the target rig
-    # would see the source rig in its rest pose for every frame, producing a
-    # single static bake. frame_set() triggers a full scene evaluation so the
-    # constraint chain is driven correctly before the bake iterates frames.
+    # ── Force depsgraph evaluation before bake ────────────────────────────────
     scn.frame_set(scn.frame_start)
     context.view_layer.update()
 
-    n_total = len(target_rig.pose.bones)
-    print(f"[RetargetFBX]   Baking {n_total} bones, frames {scn.frame_start}–{scn.frame_end}")
-
+    # ── Pre-bake diagnostics ──────────────────────────────────────────────────
+    current_mode = context.object.mode if context.object else 'UNKNOWN'
+    n_bones      = len(target_rig.pose.bones)
+    src_action   = (source_rig.animation_data.action.name
+                    if source_rig.animation_data and source_rig.animation_data.action
+                    else 'NONE')
+    print(f"[RetargetFBX]   PRE-BAKE CHECK:")
+    print(f"[RetargetFBX]     mode         = {current_mode}  (expected: POSE)")
+    print(f"[RetargetFBX]     target bones = {n_bones}")
+    print(f"[RetargetFBX]     src action   = {src_action}  (should not be NONE)")
+    print(f"[RetargetFBX]     frame range  = {scn.frame_start}–{scn.frame_end}")
+    print(f"[RetargetFBX]     current frame= {scn.frame_current}")
 
     try:
         bpy.ops.nla.bake(
@@ -489,12 +493,18 @@ class RETARGET_OT_multiple_fbx(Operator):
             if baked:
                 baked_actions.append(baked)
 
-            # Restore target rig constraints — only needed when bake ran,
-            # since nla.bake(clear_constraints=True) is what removes them.
-            if props.do_bake:
-                print("[RetargetFBX] Restoring constraints...")
+            # Restore constraints between clips so the next import can drive
+            # the target rig again. But DON'T restore after the last clip
+            # unless we're continuing to NLA/save — otherwise the constraints
+            # fight the baked keys and make it look like the bake failed.
+            is_last_clip = (i == total - 1)
+            continuing   = props.do_nla_push or props.do_save
+            if props.do_bake and (not is_last_clip or continuing):
+                print("[RetargetFBX] Restoring constraints (next clip prep)...")
                 restore_constraints(target_rig, constraint_snapshot)
-
+            elif props.do_bake and is_last_clip and not continuing:
+                print("[RetargetFBX] Constraints NOT restored — inspect baked result, "
+                      "constraints will not override baked keys.")
 
         wm.progress_update(total)
         wm.progress_end()

@@ -258,18 +258,44 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
         if not source_rig.animation_data:
             source_rig.animation_data_create()
 
-        # KEY FIX: disable NLA so direct action assignment isn't overridden
+        # Disable NLA so direct action assignment isn't overridden
         src_anim = source_rig.animation_data
         nla_was_active = src_anim.use_nla
         src_anim.use_nla = False
         src_anim.action  = imported_action
 
+        # ── Blender 5 slotted-action fix ─────────────────────────────────────
+        # In Blender 5, assigning an action isn't enough — a slot must also be
+        # selected, otherwise the rig gets no animation data at all.
+        # The FBX import creates a slot bound to the now-deleted FBX armature;
+        # we reassign the first available slot (or create a new one) to
+        # the source rig so the curves actually drive it.
+        if imported_action and hasattr(imported_action, 'slots'):
+            slots = imported_action.slots
+            if slots:
+                # Reuse the existing slot (it has all the F-Curves)
+                try:
+                    src_anim.action_slot = slots[0]
+                    print(f"[RetargetFBX]   Slot assigned: '{slots[0].name}'")
+                except Exception as e:
+                    print(f"[RetargetFBX]   Slot assign failed: {e}")
+            else:
+                print("[RetargetFBX]   Warning: action has no slots — "
+                      "animation may not play on source rig")
+
+        # Verify the assignment actually stuck
+        actual = src_anim.action
+        if actual and actual.name == imported_action.name:
+            print(f"[RetargetFBX]   ✓ Action confirmed on source rig: '{actual.name}'")
+        else:
+            print(f"[RetargetFBX]   ✗ Action mismatch after assign! "
+                  f"Expected '{imported_action.name}', got '{actual}'")
+
         # Set timeline
         fr = imported_action.frame_range
         scn.frame_start = int(fr[0])
         scn.frame_end   = int(fr[1])
-        print(f"[RetargetFBX]   Assigned action '{imported_action.name}'  "
-              f"frames {scn.frame_start}–{scn.frame_end}")
+        print(f"[RetargetFBX]   Frames {scn.frame_start}–{scn.frame_end}")
         print(f"[RetargetFBX]   Source NLA was {'active' if nla_was_active else 'already off'} "
               f"— disabled for bake")
     else:

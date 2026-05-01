@@ -98,6 +98,59 @@ def restore_constraints(arm_obj, snapshot):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Bone-axis matching
+#  Copies bone rolls from an FBX armature to the source rig so that the FBX
+#  action's rotation values produce the same world-space poses on the source.
+#  Run once before the batch, using the first FBX as the reference.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def match_source_axes_to_fbx(source_rig, fbx_arm, context):
+    """
+    Copy bone rolls from fbx_arm → source_rig for every bone whose name matches.
+    Both rigs are visited in Edit Mode; only the roll (local X-axis orientation)
+    is changed — head/tail positions are left untouched.
+    Returns the number of bones matched.
+    """
+    # ── Read FBX bone rolls ──────────────────────────────────────────────────
+    fbx_rolls = {}
+    bpy.ops.object.select_all(action='DESELECT')
+    fbx_arm.select_set(True)
+    context.view_layer.objects.active = fbx_arm
+    bpy.ops.object.mode_set(mode='EDIT')
+    for eb in fbx_arm.data.edit_bones:
+        fbx_rolls[eb.name] = eb.roll
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    if not fbx_rolls:
+        print("[RetargetFBX]   match_axes: no edit bones found in FBX arm — skipped")
+        return 0
+
+    # ── Apply to source rig ──────────────────────────────────────────────────
+    bpy.ops.object.select_all(action='DESELECT')
+    source_rig.select_set(True)
+    context.view_layer.objects.active = source_rig
+    bpy.ops.object.mode_set(mode='EDIT')
+
+    matched = 0
+    skipped = []
+    for eb in source_rig.data.edit_bones:
+        if eb.name in fbx_rolls:
+            eb.roll = fbx_rolls[eb.name]
+            matched += 1
+        else:
+            skipped.append(eb.name)
+
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    print(f"[RetargetFBX]   match_axes: matched {matched} / "
+          f"{len(source_rig.data.bones)} bones")
+    if skipped:
+        print(f"[RetargetFBX]   match_axes: {len(skipped)} unmatched bones "
+              f"(no FBX counterpart): {skipped[:8]}{'...' if len(skipped) > 8 else ''}")
+    return matched
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Per-FBX processing helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -368,6 +421,26 @@ class RETARGET_OT_multiple_fbx(Operator):
 
         baked_actions = []
 
+        # ── PRE-LOOP: optionally match source rig bone axes to FBX ───────────
+        # Done once using the first FBX file as the reference.
+        # This copies bone rolls from the FBX rig to the source rig so that
+        # the FBX action's rotation values produce the correct world-space pose.
+        # NOTE: this permanently changes the source rig's edit-mode bone rolls.
+        if props.do_match_axes:
+            print("[RetargetFBX] Matching source rig bone axes to FBX...")
+            ref_fbx = fbx_files[0]
+            _, _, ref_arm = import_fbx_clean(ref_fbx, delete_arm=False)
+            if ref_arm:
+                match_source_axes_to_fbx(source_rig, ref_arm, context)
+                # Clean up: remove arm and orphaned action from this temp import
+                if ref_arm.animation_data and ref_arm.animation_data.action:
+                    tmp_act = ref_arm.animation_data.action
+                    ref_arm.animation_data.action = None
+                    bpy.data.actions.remove(tmp_act)
+                bpy.data.objects.remove(ref_arm, do_unlink=True)
+            else:
+                print("[RetargetFBX] match_axes: could not import reference FBX — skipped")
+
         wm = context.window_manager
         wm.progress_begin(0, total)
 
@@ -467,6 +540,16 @@ class RetargetFBXProperties(PropertyGroup):
         description="Save a copy of the scene (with NLA tracks) alongside the FBX files",
         default=True,
     )
+    do_match_axes: bpy.props.BoolProperty(
+        name="Match source rig bone axes to FBX",
+        description=(
+            "Before the batch, copy bone rolls from the first FBX armature to the "
+            "source rig. This aligns local bone axes so the FBX action's rotation "
+            "values produce the correct world-space pose. Permanently changes the "
+            "source rig's edit-mode bone rolls."
+        ),
+        default=False,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -502,6 +585,14 @@ class RETARGET_PT_panel(Panel):
         col.prop(props, "do_bake")
         col.prop(props, "do_nla_push")
         col.prop(props, "do_save")
+
+        layout.separator()
+        box = layout.box()
+        box.label(text="One-time setup:", icon='ORIENTATION_GLOBAL')
+        box.prop(props, "do_match_axes")
+        if props.do_match_axes:
+            box.label(text="Uses first FBX as reference.", icon='INFO')
+            box.label(text="Permanently changes source rig rolls.", icon='ERROR')
 
         layout.separator()
         ready = bool(props.source_rig and props.target_rig)

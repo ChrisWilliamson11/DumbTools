@@ -149,6 +149,37 @@ def copy_materials_from_source_to_target(source_collection, target_collection, s
                     tgt_polys.foreach_set("material_index", tgt_indices)
                     target_mesh.update()
 
+            # --- Sync UV layers ---
+            # UV data is stored per-loop (one (u,v) pair per loop). We read the
+            # full flat float array and write it to the matching layer on target,
+            # creating the layer first if it doesn't exist yet.
+            src_loop_count = len(source_mesh.loops)
+            tgt_loop_count = len(target_mesh.loops)
+
+            for src_uv_layer in source_mesh.uv_layers:
+                uv_name = src_uv_layer.name
+
+                if src_loop_count != tgt_loop_count:
+                    print(
+                        f"  WARNING: UV layer '{uv_name}' skipped for "
+                        f"'{target_obj.name}' — loop count mismatch "
+                        f"({src_loop_count} vs {tgt_loop_count}). "
+                        f"Topology must match for UV copy."
+                    )
+                    continue
+
+                # Create the layer on target if missing
+                if uv_name not in target_mesh.uv_layers:
+                    target_mesh.uv_layers.new(name=uv_name)
+
+                uv_data = [0.0] * (src_loop_count * 2)
+                src_uv_layer.data.foreach_get("uv", uv_data)
+                target_mesh.uv_layers[uv_name].data.foreach_set("uv", uv_data)
+
+            target_mesh.update()
+
+
+
             found_match = True
             break
 

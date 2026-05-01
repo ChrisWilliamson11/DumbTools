@@ -321,10 +321,18 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
     bpy.ops.object.mode_set(mode='POSE')
     bpy.ops.pose.select_all(action='SELECT')
 
-    # All visible bones were just selected above; bone.select was removed in
-    # Blender 5 so we can't check it — count total pose bones instead.
+    # ── Force depsgraph evaluation ────────────────────────────────────────────
+    # When the action was just assigned in this same script execution, Blender
+    # hasn't evaluated the animation yet. The constraints on the target rig
+    # would see the source rig in its rest pose for every frame, producing a
+    # single static bake. frame_set() triggers a full scene evaluation so the
+    # constraint chain is driven correctly before the bake iterates frames.
+    scn.frame_set(scn.frame_start)
+    context.view_layer.update()
+
     n_total = len(target_rig.pose.bones)
-    print(f"[RetargetFBX]   Baking {n_total} bones on target rig")
+    print(f"[RetargetFBX]   Baking {n_total} bones, frames {scn.frame_start}–{scn.frame_end}")
+
 
     try:
         bpy.ops.nla.bake(
@@ -481,16 +489,27 @@ class RETARGET_OT_multiple_fbx(Operator):
             if baked:
                 baked_actions.append(baked)
 
-            # Restore target rig constraints for the next clip
-            print("[RetargetFBX] Restoring constraints...")
-            restore_constraints(target_rig, constraint_snapshot)
+            # Restore target rig constraints — only needed when bake ran,
+            # since nla.bake(clear_constraints=True) is what removes them.
+            if props.do_bake:
+                print("[RetargetFBX] Restoring constraints...")
+                restore_constraints(target_rig, constraint_snapshot)
+
 
         wm.progress_update(total)
         wm.progress_end()
 
-        # Restore source rig to its original action — only when we actually
-        # ran the bake. If bake is disabled we leave the imported action on
-        # the source rig so the user can inspect it in the viewport.
+        # ── Short-circuit at the last enabled stage ───────────────────────────
+        # Each block below returns early so nothing after a disabled stage runs.
+
+        # After bake: restore source rig. If bake was OFF, leave imported
+        # action on source rig so user can inspect it, then stop here.
+        if not props.do_bake:
+            self.report({'INFO'},
+                f"Stage complete: imported & assigned {total} clip(s). "
+                "Inspect source rig then enable Bake to continue.")
+            return {'FINISHED'}
+
         if props.do_bake and source_rig.animation_data:
             source_rig.animation_data.action = original_source_action
 
@@ -499,11 +518,14 @@ class RETARGET_OT_multiple_fbx(Operator):
             return {'CANCELLED'}
 
         # ── Push all baked actions as NLA tracks ──────────────────────────────
-        if props.do_nla_push:
-            print(f"[RetargetFBX] Pushing {len(baked_actions)} actions to NLA...")
-            push_to_nla(target_rig, baked_actions)
-        else:
-            print(f"[RetargetFBX] do_nla_push is OFF — skipping NLA push.")
+        if not props.do_nla_push:
+            self.report({'INFO'},
+                f"Stage complete: baked {len(baked_actions)} clip(s). "
+                "Enable Push to NLA to continue.")
+            return {'FINISHED'}
+
+        print(f"[RetargetFBX] Pushing {len(baked_actions)} actions to NLA...")
+        push_to_nla(target_rig, baked_actions)
 
 
         if props.do_save:

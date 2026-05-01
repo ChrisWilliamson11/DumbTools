@@ -291,7 +291,8 @@ class RETARGET_OT_multiple_fbx(Operator):
             return {'CANCELLED'}
 
         output_folder = self.directory
-        print(f"\n[RetargetFBX] ── Starting batch: {len(fbx_files)} file(s) ──")
+        total = len(fbx_files)
+        print(f"\n[RetargetFBX] ── Starting batch: {total} file(s) ──")
 
         # ── Snapshot target constraints before anything touches them ──────────
         constraint_snapshot = snapshot_constraints(target_rig)
@@ -308,7 +309,14 @@ class RETARGET_OT_multiple_fbx(Operator):
 
         baked_actions = []
 
-        for fbx_path in fbx_files:
+        wm = context.window_manager
+        wm.progress_begin(0, total)
+
+        for i, fbx_path in enumerate(fbx_files):
+            fname = os.path.basename(fbx_path)
+            print(f"\n[RetargetFBX] [{i + 1}/{total}] {fname}")
+            wm.progress_update(i)
+
             baked = process_one_fbx(fbx_path, source_rig, target_rig, context)
             if baked:
                 baked_actions.append(baked)
@@ -316,6 +324,9 @@ class RETARGET_OT_multiple_fbx(Operator):
             # Restore target rig constraints for the next clip
             print("[RetargetFBX] Restoring constraints...")
             restore_constraints(target_rig, constraint_snapshot)
+
+        wm.progress_update(total)
+        wm.progress_end()
 
         # Restore source rig to its original action
         if source_rig.animation_data:

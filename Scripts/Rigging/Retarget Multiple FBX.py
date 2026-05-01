@@ -538,10 +538,19 @@ class RETARGET_OT_multiple_fbx(Operator):
 
 
         if props.do_save:
-            base_names    = [os.path.splitext(os.path.basename(p))[0] for p in fbx_files]
-            common        = os.path.commonprefix(base_names)
-            max_tail_len  = max(len(n) - len(common) for n in base_names)
-            blend_stem    = (common + 'x' * max_tail_len) if common else "combined_retarget"
+            base_names = [os.path.splitext(os.path.basename(p))[0] for p in fbx_files]
+
+            # Build filename from the leading underscore-segments that are
+            # identical across ALL files. Stop at the first differing segment.
+            # e.g. AG_UR_015_T201_I + AG_UR_090_T201_I  →  AG_UR.blend
+            split     = [n.split('_') for n in base_names]
+            common_segs = []
+            for segs in zip(*split):
+                if len(set(segs)) == 1:
+                    common_segs.append(segs[0])
+                else:
+                    break
+            blend_stem    = '_'.join(common_segs) if common_segs else "combined_retarget"
             combined_path = os.path.join(output_folder, blend_stem + ".blend")
             try:
                 bpy.ops.wm.save_as_mainfile(filepath=combined_path, copy=True)

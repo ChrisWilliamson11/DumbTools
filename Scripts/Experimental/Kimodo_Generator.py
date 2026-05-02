@@ -411,24 +411,28 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 for kp in fcurve.keyframe_points:
                     fr = int(kp.co[0])
                     if bone_name == ROOT_BONE:
-                        # Dummy Root bone — always trajectory
-                        root_frames.add(fr)
+                        if settings.export_root:
+                            root_frames.add(fr)
                     elif bone_name == "Hips" and "location" in dp:
-                        # Hips location keyframes drive trajectory (XZ position)
-                        root_frames.add(fr)
+                        if settings.export_root:
+                            root_frames.add(fr)
                     elif bone_name is not None:
-                        # All other bones (incl. Hips rotation) → pose constraint
-                        pose_frames.add(fr)
-                        pose_frame_bones.setdefault(fr, set()).add(bone_name)
+                        if settings.export_pose:
+                            pose_frames.add(fr)
+                            pose_frame_bones.setdefault(fr, set()).add(bone_name)
 
-        # Fallback: no animation → treat current frame as both root and pose
+        # Fallback: only fire if at least one export type is enabled AND no frames
+        # were found. Do NOT send a current-frame constraint when export is off.
         if not root_frames and not pose_frames:
-            fr = int(context.scene.frame_current)
-            root_frames.add(fr)
-            pose_frames.add(fr)
+            if settings.export_root or settings.export_pose:
+                fr = int(context.scene.frame_current)
+                if settings.export_root:
+                    root_frames.add(fr)
+                if settings.export_pose:
+                    pose_frames.add(fr)
 
         all_frames = sorted(root_frames | pose_frames)
-        min_frame = min(all_frames)
+        min_frame = min(all_frames) if all_frames else 0
 
         # Union of all keyed bone names across all pose frames (used for end-effector mode)
         all_keyed_bones = set()

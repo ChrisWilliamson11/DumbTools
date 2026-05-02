@@ -475,26 +475,31 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             if settings.export_pose and frame in pose_frames:
                 pose_indices.append(kimodo_frame)
 
-        # --- Pose Constraint via BVH Export ---
-        # Instead of manually re-deriving Kimodo's FK from Blender's pb.matrix
-        # (which is fragile and error-prone), we export the armature as BVH and
-        # let the server run Kimodo's own parse_bvh_motion + fk() — exactly what
-        # the web app does. This guarantees correct global rotations and positions.
+        # --- Pose Constraint via local rotation matrices ---
+        # pb.matrix_basis.to_3x3() = the bone's LOCAL rotation in bone space.
+        # This is EXACTLY what Kimodo's fk() expects as local_rot_mats:
+        # at T-pose it's identity for every bone, and with user pose applied it
+        # carries only the user-driven rotation — no coordinate conversion needed.
+        # The armature was imported from the SOMA BVH, so bone local frames match.
         if settings.export_pose and pose_frames:
-            bvh_export_path = os.path.join(temp_dir, "pose_constraint.bvh")
-            max_frame = max(all_frames)
+            frames_local_rots = []   # per constraint-frame: {bone_name → [[3×3]]}
+            frames_hips_pos   = []   # per constraint-frame: [x, y, z] in armature Y-up metres
 
-            bpy.context.view_layer.objects.active = obj
-            obj.select_set(True)
-            bpy.ops.export_anim.bvh(
-                filepath=bvh_export_path,
-                check_existing=False,
-                global_scale=100.0,   # Blender metres → BVH centimetres
-                frame_start=int(min_frame),
-                frame_end=int(max_frame),
-                rotate_mode='NATIVE',
-                root_transform_only=False,
-            )
+            for frame in sorted(pose_frames):
+                context.scene.frame_set(frame)
+
+                bone_rots = {}
+                for pb in obj.pose.bones:
+                    if pb.name == ROOT_BONE:
+                        continue            # skip dummy Root — excluded by parse_bvh_motion
+                    R = pb.matrix_basis.to_3x3()
+                    bone_rots[pb.name] = [list(R[0]), list(R[1]), list(R[2])]
+
+                # Hips global position in armature-local = Kimodo Y-up space (metres)
+                hips_pb = obj.pose.bones.get("Hips")
+                t = hips_pb.matrix.translation if hips_pb else mathutils.Vector((0, 0, 0))
+                frames_hips_pos.append([t.x, t.y, t.z])
+                frames_local_rots.append(bone_rots)
 
             if settings.pose_mode == "end_effector":
                 VALID_EE = {"LeftFoot", "RightFoot", "LeftHand", "RightHand", "Hips"}
@@ -503,17 +508,20 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                     self.report({'WARNING'}, f"End-Effector: none of the keyed bones are valid. Valid: {sorted(VALID_EE)}")
                     return {'CANCELLED'}
                 constraints_data.append({
-                    "type": "ee_bvh",
-                    "bvh_path": bvh_export_path,
+                    "type": "ee_local",
                     "frame_indices": pose_indices,
+                    "frames_local_rots": frames_local_rots,
+                    "frames_hips_pos": frames_hips_pos,
                     "joint_names": j_names,
                 })
             else:
                 constraints_data.append({
-                    "type": "fullbody_bvh",
-                    "bvh_path": bvh_export_path,
+                    "type": "fullbody_local",
                     "frame_indices": pose_indices,
+                    "frames_local_rots": frames_local_rots,
+                    "frames_hips_pos": frames_hips_pos,
                 })
+
 
         if settings.export_root and root_frames:
             constraints_data.append({

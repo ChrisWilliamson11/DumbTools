@@ -459,17 +459,18 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             kimodo_frame = int(round(frame - min_frame))
 
             # --- Trajectory Constraint Scraping ---
-            # Hips pb.matrix.translation is in armature-local space = Kimodo Y-up space directly.
-            # No coordinate conversion needed; just read X and Z for the 2D ground-plane position.
+            # pb.matrix is in Blender armature-local Z-up space.
+            # Kimodo is Y-up: Kimodo[x,y,z] = Blender[x, z, -y]
             if settings.export_root and frame in root_frames:
                 hips_pb = obj.pose.bones.get("Hips") or obj.pose.bones.get(ROOT_BONE)
                 if hips_pb:
                     traj_pos = hips_pb.matrix.translation
                     root_indices.append(kimodo_frame)
-                    smooth_root_2d.append([traj_pos.x, traj_pos.z])
-                    # Heading: Hips forward in armature (= Kimodo) space.
-                    fwd = hips_pb.matrix.to_3x3() @ mathutils.Vector((0.0, 0.0, -1.0))
-                    global_root_heading.append([fwd.x, fwd.z])
+                    # XZ ground plane: Kimodo X = Blender X, Kimodo Z = -Blender Y
+                    smooth_root_2d.append([traj_pos.x, -traj_pos.y])
+                    # Heading: character faces +Y in Blender; convert forward to Kimodo XZ
+                    fwd = hips_pb.matrix.to_3x3() @ mathutils.Vector((0.0, 1.0, 0.0))
+                    global_root_heading.append([fwd.x, -fwd.y])
 
             # Collect pose frame indices (used to index into the exported BVH on the server)
             if settings.export_pose and frame in pose_frames:
@@ -495,10 +496,10 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                     R = pb.matrix_basis.to_3x3()
                     bone_rots[pb.name] = [list(R[0]), list(R[1]), list(R[2])]
 
-                # Hips global position in armature-local = Kimodo Y-up space (metres)
+                # Hips position: Blender armature Z-up → Kimodo Y-up: [x, z, -y]
                 hips_pb = obj.pose.bones.get("Hips")
                 t = hips_pb.matrix.translation if hips_pb else mathutils.Vector((0, 0, 0))
-                frames_hips_pos.append([t.x, t.y, t.z])
+                frames_hips_pos.append([t.x, t.z, -t.y])
                 frames_local_rots.append(bone_rots)
 
             if settings.pose_mode == "end_effector":

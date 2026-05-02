@@ -142,7 +142,7 @@ class DUMBTOOLS_OT_generate_soma_skeleton(bpy.types.Operator):
 
         # Import BVH scaled down to meters so it matches 1.77m
         bpy.ops.import_anim.bvh(filepath=bvh_path, global_scale=0.01, use_fps_scale=False, update_scene_fps=False, update_scene_duration=False)
-        
+
         # The imported armature becomes the active object
         obj = context.active_object
         if obj and obj.type == 'ARMATURE':
@@ -243,7 +243,7 @@ class DUMBTOOLS_OT_start_kimodo_server(bpy.types.Operator):
     bl_idname = "dumbtools.start_kimodo_server"
     bl_label = "Start Kimodo Server"
     bl_description = "Starts the background Kimodo generation server in WSL for instant generation"
-    
+
     def execute(self, context):
         start_kimodo_server(context.scene)
         self.report({'INFO'}, "Starting Kimodo API server... Check terminal.")
@@ -253,7 +253,7 @@ class DUMBTOOLS_OT_kill_kimodo_server(bpy.types.Operator):
     bl_idname = "dumbtools.kill_kimodo_server"
     bl_label = "Kill Server"
     bl_description = "Kills the running Kimodo server to free up VRAM"
-    
+
     def execute(self, context):
         if context.scene.kimodo_settings.use_wsl:
             subprocess.run(['wsl', '-d', 'Ubuntu', '-e', 'pkill', '-f', 'blender_server.py'])
@@ -276,12 +276,12 @@ def run_kimodo_generation(filepath_dir, scene, payload):
             with urllib.request.urlopen(req, timeout=300) as resp:
                 result = json.loads(resp.read().decode())
                 print("Generation complete:", result)
-                
+
             num_samples = scene.kimodo_settings.num_samples
             bpy.app.timers.register(lambda: import_generated_bvh(filepath_dir, num_samples), first_interval=0.1)
         except urllib.error.URLError as e:
             print(f"Server Error: {e.reason}. Please ensure the Kimodo server is started.")
-            
+
     thread = threading.Thread(target=background_request)
     thread.start()
 
@@ -442,35 +442,38 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         global_joints_rot_all = []
         global_joints_pos_all = []
         pose_indices = []
-        
+
         root_indices = []
         smooth_root_2d = []
         global_root_heading = []
 
         import math, mathutils
-        # pb.matrix is in armature-local space which IS Kimodo's native Y-up space.
-        # The BVH importer applies Rx(+90°) to the *object*, but pb.matrix stays in
-        # armature/BVH space — so we read rotations directly from pb.matrix.
-        # For positions we still use world space → kimodo_T_blender conversion.
-        import mathutils
+        # pb.matrix is in armature-local space which IS already Kimodo's Y-up space.
+        # The BVH importer applies Rx(+90°) to the armature *object* transform, but
+        # pb.matrix stays in armature/BVH space — Y-up, same axes as Kimodo:
+        #   X = lateral,  Y = up (height),  Z = forward/backward
+        # No coordinate conversion is needed when reading from pb.matrix.
+        # (obj.matrix_world IS Z-up, but we don't use that here.)
 
         for frame in all_frames:
             context.scene.frame_set(frame)
             kimodo_frame = int(round(frame - min_frame))
 
             # --- Trajectory Constraint Scraping ---
-            # pb.matrix is in Blender armature-local Z-up space.
-            # Kimodo is Y-up: Kimodo[x,y,z] = Blender[x, z, -y]
+            # pb.matrix is armature-local = Y-up = Kimodo space.
+            # smooth_root_2d = [X, Z]  (the horizontal ground plane; Y = height).
+            # global_root_heading = [cos θ, sin θ] where θ is the XZ heading angle.
+            # The character's forward direction in Kimodo/BVH space is -Z.
             if settings.export_root and frame in root_frames:
                 hips_pb = obj.pose.bones.get("Hips") or obj.pose.bones.get(ROOT_BONE)
                 if hips_pb:
-                    traj_pos = hips_pb.matrix.translation
+                    traj_pos = hips_pb.matrix.translation   # Y-up, metres
                     root_indices.append(kimodo_frame)
-                    # XZ ground plane: Kimodo X = Blender X, Kimodo Z = -Blender Y
-                    smooth_root_2d.append([traj_pos.x, -traj_pos.y])
-                    # Heading: character faces +Y in Blender; convert forward to Kimodo XZ
-                    fwd = hips_pb.matrix.to_3x3() @ mathutils.Vector((0.0, 1.0, 0.0))
-                    global_root_heading.append([fwd.x, -fwd.y])
+                    # Ground plane XZ — Y is height, not part of 2D trajectory
+                    smooth_root_2d.append([traj_pos.x, traj_pos.z])
+                    # Forward = -Z in Kimodo/BVH space; project onto XZ for heading
+                    fwd = hips_pb.matrix.to_3x3() @ mathutils.Vector((0.0, 0.0, -1.0))
+                    global_root_heading.append([fwd.x, fwd.z])
 
             # Collect pose frame indices (used to index into the exported BVH on the server)
             if settings.export_pose and frame in pose_frames:
@@ -496,10 +499,11 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                     R = pb.matrix_basis.to_3x3()
                     bone_rots[pb.name] = [list(R[0]), list(R[1]), list(R[2])]
 
-                # Hips position: Blender armature Z-up → Kimodo Y-up: [x, z, -y]
+                # Hips position is read from pb.matrix which is already in Y-up space —
+                # same axes as Kimodo. No coordinate swap needed.
                 hips_pb = obj.pose.bones.get("Hips")
                 t = hips_pb.matrix.translation if hips_pb else mathutils.Vector((0, 0, 0))
-                frames_hips_pos.append([t.x, t.z, -t.y])
+                frames_hips_pos.append([t.x, t.y, t.z])
                 frames_local_rots.append(bone_rots)
 
             if settings.pose_mode == "end_effector":
@@ -538,10 +542,10 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         # Prepare Generation Payload for API Server
         dist = context.scene.frame_end - context.scene.frame_start
         scene_fps = context.scene.render.fps / context.scene.render.fps_base
-        
+
         texts = []
         dur_list = []
-        
+
         if settings.use_markers and len(context.scene.timeline_markers) > 0:
             markers = sorted(list(context.scene.timeline_markers), key=lambda m: m.frame)
             end_frame = context.scene.frame_end
@@ -580,7 +584,7 @@ class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'DumbTools'
-    
+
     def draw(self, context):
         layout = self.layout
         settings = context.scene.kimodo_settings

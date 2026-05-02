@@ -452,64 +452,68 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         global_root_heading = []
 
         import math, mathutils
-        # pb.matrix is in armature-local space which IS already Kimodo's Y-up space.
-        # The BVH importer applies Rx(+90°) to the armature *object* transform, but
-        # pb.matrix stays in armature/BVH space — Y-up, same axes as Kimodo:
-        #   X = lateral,  Y = up (height),  Z = forward/backward
-        # No coordinate conversion is needed when reading from pb.matrix.
-        # (obj.matrix_world IS Z-up, but we don't use that here.)
+
+        # ------------------------------------------------------------------ #
+        # Coordinate system note
+        # ------------------------------------------------------------------ #
+        # pb.matrix  — armature-local space.  Because the SOMA skeleton was
+        # imported from a Y-up BVH, armature-local IS already Kimodo's Y-up
+        # space (X=lateral, Y=up, Z=fwd/back).  The Rx(+90°) the BVH importer
+        # applies lives only on obj.matrix_world, not on pb.matrix.
+        #
+        # For global rotations we strip the BVH rest-pose offset so that a
+        # T-pose produces identity matrices, matching Kimodo's expectation:
+        #   R_kimodo = inv(pb.bone.matrix_local.to_3x3()) @ pb.matrix.to_3x3()
+        #
+        # Positions come straight from pb.matrix.translation — already metres,
+        # already Y-up.  No coordinate swap needed.
+        # ------------------------------------------------------------------ #
 
         for frame in all_frames:
             context.scene.frame_set(frame)
             kimodo_frame = int(round(frame - min_frame))
 
-            # --- Trajectory Constraint Scraping ---
-            # pb.matrix is armature-local = Y-up = Kimodo space.
-            # smooth_root_2d = [X, Z]  (the horizontal ground plane; Y = height).
-            # global_root_heading = [cos θ, sin θ] where θ is the XZ heading angle.
-            # The character's forward direction in Kimodo/BVH space is -Z.
+            # Compute global rotations and positions for every bone once per frame.
+            # Used by both root2d and fullbody/end-effector constraints.
+            kimodo_global_rots = {}
+            kimodo_global_pos  = {}
+            for pb in obj.pose.bones:
+                # Global rotation: strip the rest-pose offset so T-pose → identity.
+                R_rest_inv = pb.bone.matrix_local.to_3x3().inverted()
+                kimodo_global_rots[pb.name] = (R_rest_inv @ pb.matrix.to_3x3()).normalized()
+                # Global position: armature-local = Y-up = Kimodo space, metres.
+                kimodo_global_pos[pb.name] = pb.matrix.translation.copy()
+
+            # --- Trajectory (root2d) ---
             if settings.export_root and frame in root_frames:
-                hips_pb = obj.pose.bones.get("Hips") or obj.pose.bones.get(ROOT_BONE)
-                if hips_pb:
-                    traj_pos = hips_pb.matrix.translation   # Y-up, metres
+                traj_pos = kimodo_global_pos.get("Hips") or kimodo_global_pos.get(ROOT_BONE)
+                if traj_pos is not None:
                     root_indices.append(kimodo_frame)
-                    # Ground plane XZ — Y is height, not part of 2D trajectory
+                    # Ground plane is XZ (Y = height)
                     smooth_root_2d.append([traj_pos.x, traj_pos.z])
-                    # Forward = -Z in Kimodo/BVH space; project onto XZ for heading
-                    fwd = hips_pb.matrix.to_3x3() @ mathutils.Vector((0.0, 0.0, -1.0))
+                    # Heading: character faces -Z in Kimodo/BVH space
+                    R_root = kimodo_global_rots.get("Hips") or kimodo_global_rots.get(ROOT_BONE)
+                    fwd = R_root @ mathutils.Vector((0.0, 0.0, -1.0))
                     global_root_heading.append([fwd.x, fwd.z])
 
-            # Collect pose frame indices (used to index into the exported BVH on the server)
+            # --- Pose (fullbody / end-effector) ---
             if settings.export_pose and frame in pose_frames:
                 pose_indices.append(kimodo_frame)
+                frame_rot_list = []
+                frame_pos_list = []
+                for j_name in joint_order:   # joint_order = 77 SOMA joints, Hips first
+                    R = kimodo_global_rots.get(j_name)
+                    P = kimodo_global_pos.get(j_name)
+                    if R is not None and P is not None:
+                        frame_rot_list.append([list(R[0]), list(R[1]), list(R[2])])
+                        frame_pos_list.append([P.x, P.y, P.z])
+                    else:
+                        frame_rot_list.append([[1,0,0],[0,1,0],[0,0,1]])
+                        frame_pos_list.append([0.0, 0.0, 0.0])
+                global_joints_rot_all.append(frame_rot_list)
+                global_joints_pos_all.append(frame_pos_list)
 
-        # --- Pose Constraint via local rotation matrices ---
-        # pb.matrix_basis.to_3x3() = the bone's LOCAL rotation in bone space.
-        # This is EXACTLY what Kimodo's fk() expects as local_rot_mats:
-        # at T-pose it's identity for every bone, and with user pose applied it
-        # carries only the user-driven rotation — no coordinate conversion needed.
-        # The armature was imported from the SOMA BVH, so bone local frames match.
         if settings.export_pose and pose_frames:
-            frames_local_rots = []   # per constraint-frame: {bone_name → [[3×3]]}
-            frames_hips_pos   = []   # per constraint-frame: [x, y, z] in armature Y-up metres
-
-            for frame in sorted(pose_frames):
-                context.scene.frame_set(frame)
-
-                bone_rots = {}
-                for pb in obj.pose.bones:
-                    if pb.name == ROOT_BONE:
-                        continue            # skip dummy Root — excluded by parse_bvh_motion
-                    R = pb.matrix_basis.to_3x3()
-                    bone_rots[pb.name] = [list(R[0]), list(R[1]), list(R[2])]
-
-                # Hips position is read from pb.matrix which is already in Y-up space —
-                # same axes as Kimodo. No coordinate swap needed.
-                hips_pb = obj.pose.bones.get("Hips")
-                t = hips_pb.matrix.translation if hips_pb else mathutils.Vector((0, 0, 0))
-                frames_hips_pos.append([t.x, t.y, t.z])
-                frames_local_rots.append(bone_rots)
-
             if settings.pose_mode == "end_effector":
                 VALID_EE = {"LeftFoot", "RightFoot", "LeftHand", "RightHand", "Hips"}
                 j_names = sorted(b for b in all_keyed_bones if b in VALID_EE)
@@ -517,20 +521,19 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                     self.report({'WARNING'}, f"End-Effector: none of the keyed bones are valid. Valid: {sorted(VALID_EE)}")
                     return {'CANCELLED'}
                 constraints_data.append({
-                    "type": "ee_local",
+                    "type": "end-effector",
                     "frame_indices": pose_indices,
-                    "frames_local_rots": frames_local_rots,
-                    "frames_hips_pos": frames_hips_pos,
+                    "global_joints_rot": global_joints_rot_all,
+                    "global_joints_pos": global_joints_pos_all,
                     "joint_names": j_names,
                 })
             else:
                 constraints_data.append({
-                    "type": "fullbody_local",
+                    "type": "fullbody",
                     "frame_indices": pose_indices,
-                    "frames_local_rots": frames_local_rots,
-                    "frames_hips_pos": frames_hips_pos,
+                    "global_joints_rot": global_joints_rot_all,
+                    "global_joints_pos": global_joints_pos_all,
                 })
-
 
         if settings.export_root and root_frames:
             constraints_data.append({

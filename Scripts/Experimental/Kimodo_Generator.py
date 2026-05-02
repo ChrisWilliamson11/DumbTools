@@ -452,122 +452,79 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         # The BVH importer applies Rx(+90°) to the *object*, but pb.matrix stays in
         # armature/BVH space — so we read rotations directly from pb.matrix.
         # For positions we still use world space → kimodo_T_blender conversion.
-        kimodo_T_blender = mathutils.Matrix((
-            (1.0,  0.0, 0.0),
-            (0.0,  0.0, 1.0),
-            (0.0, -1.0, 0.0)))
+        import mathutils
 
         for frame in all_frames:
             context.scene.frame_set(frame)
             kimodo_frame = int(round(frame - min_frame))
 
-            # --- Compute Kimodo global rotations via hierarchical FK ---
-            # Blender stores pb.matrix in armature-local (= Kimodo Y-up) space.
-            # pb.bone.matrix_local (rest matrix) is NOT identity for most bones after
-            # BVH import, so we cannot use pb.matrix directly as the Kimodo global rot.
-            #
-            # Correct derivation (process parent-before-child):
-            #   root:  b[i] = r[i].inv @ R[i]          (strips rest offset)
-            #   child: b[i] = r[i].inv @ r[p] @ R[p].inv @ R[i]   (local pose delta)
-            #   K[i]  = K[parent] @ b[i]                (accumulate global)
-            #
-            # At T-pose: b[i] = identity for every bone → K[i] = identity ✓
-
-            kimodo_global_rots = {}  # bone_name → 3x3 mathutils.Matrix (Kimodo global rot)
-            kimodo_global_pos  = {}  # bone_name → mathutils.Vector (Kimodo Y-up position)
-
-            # Sort bones parent-first (depth 0 = root)
-            def bone_depth(pb):
-                d, p = 0, pb
-                while p.parent: d += 1; p = p.parent
-                return d
-
-            for pb in sorted(obj.pose.bones, key=bone_depth):
-                R_i = pb.matrix.to_3x3()          # armature-space global rot
-                r_i = pb.bone.matrix_local.to_3x3()  # bone rest matrix
-
-                if pb.parent is None:
-                    # Root bone (Hips / dummy Root)
-                    b_i = r_i.inverted() @ R_i
-                    K_i = b_i.copy()
-                else:
-                    R_p = pb.parent.matrix.to_3x3()
-                    r_p = pb.parent.bone.matrix_local.to_3x3()
-                    b_i  = r_i.inverted() @ r_p @ R_p.inverted() @ R_i
-                    K_p  = kimodo_global_rots.get(pb.parent.name, mathutils.Matrix.Identity(3))
-                    K_i  = K_p @ b_i
-
-                K_i.normalize()
-                kimodo_global_rots[pb.name] = K_i
-
-                # Position: armature-local space = Kimodo Y-up space directly
-                kimodo_global_pos[pb.name] = pb.matrix.translation.copy()
             # --- Trajectory Constraint Scraping ---
+            # Hips pb.matrix.translation is in armature-local space = Kimodo Y-up space directly.
+            # No coordinate conversion needed; just read X and Z for the 2D ground-plane position.
             if settings.export_root and frame in root_frames:
-                # Use Hips (joint-0, what the model actually constrains) for XZ position.
-                # Fall back to Root dummy if Hips isn't in the armature.
-                traj_pos = kimodo_global_pos.get("Hips", kimodo_global_pos.get(ROOT_BONE, mathutils.Vector((0,0,0))))
-                root_indices.append(kimodo_frame)
-                smooth_root_2d.append([traj_pos.x, traj_pos.z])
+                hips_pb = obj.pose.bones.get("Hips") or obj.pose.bones.get(ROOT_BONE)
+                if hips_pb:
+                    traj_pos = hips_pb.matrix.translation
+                    root_indices.append(kimodo_frame)
+                    smooth_root_2d.append([traj_pos.x, traj_pos.z])
+                    # Heading: Hips forward in armature (= Kimodo) space.
+                    fwd = hips_pb.matrix.to_3x3() @ mathutils.Vector((0.0, 0.0, -1.0))
+                    global_root_heading.append([fwd.x, fwd.z])
 
-                # Heading: forward direction of Hips/Root in Kimodo XZ plane.
-                # Kimodo heading format = [cos(angle), sin(angle)] of the 2D direction vector.
-                R_root = kimodo_global_rots.get("Hips", kimodo_global_rots.get(ROOT_BONE, mathutils.Matrix.Identity(3)))
-                forward = R_root @ mathutils.Vector((0.0, 0.0, -1.0))  # character faces -Z in Kimodo
-                global_root_heading.append([forward.x, forward.z])
-
-            # --- Skeletal Constraint Scraping ---
+            # Collect pose frame indices (used to index into the exported BVH on the server)
             if settings.export_pose and frame in pose_frames:
                 pose_indices.append(kimodo_frame)
-                frame_rot_list = []
-                frame_pos_list = []
-                for j_name in joint_order:
-                    if j_name in obj.pose.bones:
-                        R_child = kimodo_global_rots[j_name]
-                        P_child = kimodo_global_pos[j_name]
-                        
-                        # Pack into exact flat matrices required by Kimodo
-                        frame_rot_list.append([list(R_child[0]), list(R_child[1]), list(R_child[2])])
-                        frame_pos_list.append([P_child.x, P_child.y, P_child.z])
-                    else:
-                        frame_rot_list.append([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
-                        frame_pos_list.append([0.0, 0.0, 0.0])
-                
-                global_joints_rot_all.append(frame_rot_list)
-                global_joints_pos_all.append(frame_pos_list)
 
+        # --- Pose Constraint via BVH Export ---
+        # Instead of manually re-deriving Kimodo's FK from Blender's pb.matrix
+        # (which is fragile and error-prone), we export the armature as BVH and
+        # let the server run Kimodo's own parse_bvh_motion + fk() — exactly what
+        # the web app does. This guarantees correct global rotations and positions.
         if settings.export_pose and pose_frames:
+            bvh_export_path = os.path.join(temp_dir, "pose_constraint.bvh")
+            max_frame = max(all_frames)
+
+            bpy.context.view_layer.objects.active = obj
+            obj.select_set(True)
+            bpy.ops.export_anim.bvh(
+                filepath=bvh_export_path,
+                check_existing=False,
+                global_scale=100.0,   # Blender metres → BVH centimetres
+                frame_start=int(min_frame),
+                frame_end=int(max_frame),
+                rotate_mode='NATIVE',
+                root_transform_only=False,
+            )
+
             if settings.pose_mode == "end_effector":
-                c_type = "end-effector"
-                # Kimodo only supports 5 end-effector joints
                 VALID_EE = {"LeftFoot", "RightFoot", "LeftHand", "RightHand", "Hips"}
                 j_names = sorted(b for b in all_keyed_bones if b in VALID_EE)
                 if not j_names:
-                    self.report({'WARNING'}, f"End-Effector mode: none of the keyed bones are valid Kimodo end-effectors. Valid: {sorted(VALID_EE)}")
+                    self.report({'WARNING'}, f"End-Effector: none of the keyed bones are valid. Valid: {sorted(VALID_EE)}")
                     return {'CANCELLED'}
+                constraints_data.append({
+                    "type": "ee_bvh",
+                    "bvh_path": bvh_export_path,
+                    "frame_indices": pose_indices,
+                    "joint_names": j_names,
+                })
             else:
-                c_type = "fullbody"
-
-            dict_full = {
-                "type": c_type,
-                "frame_indices": pose_indices,
-                "global_joints_rot": global_joints_rot_all,
-                "global_joints_pos": global_joints_pos_all
-            }
-            if c_type == "end-effector":
-                dict_full["joint_names"] = j_names
-
-            constraints_data.append(dict_full)
+                constraints_data.append({
+                    "type": "fullbody_bvh",
+                    "bvh_path": bvh_export_path,
+                    "frame_indices": pose_indices,
+                })
 
         if settings.export_root and root_frames:
             constraints_data.append({
                 "type": "root2d",
                 "frame_indices": root_indices,
                 "smooth_root_2d": smooth_root_2d,
-                "global_root_heading": global_root_heading
+                "global_root_heading": global_root_heading,
             })
 
         context.scene.frame_set(original_frame)
+
 
         # Prepare Generation Payload for API Server
         dist = context.scene.frame_end - context.scene.frame_start

@@ -411,12 +411,11 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 for kp in fcurve.keyframe_points:
                     fr = int(kp.co[0])
                     if bone_name == ROOT_BONE:
-                        if settings.export_root:
-                            root_frames.add(fr)
-                    elif bone_name == "Hips" and "location" in dp:
+                        # Root bone keyframes always drive trajectory
                         if settings.export_root:
                             root_frames.add(fr)
                     elif bone_name is not None:
+                        # All other bones (including Hips) are pose constraints
                         if settings.export_pose:
                             pose_frames.add(fr)
                             pose_frame_bones.setdefault(fr, set()).add(bone_name)
@@ -485,15 +484,20 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 kimodo_global_pos[pb.name] = pb.matrix.translation.copy()
 
             # --- Trajectory (root2d) ---
+            # The Root bone is the user-facing trajectory control — it sits at
+            # ground level (Y=0) and its XZ position maps directly to Kimodo's
+            # smooth_root_2d.  Hips sits 1m above Root and is NOT used for
+            # trajectory (it's used for pose constraints).
             if settings.export_root and frame in root_frames:
-                traj_pos = kimodo_global_pos.get("Hips") or kimodo_global_pos.get(ROOT_BONE)
-                if traj_pos is not None:
+                root_pb = obj.pose.bones.get(ROOT_BONE)
+                if root_pb is not None:
+                    # pb.matrix.translation is armature-local = Y-up = Kimodo space.
+                    # Root is at Y≈0 (ground), so XZ is the ground-plane position.
+                    traj_pos = root_pb.matrix.translation
                     root_indices.append(kimodo_frame)
-                    # Ground plane is XZ (Y = height)
                     smooth_root_2d.append([traj_pos.x, traj_pos.z])
-                    # Heading: character faces -Z in Kimodo/BVH space
-                    R_root = kimodo_global_rots.get("Hips") or kimodo_global_rots.get(ROOT_BONE)
-                    fwd = R_root @ mathutils.Vector((0.0, 0.0, -1.0))
+                    # Heading from Root bone rotation: character faces -Z in BVH/Kimodo space
+                    fwd = root_pb.matrix.to_3x3() @ mathutils.Vector((0.0, 0.0, -1.0))
                     global_root_heading.append([fwd.x, fwd.z])
 
             # --- Pose (fullbody / end-effector) ---

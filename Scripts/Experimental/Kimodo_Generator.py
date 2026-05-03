@@ -312,15 +312,6 @@ def import_generated_bvh(filepath_dir, num_samples, seed=None):
 
     spread_x = 1.5  # metres between each generated copy along X
 
-    # Read bone rolls from the source rig once so we can fix the imported BVH
-    # armature's rolls to match.  Must be done in edit mode on the source rig.
-    source_bone_rolls = {}
-    bpy.context.view_layer.objects.active = original_obj
-    bpy.ops.object.mode_set(mode='EDIT')
-    for eb in original_obj.data.edit_bones:
-        source_bone_rolls[eb.name] = eb.roll
-    bpy.ops.object.mode_set(mode='OBJECT')
-
     # Find the rightmost existing generated rig so repeated runs stack correctly.
     # Match on base_name + "_Gen" prefix to avoid matching unrelated objects.
     base_name = original_obj.name
@@ -346,20 +337,6 @@ def import_generated_bvh(filepath_dir, num_samples, seed=None):
                 and imported_obj.animation_data.action):
             print(f"Warning: could not import sample {i}")
             continue
-
-        # Copy bone rolls from the source rig to the imported BVH armature.
-        # Blender's BVH importer assigns rolls heuristically from bone offsets,
-        # and near-zero offset components (like the arm bones) can produce
-        # inconsistent rolls between import calls.  Forcing the imported rig's
-        # rolls to match the source rig ensures rotations are interpreted
-        # identically when the action is later transferred to the duplicate.
-        bpy.context.view_layer.objects.active = imported_obj
-        bpy.ops.object.mode_set(mode='EDIT')
-        for eb in imported_obj.data.edit_bones:
-            if eb.name in source_bone_rolls:
-                eb.roll = source_bone_rolls[eb.name]
-        bpy.ops.object.mode_set(mode='OBJECT')
-        bpy.context.view_layer.objects.active = original_obj
 
         action = imported_obj.animation_data.action
         action.name = f"Kimodo_Gen_v{i + 1}{seed_str}"
@@ -549,6 +526,13 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 R_kimodo = R_conv @ R_world @ R_conv_inv
                 R_rest_kimodo = R_conv @ R_rest_world @ R_conv_inv
                 kimodo_global_rots[pb.name] = (R_rest_kimodo.inverted() @ R_kimodo).normalized()
+
+            # Debug: print arm bone rots on first frame to check for roll offset
+            if kimodo_frame == 0:
+                for bone_name in ('LeftArm', 'RightArm', 'LeftForeArm', 'RightForeArm'):
+                    if bone_name in kimodo_global_rots:
+                        R = kimodo_global_rots[bone_name]
+                        print(f"[ROLL DBG] {bone_name} T-pose rot: {[[round(v,3) for v in row] for row in R]}  (expect identity)")
 
             # Root bone is the armature root, so pb.matrix is always identity in
             # armature-local space.  We must read from WORLD space (Z-up) and

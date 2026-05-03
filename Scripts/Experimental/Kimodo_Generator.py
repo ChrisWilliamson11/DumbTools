@@ -698,6 +698,32 @@ class DUMBTOOLS_OT_dump_bone_rolls(bpy.types.Operator):
 
         bpy.ops.object.mode_set(mode=prev_mode)
         print("=" * 135)
+        # Also compare against any generated rig if one exists
+        gen_name = obj.name + "_Gen1"
+        # try with seed suffix too
+        gen_obj = bpy.data.objects.get(gen_name)
+        if gen_obj is None:
+            # find first object starting with base_name_Gen
+            for o in bpy.data.objects:
+                if o.type == 'ARMATURE' and '_Gen' in o.name and o.name.startswith(obj.name):
+                    gen_obj = o
+                    break
+        if gen_obj and gen_obj != obj:
+            bpy.context.view_layer.objects.active = gen_obj
+            bpy.ops.object.mode_set(mode='EDIT')
+            print(f"\n=== Roll COMPARISON: source='{obj.name}' vs generated='{gen_obj.name}' ===")
+            print(f"{'Bone':<30} {'Source Roll':>12}  {'Gen Roll':>12}  {'Diff':>10}")
+            print("-" * 70)
+            gen_rolls = {eb.name: math.degrees(eb.roll) for eb in gen_obj.data.edit_bones}
+            for eb in obj.data.edit_bones:
+                src_roll = math.degrees(eb.roll)
+                gen_roll = gen_rolls.get(eb.name, float('nan'))
+                diff = src_roll - gen_roll
+                flag = "  <<< MISMATCH" if abs(diff) > 1.0 else ""
+                print(f"{eb.name:<30} {src_roll:>12.2f}  {gen_roll:>12.2f}  {diff:>10.2f}{flag}")
+            bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.context.view_layer.objects.active = obj
+
         self.report({'INFO'}, f"Bone rolls printed to system console ({len(obj.data.edit_bones)} bones).")
         return {'FINISHED'}
 

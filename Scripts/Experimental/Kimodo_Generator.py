@@ -278,14 +278,18 @@ def run_kimodo_generation(filepath_dir, scene, payload):
                 print("Generation complete:", result)
 
             num_samples = scene.kimodo_settings.num_samples
-            bpy.app.timers.register(lambda: import_generated_bvh(filepath_dir, num_samples), first_interval=0.1)
+            actual_seed = result.get("seed", payload.get("seed"))
+            bpy.app.timers.register(
+                lambda: import_generated_bvh(filepath_dir, num_samples, actual_seed),
+                first_interval=0.1
+            )
         except urllib.error.URLError as e:
             print(f"Server Error: {e.reason}. Please ensure the Kimodo server is started.")
 
     thread = threading.Thread(target=background_request)
     thread.start()
 
-def import_generated_bvh(filepath_dir, num_samples):
+def import_generated_bvh(filepath_dir, num_samples, seed=None):
     original_obj = bpy.context.active_object
     if not original_obj or original_obj.type != 'ARMATURE':
         print("Error: Active object is not a valid Armature!")
@@ -302,15 +306,19 @@ def import_generated_bvh(filepath_dir, num_samples):
         print("Error: No BVH files found in temp directory!")
         return None
 
+    # Build a seed suffix for rig names so generations are reproducible.
+    # e.g. "_s42" or "_sRND" if seed is unknown.
+    seed_str = f"_s{seed}" if seed is not None else ""
+
     spread_x = 1.5  # metres between each generated copy along X
 
-    # Find the rightmost existing generated rig so repeated runs stack correctly
+    # Find the rightmost existing generated rig so repeated runs stack correctly.
+    # Match on base_name + "_Gen" prefix to avoid matching unrelated objects.
     base_name = original_obj.name
     rightmost_x = original_obj.location.x
     for obj in bpy.context.scene.objects:
         if obj.type == 'ARMATURE' and obj.name.startswith(base_name + "_Gen"):
             rightmost_x = max(rightmost_x, obj.location.x)
-    # New copies start one spread_x gap after the rightmost existing one
     start_x = rightmost_x + spread_x
 
     for i, bvh_path in enumerate(bvh_files):
@@ -331,22 +339,28 @@ def import_generated_bvh(filepath_dir, num_samples):
             continue
 
         action = imported_obj.animation_data.action
-        action.name = f"Kimodo_Gen_v{i + 1}"
+        action.name = f"Kimodo_Gen_v{i + 1}{seed_str}"
 
         # Duplicate the ORIGINAL rig so it keeps all its mesh children,
         # bone groups, etc., but start with clean animation data.
         dup = original_obj.copy()
         dup.animation_data_clear()
         dup.animation_data_create()
-        dup.name = f"{original_obj.name}_Gen{i + 1}"
+        dup.name = f"{base_name}_Gen{i + 1}{seed_str}"
         bpy.context.collection.objects.link(dup)
+
+        # Store seed and variation index as custom properties so the rig
+        # carries enough info to reproduce or refine this exact generation.
+        dup["kimodo_seed"] = seed if seed is not None else -1
+        dup["kimodo_variation"] = i + 1
+        dup["kimodo_source"] = base_name
 
         # Place the duplicate to the right of all previous generated rigs
         dup.location.x = start_x + i * spread_x
 
         # Apply the generated action as a single NLA strip on the duplicate
         track = dup.animation_data.nla_tracks.new()
-        track.name = f"Kimodo Generation {i + 1}"
+        track.name = f"Kimodo Generation {i + 1}{seed_str}"
         track.strips.new(action.name, 1, action)
 
         # Clean up the raw BVH import object (action is now referenced by the strip)
@@ -355,7 +369,7 @@ def import_generated_bvh(filepath_dir, num_samples):
     # Leave the original selected and active — ready for another generation
     bpy.context.view_layer.objects.active = original_obj
     original_obj.select_set(True)
-    print(f"Successfully imported {len(bvh_files)} Kimodo generation(s). Original rig untouched.")
+    print(f"Successfully imported {len(bvh_files)} Kimodo generation(s) [seed={seed}]. Original rig untouched.")
     return None
 
 class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):

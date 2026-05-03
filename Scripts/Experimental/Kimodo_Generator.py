@@ -340,6 +340,20 @@ def import_generated_bvh(filepath_dir, num_samples, seed=None):
 
         action = imported_obj.animation_data.action
         action.name = f"Kimodo_Gen_v{i + 1}{seed_str}"
+
+        # Convert all pose bones from ZYX Euler to Quaternion rotation mode.
+        # BVH imports as ZYX Euler which causes gimbal-lock discontinuities
+        # (sharp spikes in the graph editor) when rotations pass through
+        # certain configurations. Setting rotation_mode='QUATERNION' on each
+        # bone while in pose mode automatically converts the existing keyframe
+        # data to quaternion, eliminating the flips.
+        bpy.context.view_layer.objects.active = imported_obj
+        bpy.ops.object.mode_set(mode='POSE')
+        bpy.ops.pose.select_all(action='SELECT')
+        bpy.ops.pose.rotation_mode_set(type='QUATERNION')
+        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.context.view_layer.objects.active = original_obj
+
         # Capture the slot BEFORE removing imported_obj (Blender 4.4+ slotted actions).
         source_slot = None
         if hasattr(imported_obj.animation_data, "action_slot"):
@@ -501,28 +515,39 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         # already Y-up.  No coordinate swap needed.
         # ------------------------------------------------------------------ #
 
+        # Only the rotation part of obj.matrix_world matters (the Rx+90 the BVH
+        # importer applies). The translation (object location in the scene) must
+        # NOT be included in joint positions — Kimodo works in character-root space.
+        # pb.matrix.translation is in armature-local Y-up space (same as Kimodo)
+        # and is unaffected by where the object sits in the Blender scene.
+        # Coordinate change for rotations only: the BVH importer applies Rx(+90°)
+        # to the armature object, so we need the rotation-only part of obj.matrix_world
+        # to express bone rotations in Kimodo's Y-up frame.
+        # Positions use pb.matrix.translation (armature-local = Y-up = Kimodo space)
+        # and must NOT go through world space to avoid picking up the object's
+        # scene location (which offsets generated rigs placed at X=1.5m etc).
+        obj_mat3 = obj.matrix_world.to_3x3()  # rotation-only, no translation
+        R_conv = mathutils.Matrix(((1,0,0),(0,0,1),(0,-1,0)))
+        R_conv_inv = R_conv.transposed()
+
         for frame in all_frames:
             context.scene.frame_set(frame)
             kimodo_frame = int(round(frame - min_frame))
 
             # Compute global rotations and positions for every bone once per frame.
-            # Used by both root2d and fullbody/end-effector constraints.
             kimodo_global_rots = {}
             kimodo_global_pos  = {}
-            # Coordinate change: world Z-up → Kimodo Y-up
-            # Kimodo[X,Y,Z] = World[X, Z, -Y]
-            # As a 3x3 matrix: R_conv @ v_world = v_kimodo
-            R_conv = mathutils.Matrix(((1,0,0),(0,0,1),(0,-1,0)))
-            R_conv_inv = R_conv.transposed()  # orthogonal so inv = transpose
-            obj_mat3 = obj.matrix_world.to_3x3()
+
             for pb in obj.pose.bones:
-                # Position: world space then convert to Kimodo Y-up
-                w_pos = (obj.matrix_world @ pb.matrix).translation
-                kimodo_global_pos[pb.name] = mathutils.Vector((w_pos.x, w_pos.z, -w_pos.y))
-                # Rotation: express world-space rotation in Kimodo's Y-up frame.
-                # R_world = obj rotation * armature-local rotation
-                # R_kimodo = R_conv @ R_world @ R_conv^T
-                # Then strip rest-pose (also expressed in Kimodo frame) so T-pose → identity.
+                # Position: armature-local = Y-up = Kimodo space. No conversion.
+                # Crucially: does NOT include the object's world translation,
+                # so works correctly whether the rig is at X=0 or X=1.5m.
+                t = pb.matrix.translation
+                kimodo_global_pos[pb.name] = mathutils.Vector((t.x, t.y, t.z))
+
+                # Rotation: needs world-space to account for the BVH importer's
+                # Rx(+90°) object rotation, then convert to Kimodo Y-up frame,
+                # then strip the rest-pose so T-pose → identity.
                 R_world = obj_mat3 @ pb.matrix.to_3x3()
                 R_rest_world = obj_mat3 @ pb.bone.matrix_local.to_3x3()
                 R_kimodo = R_conv @ R_world @ R_conv_inv

@@ -342,29 +342,31 @@ def import_generated_bvh(filepath_dir, num_samples, seed=None):
         action.name = f"Kimodo_Gen_v{i + 1}{seed_str}"
 
         # Duplicate the ORIGINAL rig so it keeps all its mesh children,
-        # bone groups, etc., but start with clean animation data.
+        # bone groups, etc., then assign the generated action directly.
         dup = original_obj.copy()
         dup.animation_data_clear()
         dup.animation_data_create()
         dup.name = f"{base_name}_Gen{i + 1}{seed_str}"
         bpy.context.collection.objects.link(dup)
 
+        # Assign the action directly as the active action — no NLA needed
+        # since each sample already has its own armature.
+        dup.animation_data.action = action
+
         # Store generation info as custom properties (visible in
         # Properties > Object Properties > Custom Properties).
+        # To reproduce: set Seed = kimodo_seed, Variations = kimodo_num_samples,
+        # then generate again — variation N will be identical.
         dup["kimodo_seed"] = int(seed) if seed is not None else -1
         dup["kimodo_variation"] = i + 1
+        dup["kimodo_num_samples"] = num_samples
         dup["kimodo_source"] = base_name
-        print(f"  Set custom props on '{dup.name}': seed={dup['kimodo_seed']}, variation={dup['kimodo_variation']}")
+        print(f"  Custom props on '{dup.name}': seed={dup['kimodo_seed']} variation={dup['kimodo_variation']}/{dup['kimodo_num_samples']}")
 
         # Place the duplicate to the right of all previous generated rigs
         dup.location.x = start_x + i * spread_x
 
-        # Apply the generated action as a single NLA strip on the duplicate
-        track = dup.animation_data.nla_tracks.new()
-        track.name = f"Kimodo Generation {i + 1}{seed_str}"
-        track.strips.new(action.name, 1, action)
-
-        # Clean up the raw BVH import object (action is now referenced by the strip)
+        # Clean up the raw BVH import object (action is now on the duplicate)
         bpy.data.objects.remove(imported_obj, do_unlink=True)
 
     # Leave the original selected and active — ready for another generation
@@ -641,6 +643,41 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         self.report({'INFO'}, "Constraints sent to API Server. Generating...")
         return {'FINISHED'}
 
+class DUMBTOOLS_OT_load_seed_from_selected(bpy.types.Operator):
+    bl_idname = "dumbtools.load_kimodo_seed"
+    bl_label = "Load Seed from Selected"
+    bl_description = (
+        "Read kimodo_seed and kimodo_num_samples from the selected generated "
+        "armature and populate the Seed and Variations fields. "
+        "Generate again with the same settings to reproduce all variations."
+    )
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj or obj.type != 'ARMATURE':
+            self.report({'ERROR'}, "Select a generated Kimodo armature first.")
+            return {'CANCELLED'}
+        if "kimodo_seed" not in obj:
+            self.report({'ERROR'}, f"'{obj.name}' has no kimodo_seed property. Is it a Kimodo generation?")
+            return {'CANCELLED'}
+
+        settings = context.scene.kimodo_settings
+        seed = obj["kimodo_seed"]
+        num_samples = obj.get("kimodo_num_samples", 1)
+        variation = obj.get("kimodo_variation", "?")
+
+        settings.seed = int(seed)
+        settings.num_samples = int(num_samples)
+
+        self.report(
+            {'INFO'},
+            f"Loaded seed {seed}, {num_samples} variation(s) from '{obj.name}' "
+            f"(was variation {variation}/{num_samples}). "
+            f"Generate again to reproduce all {num_samples} variation(s)."
+        )
+        return {'FINISHED'}
+
+
 class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
     bl_label = "Kimodo AI Motion"
     bl_idname = "DUMBTOOLS_PT_kimodo_panel"
@@ -673,7 +710,9 @@ class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
         layout.prop(settings, "prompt")
         layout.prop(settings, "use_markers")
         layout.separator()
-        layout.prop(settings, "seed")
+        row = layout.row(align=True)
+        row.prop(settings, "seed")
+        row.operator(DUMBTOOLS_OT_load_seed_from_selected.bl_idname, text="", icon='EYEDROPPER')
         layout.prop(settings, "num_samples")
         layout.prop(settings, "diffusion_steps")
         layout.prop(settings, "cfg_weight")
@@ -693,10 +732,12 @@ def register():
     bpy.utils.register_class(DUMBTOOLS_OT_kill_kimodo_server)
     bpy.utils.register_class(DUMBTOOLS_OT_generate_soma_skeleton)
     bpy.utils.register_class(DUMBTOOLS_OT_generate_motion_from_pose)
+    bpy.utils.register_class(DUMBTOOLS_OT_load_seed_from_selected)
     bpy.utils.register_class(DUMBTOOLS_PT_kimodo_panel)
 
 def unregister():
     bpy.utils.unregister_class(DUMBTOOLS_PT_kimodo_panel)
+    bpy.utils.unregister_class(DUMBTOOLS_OT_load_seed_from_selected)
     bpy.utils.unregister_class(DUMBTOOLS_OT_generate_motion_from_pose)
     bpy.utils.unregister_class(DUMBTOOLS_OT_generate_soma_skeleton)
     bpy.utils.unregister_class(DUMBTOOLS_OT_kill_kimodo_server)

@@ -476,12 +476,25 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
             # Used by both root2d and fullbody/end-effector constraints.
             kimodo_global_rots = {}
             kimodo_global_pos  = {}
+            # Coordinate change: world Z-up → Kimodo Y-up
+            # Kimodo[X,Y,Z] = World[X, Z, -Y]
+            # As a 3x3 matrix: R_conv @ v_world = v_kimodo
+            R_conv = mathutils.Matrix(((1,0,0),(0,0,1),(0,-1,0)))
+            R_conv_inv = R_conv.transposed()  # orthogonal so inv = transpose
+            obj_mat3 = obj.matrix_world.to_3x3()
             for pb in obj.pose.bones:
-                # Global rotation: strip the rest-pose offset so T-pose → identity.
-                R_rest_inv = pb.bone.matrix_local.to_3x3().inverted()
-                kimodo_global_rots[pb.name] = (R_rest_inv @ pb.matrix.to_3x3()).normalized()
-                # Global position: armature-local = Y-up = Kimodo space, metres.
-                kimodo_global_pos[pb.name] = pb.matrix.translation.copy()
+                # Position: world space then convert to Kimodo Y-up
+                w_pos = (obj.matrix_world @ pb.matrix).translation
+                kimodo_global_pos[pb.name] = mathutils.Vector((w_pos.x, w_pos.z, -w_pos.y))
+                # Rotation: express world-space rotation in Kimodo's Y-up frame.
+                # R_world = obj rotation * armature-local rotation
+                # R_kimodo = R_conv @ R_world @ R_conv^T
+                # Then strip rest-pose (also expressed in Kimodo frame) so T-pose → identity.
+                R_world = obj_mat3 @ pb.matrix.to_3x3()
+                R_rest_world = obj_mat3 @ pb.bone.matrix_local.to_3x3()
+                R_kimodo = R_conv @ R_world @ R_conv_inv
+                R_rest_kimodo = R_conv @ R_rest_world @ R_conv_inv
+                kimodo_global_rots[pb.name] = (R_rest_kimodo.inverted() @ R_kimodo).normalized()
 
             # --- Trajectory (root2d) ---
             # Root bone is the armature root, so pb.matrix is always identity in

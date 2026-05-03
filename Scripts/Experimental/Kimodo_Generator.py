@@ -484,21 +484,28 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 kimodo_global_pos[pb.name] = pb.matrix.translation.copy()
 
             # --- Trajectory (root2d) ---
-            # The Root bone is the user-facing trajectory control — it sits at
-            # ground level (Y=0) and its XZ position maps directly to Kimodo's
-            # smooth_root_2d.  Hips sits 1m above Root and is NOT used for
-            # trajectory (it's used for pose constraints).
+            # Root bone is the armature root, so pb.matrix is always identity in
+            # armature-local space.  We must read from WORLD space (Z-up) and
+            # convert to Kimodo Y-up:  Kimodo[X,Y,Z] = World[X, Z, -Y]
+            # smooth_root_2d = [Kimodo_X, Kimodo_Z] = [World_X, -World_Y]
             if settings.export_root and frame in root_frames:
                 root_pb = obj.pose.bones.get(ROOT_BONE)
                 if root_pb is not None:
-                    # pb.matrix.translation is armature-local = Y-up = Kimodo space.
-                    # Root is at Y≈0 (ground), so XZ is the ground-plane position.
-                    traj_pos = root_pb.matrix.translation
+                    # World-space 4x4 of the pose bone
+                    world_mat = obj.matrix_world @ root_pb.matrix
+                    world_pos = world_mat.translation
+                    # Convert world Z-up → Kimodo Y-up for the ground plane
+                    # World X → Kimodo X,  World -Y → Kimodo Z
                     root_indices.append(kimodo_frame)
-                    smooth_root_2d.append([traj_pos.x, traj_pos.z])
-                    # Heading from Root bone rotation: character faces -Z in BVH/Kimodo space
-                    fwd = root_pb.matrix.to_3x3() @ mathutils.Vector((0.0, 0.0, -1.0))
-                    global_root_heading.append([fwd.x, fwd.z])
+                    smooth_root_2d.append([world_pos.x, -world_pos.y])
+                    # Heading: extract forward (-Z in BVH/Kimodo = -Y in Blender world)
+                    # from the world-space rotation, then project onto Kimodo XZ plane
+                    world_rot = world_mat.to_3x3()
+                    # In Blender world Z-up, character forward is +Y; in Kimodo Y-up it
+                    # becomes -Z (the negated depth axis).  Project the world +Y column
+                    # of the rotation into Kimodo space: Kimodo_X=World_X, Kimodo_Z=-World_Y
+                    fwd_world = world_rot @ mathutils.Vector((0.0, 1.0, 0.0))
+                    global_root_heading.append([fwd_world.x, -fwd_world.y])
 
             # --- Pose (fullbody / end-effector) ---
             if settings.export_pose and frame in pose_frames:
@@ -551,8 +558,25 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
 
 
         # Prepare Generation Payload for API Server
-        dist = context.scene.frame_end - context.scene.frame_start
+        # All frame counts and constraint indices must be in Kimodo's time base (30 fps).
+        # Convert from scene FPS using: kimodo_frame = round(blender_frame * KIMODO_FPS / scene_fps)
+        KIMODO_FPS = 30.0
         scene_fps = context.scene.render.fps / context.scene.render.fps_base
+        fps_ratio = KIMODO_FPS / scene_fps
+
+        def to_kimodo_frames(blender_frames):
+            """Convert a blender frame count to Kimodo frame count."""
+            return max(1, round(blender_frames * fps_ratio))
+
+        # Re-scale all constraint frame indices that were recorded in Blender frames
+        def rescale_indices(indices):
+            return [round(i * fps_ratio) for i in indices]
+
+        if constraints_data:
+            for c in constraints_data:
+                c["frame_indices"] = rescale_indices(c["frame_indices"])
+
+        dist = context.scene.frame_end - context.scene.frame_start
 
         texts = []
         dur_list = []
@@ -565,10 +589,10 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 texts.append(m.name)
                 next_f = markers[i+1].frame if i+1 < len(markers) else end_frame
                 d_frames = max(1, next_f - m.frame)
-                dur_list.append(int(d_frames))
+                dur_list.append(to_kimodo_frames(d_frames))
         else:
             texts.append(settings.prompt)
-            dur_list.append(int(dist))
+            dur_list.append(to_kimodo_frames(dist))
 
         payload = {
             "model_name": context.scene.kimodo_settings.model_name.strip() or "kimodo-soma-rp",

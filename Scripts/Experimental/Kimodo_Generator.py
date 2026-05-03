@@ -349,11 +349,12 @@ def import_generated_bvh(filepath_dir, num_samples, seed=None):
         dup.name = f"{base_name}_Gen{i + 1}{seed_str}"
         bpy.context.collection.objects.link(dup)
 
-        # Store seed and variation index as custom properties so the rig
-        # carries enough info to reproduce or refine this exact generation.
-        dup["kimodo_seed"] = seed if seed is not None else -1
+        # Store generation info as custom properties (visible in
+        # Properties > Object Properties > Custom Properties).
+        dup["kimodo_seed"] = int(seed) if seed is not None else -1
         dup["kimodo_variation"] = i + 1
         dup["kimodo_source"] = base_name
+        print(f"  Set custom props on '{dup.name}': seed={dup['kimodo_seed']}, variation={dup['kimodo_variation']}")
 
         # Place the duplicate to the right of all previous generated rigs
         dup.location.x = start_x + i * spread_x

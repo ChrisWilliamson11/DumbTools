@@ -527,7 +527,13 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 R_rest_kimodo = R_conv @ R_rest_world @ R_conv_inv
                 kimodo_global_rots[pb.name] = (R_rest_kimodo.inverted() @ R_kimodo).normalized()
 
-            # --- Trajectory (root2d) ---
+            # Debug: print arm bone rots on first frame to check for roll offset
+            if kimodo_frame == 0:
+                for bone_name in ('LeftArm', 'RightArm', 'LeftForeArm', 'RightForeArm'):
+                    if bone_name in kimodo_global_rots:
+                        R = kimodo_global_rots[bone_name]
+                        print(f"[ROLL DBG] {bone_name} T-pose rot: {[[round(v,3) for v in row] for row in R]}  (expect identity)")
+
             # Root bone is the armature root, so pb.matrix is always identity in
             # armature-local space.  We must read from WORLD space (Z-up) and
             # convert to Kimodo Y-up:  Kimodo[X,Y,Z] = World[X, Z, -Y]

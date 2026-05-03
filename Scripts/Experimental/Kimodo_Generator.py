@@ -340,6 +340,12 @@ def import_generated_bvh(filepath_dir, num_samples, seed=None):
 
         action = imported_obj.animation_data.action
         action.name = f"Kimodo_Gen_v{i + 1}{seed_str}"
+        # Capture the slot BEFORE removing imported_obj (Blender 4.4+ slotted actions).
+        source_slot = None
+        if hasattr(imported_obj.animation_data, "action_slot"):
+            source_slot = imported_obj.animation_data.action_slot
+        # Give the action a fake user so it survives when we delete imported_obj.
+        action.use_fake_user = True
 
         # Duplicate the ORIGINAL rig so it keeps all its mesh children,
         # bone groups, etc., then assign the generated action directly.
@@ -349,9 +355,17 @@ def import_generated_bvh(filepath_dir, num_samples, seed=None):
         dup.name = f"{base_name}_Gen{i + 1}{seed_str}"
         bpy.context.collection.objects.link(dup)
 
-        # Assign the action directly as the active action — no NLA needed
-        # since each sample already has its own armature.
+        # Assign action + slot. In Blender 4.4+ the slot must be set explicitly
+        # or the action appears assigned but no keyframes play.
         dup.animation_data.action = action
+        if source_slot is not None and hasattr(dup.animation_data, "action_slot"):
+            dup.animation_data.action_slot = source_slot
+        elif hasattr(dup.animation_data, "action_suitable_slots"):
+            suitable = dup.animation_data.action_suitable_slots
+            if suitable:
+                dup.animation_data.action_slot = suitable[0]
+        # Now dup holds a real user reference — clear the fake user.
+        action.use_fake_user = False
 
         # Store generation info as custom properties (visible in
         # Properties > Object Properties > Custom Properties).
@@ -366,7 +380,7 @@ def import_generated_bvh(filepath_dir, num_samples, seed=None):
         # Place the duplicate to the right of all previous generated rigs
         dup.location.x = start_x + i * spread_x
 
-        # Clean up the raw BVH import object (action is now on the duplicate)
+        # Remove the raw BVH import object — action is safely held by dup.
         bpy.data.objects.remove(imported_obj, do_unlink=True)
 
     # Leave the original selected and active — ready for another generation

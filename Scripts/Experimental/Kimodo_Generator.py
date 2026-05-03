@@ -98,8 +98,8 @@ class KimodoSettings(bpy.types.PropertyGroup):
         name="Pose Mode",
         description="How to interpret keyed non-Root bones",
         items=[
-            ("fullbody",     "Full Body",              "Constrain all 77 SOMA joints (strongest, ignores which bones are actually keyed)"),
-            ("end_effector", "End Effector (Keyed Bones)", "Constrain only the specific bones you keyed — rest of body is free"),
+            ("fullbody",     "Full Body",              "Constrain world positions of all 77 joints. Rotations/twist are generated freely — use End Effector if you need exact bone orientation"),
+            ("end_effector", "End Effector (Keyed Bones)", "Constrain position AND rotation of keyed bones (LeftFoot, RightFoot, LeftHand, RightHand, Hips). Rest of body is free"),
         ],
         default="fullbody"
     )
@@ -527,13 +527,6 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                 R_rest_kimodo = R_conv @ R_rest_world @ R_conv_inv
                 kimodo_global_rots[pb.name] = (R_rest_kimodo.inverted() @ R_kimodo).normalized()
 
-            # Debug: print arm bone rots on first frame to check for roll offset
-            if kimodo_frame == 0:
-                for bone_name in ('LeftArm', 'RightArm', 'LeftForeArm', 'RightForeArm'):
-                    if bone_name in kimodo_global_rots:
-                        R = kimodo_global_rots[bone_name]
-                        print(f"[ROLL DBG] {bone_name} T-pose rot: {[[round(v,3) for v in row] for row in R]}  (expect identity)")
-
             # Root bone is the armature root, so pb.matrix is always identity in
             # armature-local space.  We must read from WORLD space (Z-up) and
             # convert to Kimodo Y-up:  Kimodo[X,Y,Z] = World[X, Z, -Y]
@@ -663,6 +656,52 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
         self.report({'INFO'}, "Constraints sent to API Server. Generating...")
         return {'FINISHED'}
 
+class DUMBTOOLS_OT_dump_bone_rolls(bpy.types.Operator):
+    bl_idname = "dumbtools.dump_bone_rolls"
+    bl_label = "Dump Bone Rolls"
+    bl_description = "Print all bone rolls and local axes to the system console (for coordinate debugging)"
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj or obj.type != 'ARMATURE':
+            self.report({'ERROR'}, "Select an armature first.")
+            return {'CANCELLED'}
+
+        import math, mathutils
+
+        # Must enter edit mode to read eb.roll
+        prev_mode = obj.mode
+        bpy.ops.object.mode_set(mode='EDIT')
+
+        print(f"\n=== Bone Rolls for '{obj.name}' ===")
+        print(f"{'Bone':<30} {'Roll(deg)':>10}  {'local_X (armature-local)':>30}  {'local_Y (bone dir)':>30}  {'local_Z':>30}")
+        print("-" * 135)
+
+        obj_mat3 = obj.matrix_world.to_3x3()
+        R_conv = mathutils.Matrix(((1,0,0),(0,0,1),(0,-1,0)))
+        R_conv_inv = R_conv.transposed()
+
+        for eb in obj.data.edit_bones:
+            roll_deg = math.degrees(eb.roll)
+            # Edit bone matrix columns are [X, Y, Z] in armature-local space
+            mat = eb.matrix.to_3x3()
+            lx = [round(v,3) for v in mat.col[0]]
+            ly = [round(v,3) for v in mat.col[1]]  # bone direction
+            lz = [round(v,3) for v in mat.col[2]]
+            # Also compute the Kimodo-space version
+            R_rest_world = obj_mat3 @ mat
+            R_rest_kimodo = R_conv @ R_rest_world @ R_conv_inv
+            kx = [round(v,3) for v in R_rest_kimodo.col[0]]
+            ky = [round(v,3) for v in R_rest_kimodo.col[1]]
+            kz = [round(v,3) for v in R_rest_kimodo.col[2]]
+            print(f"{eb.name:<30} {roll_deg:>10.2f}  armLocal_X={lx}  armLocal_Y={ly}(dir)  kimodo_X={kx}  kimodo_Y={ky}(dir)")
+
+        bpy.ops.object.mode_set(mode=prev_mode)
+        print("=" * 135)
+        self.report({'INFO'}, f"Bone rolls printed to system console ({len(obj.data.edit_bones)} bones).")
+        return {'FINISHED'}
+
+
 class DUMBTOOLS_OT_load_seed_from_selected(bpy.types.Operator):
     bl_idname = "dumbtools.load_kimodo_seed"
     bl_label = "Load Seed from Selected"
@@ -744,6 +783,8 @@ class DUMBTOOLS_PT_kimodo_panel(bpy.types.Panel):
         layout.separator()
 
         layout.operator(DUMBTOOLS_OT_generate_motion_from_pose.bl_idname, icon='PLAY', text="Export & Generate Motion")
+        layout.separator()
+        layout.operator(DUMBTOOLS_OT_dump_bone_rolls.bl_idname, icon='INFO', text="Dump Bone Rolls to Console")
 
 def register():
     bpy.utils.register_class(KimodoSettings)
@@ -753,10 +794,12 @@ def register():
     bpy.utils.register_class(DUMBTOOLS_OT_generate_soma_skeleton)
     bpy.utils.register_class(DUMBTOOLS_OT_generate_motion_from_pose)
     bpy.utils.register_class(DUMBTOOLS_OT_load_seed_from_selected)
+    bpy.utils.register_class(DUMBTOOLS_OT_dump_bone_rolls)
     bpy.utils.register_class(DUMBTOOLS_PT_kimodo_panel)
 
 def unregister():
     bpy.utils.unregister_class(DUMBTOOLS_PT_kimodo_panel)
+    bpy.utils.unregister_class(DUMBTOOLS_OT_dump_bone_rolls)
     bpy.utils.unregister_class(DUMBTOOLS_OT_load_seed_from_selected)
     bpy.utils.unregister_class(DUMBTOOLS_OT_generate_motion_from_pose)
     bpy.utils.unregister_class(DUMBTOOLS_OT_generate_soma_skeleton)

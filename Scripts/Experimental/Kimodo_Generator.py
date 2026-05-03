@@ -498,13 +498,17 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                     # World X → Kimodo X,  World -Y → Kimodo Z
                     root_indices.append(kimodo_frame)
                     smooth_root_2d.append([world_pos.x, -world_pos.y])
-                    # Heading: extract forward (-Z in BVH/Kimodo = -Y in Blender world)
-                    # from the world-space rotation, then project onto Kimodo XZ plane
+                    # Heading: find which world-space axis of Root points forward
+                    # when at rest (unrotated), then track where that axis goes.
                     world_rot = world_mat.to_3x3()
-                    # In Blender world Z-up, character forward is +Y; in Kimodo Y-up it
-                    # becomes -Z (the negated depth axis).  Project the world +Y column
-                    # of the rotation into Kimodo space: Kimodo_X=World_X, Kimodo_Z=-World_Y
-                    fwd_world = world_rot @ mathutils.Vector((0.0, 1.0, 0.0))
+                    # Debug: print all three axes so we can see which one to use
+                    ax_x = world_rot @ mathutils.Vector((1.0, 0.0, 0.0))
+                    ax_y = world_rot @ mathutils.Vector((0.0, 1.0, 0.0))
+                    ax_z = world_rot @ mathutils.Vector((0.0, 0.0, 1.0))
+                    print(f"[HDG DBG] frame={frame} Root world axes: X={[round(v,3) for v in ax_x]} Y={[round(v,3) for v in ax_y]} Z={[round(v,3) for v in ax_z]}")
+                    # For now use -Z as the candidate (Blender bone default forward)
+                    fwd_world = world_rot @ mathutils.Vector((0.0, 0.0, -1.0))
+                    print(f"[HDG DBG] -Z candidate: {[round(v,3) for v in fwd_world]}  heading=[{round(fwd_world.x,3)}, {round(-fwd_world.y,3)}]")
                     global_root_heading.append([fwd_world.x, -fwd_world.y])
 
             # --- Pose (fullbody / end-effector) ---

@@ -463,6 +463,8 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
 
         all_frames = sorted(root_frames | pose_frames)
         min_frame = min(all_frames) if all_frames else 0
+        print(f"[FRAME DBG] root_frames={sorted(root_frames)}  pose_frames={sorted(pose_frames)}")
+        print(f"[FRAME DBG] min_frame={min_frame}  all_frames={all_frames}")
 
         # Union of all keyed bone names across all pose frames (used for end-effector mode)
         all_keyed_bones = set()
@@ -617,7 +619,9 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
 
         if constraints_data:
             for c in constraints_data:
-                c["frame_indices"] = rescale_indices(c["frame_indices"])
+                old = c["frame_indices"]
+                c["frame_indices"] = rescale_indices(old)
+                print(f"[FRAME DBG] {c['type']} blender_indices={old} → kimodo_indices={c['frame_indices']} (fps_ratio={fps_ratio:.4f})")
 
         dist = context.scene.frame_end - context.scene.frame_start
 

@@ -505,7 +505,7 @@ class DUMBTOOLS_OT_generate_motion_from_pose(bpy.types.Operator):
                     # Convert world Z-up -> Kimodo Y-up: Kimodo_X=World_X, Kimodo_Z=-World_Y
                     world_rot = world_mat.to_3x3()
                     fwd_world = world_rot @ mathutils.Vector((1.0, 0.0, 0.0))
-                    global_root_heading.append([fwd_world.x, -fwd_world.y])
+                    global_root_heading.append([fwd_world.x, fwd_world.y])
 
             # --- Pose (fullbody / end-effector) ---
             if settings.export_pose and frame in pose_frames:

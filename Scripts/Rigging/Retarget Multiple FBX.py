@@ -205,7 +205,7 @@ def import_fbx_clean(fbx_path, delete_arm=True):
 
     # Always delete non-armature junk
     for o in new_objs:
-        if kept_arm and o.name == kept_arm.name:
+        if o is kept_arm:
             if delete_arm:
                 # Delete the arm too
                 try:

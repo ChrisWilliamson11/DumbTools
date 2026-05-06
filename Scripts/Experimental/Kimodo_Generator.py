@@ -341,19 +341,6 @@ def import_generated_bvh(filepath_dir, num_samples, seed=None):
         action = imported_obj.animation_data.action
         action.name = f"Kimodo_Gen_v{i + 1}{seed_str}"
 
-        # Convert all pose bones from ZYX Euler to Quaternion rotation mode.
-        # BVH imports as ZYX Euler which causes gimbal-lock discontinuities
-        # (sharp spikes in the graph editor) when rotations pass through
-        # certain configurations. Setting rotation_mode='QUATERNION' on each
-        # bone while in pose mode automatically converts the existing keyframe
-        # data to quaternion, eliminating the flips.
-        bpy.context.view_layer.objects.active = imported_obj
-        bpy.ops.object.mode_set(mode='POSE')
-        bpy.ops.pose.select_all(action='SELECT')
-        bpy.ops.pose.rotation_mode_set(type='QUATERNION')
-        bpy.ops.object.mode_set(mode='OBJECT')
-        bpy.context.view_layer.objects.active = original_obj
-
         # Capture the slot BEFORE removing imported_obj (Blender 4.4+ slotted actions).
         source_slot = None
         if hasattr(imported_obj.animation_data, "action_slot"):

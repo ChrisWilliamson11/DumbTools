@@ -281,6 +281,10 @@ def load_queue_from_file(context):
     try:
         state = parse_batch_file_to_state(filepath)
         apply_state_to_ui(context, state)
+        
+        # Update last known UUIDs from the loaded queue
+        uuids = [j.uuid for j in context.scene.batch_render_jobs if j.uuid]
+        context.scene.batch_render_settings.last_known_uuids = ",".join(uuids)
                     
     except Exception as e:
         print(f"Error loading batch file: {e}")
@@ -300,104 +304,63 @@ def _clear_saved_jobs(context):
         if queue[i].is_saved:
             queue.remove(i)
             
-def merge_queue_states(local, remote, active_idx, modified_idx=-1):
+def merge_queue_states(local, remote, base_uuids_str, active_idx=-1):
     """
-    Merges Local and Remote states.
-    Returns: (merged_state, conflict_flag)
-    Strategy:
-    - Globals: Local wins (Last Write Wins).
-    - Jobs:
-      - Additions: Union of both.
-      - Collisions: Remote wins UNLESS it's the Active Job OR the Modified Job.
+    Merges Local and Remote states using a 3-way merge approach.
     """
     merged = {'globals': local['globals'].copy(), 'jobs': []}
     
-    # ... (Global merging remains same) ...
     for k, v in remote.get('globals', {}).items():
         if k not in merged['globals']:
             merged['globals'][k] = v
 
-    r_jobs = remote.get('jobs', [])
+    base_uuids = set(u.strip() for u in base_uuids_str.split(',') if u.strip())
     l_jobs = local.get('jobs', [])
+    r_jobs = remote.get('jobs', [])
     
-    # Identify Prioritized Jobs (Active + Modified)
-    prioritized_indices = set()
-    if 0 <= active_idx < len(l_jobs): prioritized_indices.add(active_idx)
-    if 0 <= modified_idx < len(l_jobs): prioritized_indices.add(modified_idx)
+    l_dict = {j.get('uuid'): j for j in l_jobs if j.get('uuid')}
+    r_dict = {j.get('uuid'): j for j in r_jobs if j.get('uuid')}
     
-    merged_jobs = list(r_jobs)
-    
-    for local_idx in prioritized_indices:
-        local_job = l_jobs[local_idx]
-        match_idx = -1
+    active_uuid = None
+    if 0 <= active_idx < len(l_jobs):
+        active_uuid = l_jobs[active_idx].get('uuid')
         
-        # 1. Try UUID Match (Strongest)
-        aid = active_job.get('uuid', '')
-        if aid:
-            for i, rj in enumerate(merged_jobs):
-                if rj.get('uuid') == aid:
-                    match_idx = i
-                    break
-        
-    for local_idx in prioritized_indices:
-        local_job = l_jobs[local_idx]
-        match_idx = -1
-        
-        # 1. Try UUID Match (Strongest)
-        aid = local_job.get('uuid', '')
-        if aid:
-            for i, rj in enumerate(merged_jobs):
-                if rj.get('uuid') == aid:
-                    match_idx = i
-                    break
-        
-        # 2. Fallback to Scene+Path
-        if match_idx == -1:
-            norm_local = _norm(local_job.get('filepath'))
-            for i, rj in enumerate(merged_jobs):
-                norm_remote = _norm(rj.get('filepath'))
-                if norm_remote == norm_local and rj.get('scene_name') == local_job.get('scene_name'):
-                    match_idx = i
-                    break
-        
-        if match_idx >= 0:
-            # Overwrite existing job with Local Job (It wins!)
-            merged_jobs[match_idx] = local_job
-        else:
-            # New job? Append it if not already in list logic below handles uniqueness but lets add here to be safe
-            # Actually, the _add_if_new loop below will handle it if we don't add it here?
-            # No, merged_jobs IS the list. If we don't add it to merged_jobs, it might be added later by l_jobs loop.
-            # But we want to ensure it's in the primary set.
-            # Wait, if we don't find it in remote, it means it's a NEW local job?
-            # Yes. So we should treat it as part of l_jobs which get added at the end.
-            pass
-            
-    # Merge & Deduplicate Remainder
-    final_list = []
+    merged_jobs = []
     seen_uuids = set()
-    seen_sigs = set() # Path+Scene signature for legacy dupes
     
-    def _add_if_new(job):
-        uid = job.get('uuid', '')
-        norm_p = _norm(job.get('filepath'))
-        sig = f"{norm_p}::{job.get('scene_name')}"
+    for l_job in l_jobs:
+        u = l_job.get('uuid')
+        if not u: continue
         
-        # Check UUID
-        if uid and uid in seen_uuids: return
-        # Check Signature (if no UUID or UUID mismatch but same file?)
-        if sig in seen_sigs: return
+        if u in r_dict:
+            # Modified in both. Favor Local if it's the active job, else Remote.
+            if u == active_uuid:
+                merged_jobs.append(l_job)
+            else:
+                merged_jobs.append(r_dict[u])
+        else:
+            # In Local, NOT in Remote.
+            if u in base_uuids:
+                # Remote deleted it. Drop it.
+                pass
+            else:
+                # Local added it. Keep it.
+                merged_jobs.append(l_job)
+        seen_uuids.add(u)
         
-        if uid: seen_uuids.add(uid)
-        seen_sigs.add(sig)
-        final_list.append(job)
+    for r_job in r_jobs:
+        u = r_job.get('uuid')
+        if not u or u in seen_uuids: continue
+        
+        if u in base_uuids:
+            # Local deleted it. Drop it.
+            pass
+        else:
+            # Remote added it. Keep it.
+            merged_jobs.append(r_job)
 
-    # 1. Process merged list
-    for j in merged_jobs: _add_if_new(j)
-            
-    # 2. Add remaining Local jobs if new
-    for lj in l_jobs: _add_if_new(lj)
-
-    merged['jobs'] = final_list
+    merged['jobs'] = merged_jobs
+    return merged, False
     return merged, False
 
 def auto_save_batch(self, context):
@@ -406,70 +369,7 @@ def auto_save_batch(self, context):
     # Avoid recursion or saving during load/write
     if _IS_LOADING_CONFIG or _IS_WRITING_BATCH: return
     
-    settings = context.scene.batch_render_settings
-    
-    # If already in conflict mode, do nothing (wait for user resolution)
-    if settings.conflict_detected:
-        return
-
-    batch_path, _ = get_batch_file_path(context)
-    
-    # 1. Optimistic Lock Check
-    if batch_path and os.path.exists(batch_path) and settings.last_known_mtime > 0:
-        try:
-            curr_mtime = os.path.getmtime(batch_path)
-            # Tolerance for OS precision
-            if abs(curr_mtime - settings.last_known_mtime) > 0.05:
-                print("BatchRender: External change detected...")
-                
-                remote_state = parse_batch_file_to_state(batch_path)
-                if remote_state is None:
-                    print("BatchRender: Remote file locked/invalid. Aborting save.")
-                    return
-                
-                local_state = capture_local_state(context)
-                
-                # Check for DESTRUCTIVE changes (Deleting jobs that exist in remote)
-                local_uuids = {j['uuid'] for j in local_state.get('jobs', [])}
-                remote_jobs = remote_state.get('jobs', [])
-                missing_jobs = []
-                
-                for rj in remote_jobs:
-                    if rj.get('uuid') and rj['uuid'] not in local_uuids:
-                        missing_jobs.append(rj.get('scene_name', 'Unknown'))
-                
-                if missing_jobs:
-                    print(f"BatchRender: CONFLICT DETECTED! Local missing {len(missing_jobs)} jobs.")
-                    settings.conflict_detected = True
-                    settings.conflict_info = ", ".join(missing_jobs[:5]) + (f" (+{len(missing_jobs)-5} more)" if len(missing_jobs)>5 else "")
-                    # Do NOT save. Do NOT update UI yet (except flag).
-                    # Force a redraw of panel?
-                    return
-                
-                # Safe to merge (Non-destructive)
-                print("BatchRender: Auto-merging safe changes...")
-                active_idx = context.scene.batch_render_active_job_index
-                
-                # Identify modified item
-                modified_idx = -1
-                if hasattr(self, "uuid"): 
-                     queue = context.scene.batch_render_jobs
-                     for i, j in enumerate(queue):
-                         if j.uuid == self.uuid: modified_idx = i; break
-                
-                merged, _ = merge_queue_states(local_state, remote_state, active_idx, modified_idx)
-                apply_state_to_ui(context, merged)
-                write_batch_file(context)
-                return
-                
-        except Exception as e:
-            print(f"BatchRender: Save Check Failed: {e}")
-            # If check failed, play safe and abort? Or overwrite? 
-            # If we overwrite, we kill remote changes. Better to abort silently or warn?
-            # For now, let's fall through to write if it was just a read error? No, safer to wait.
-            return
-
-    # No external change detected: Safe write
+    # Just call write_batch_file, which handles optimistic locking and 3-way merge
     write_batch_file(context)
 
 def update_batch_location(self, context):
@@ -623,9 +523,7 @@ def write_batch_file(context):
         settings = context.scene.batch_render_settings
         queue = context.scene.batch_render_jobs
         
-        if len(queue) == 0:
-            return None, "No jobs in queue"
-            
+
         script_path, error = get_batch_file_path(context)
         if error:
             return None, error
@@ -637,7 +535,46 @@ def write_batch_file(context):
             except OSError as e:
                 return None, f"Could not create directory: {base_dir}"
 
-        blender_bin = bpy.app.binary_path
+        # 1. Optimistic Lock & Sync
+        lock_dir = script_path + ".lock"
+        lock_acquired = False
+        import time
+        
+        for _ in range(10):
+            try:
+                os.mkdir(lock_dir)
+                lock_acquired = True
+                break
+            except FileExistsError:
+                time.sleep(0.1)
+                
+        if not lock_acquired:
+            print("BatchRender: Warning: Could not acquire write lock, proceeding anyway.")
+            
+        try:
+            if os.path.exists(script_path) and settings.last_known_mtime > 0:
+                curr_mtime = os.path.getmtime(script_path)
+                if abs(curr_mtime - settings.last_known_mtime) > 0.05:
+                    print("BatchRender: Syncing with external changes...")
+                    remote_state = parse_batch_file_to_state(script_path)
+                    if remote_state:
+                        local_state = capture_local_state(context)
+                        active_idx = context.scene.batch_render_active_job_index
+                        merged_state, _ = merge_queue_states(local_state, remote_state, settings.last_known_uuids, active_idx)
+                        apply_state_to_ui(context, merged_state)
+                        # Re-read queue
+                        queue = context.scene.batch_render_jobs
+
+            if len(queue) == 0:
+                if lock_acquired:
+                    try: os.rmdir(lock_dir)
+                    except: pass
+                return None, "No jobs in queue"
+                
+            blender_bin = bpy.app.binary_path
+        except Exception as e:
+            print(f"BatchRender: Merge Error: {e}")
+            blender_bin = bpy.app.binary_path
         
         lines = []
         is_windows = platform.system() == "Windows"
@@ -1207,11 +1144,16 @@ def write_batch_file(context):
         # Update Timestamp (We just wrote it, so we are up to date)
         try:
             settings.last_known_mtime = os.path.getmtime(script_path)
+            uuids = [j.uuid for j in queue if j.uuid]
+            settings.last_known_uuids = ",".join(uuids)
         except: pass
             
         return script_path, None
         
     finally:
+        if 'lock_dir' in locals() and lock_acquired:
+            try: os.rmdir(lock_dir)
+            except: pass
         _IS_WRITING_BATCH = False
 
 
@@ -1772,12 +1714,9 @@ class BatchRenderSettings(bpy.types.PropertyGroup):
     auto_refresh_interval: IntProperty(name="Interval (s)", default=10, min=1, description="Seconds between progress checks", update=auto_save_batch)
     
     
-    # Conflict Flags
-    conflict_detected: BoolProperty(default=False)
-    conflict_info: StringProperty(default="")
-    
     # Sync tracking
     last_known_mtime: FloatProperty(default=0.0)
+    last_known_uuids: StringProperty(default="")
 
     batch_file_path: StringProperty(
 
@@ -2962,47 +2901,7 @@ class BATCH_RENDER_OT_generate_and_run(bpy.types.Operator):
             
         return {'FINISHED'}
 
-class BATCH_RENDER_OT_resolve_conflict(bpy.types.Operator):
-    bl_idname = "batch_render.resolve_conflict"
-    bl_label = "Resolve Conflict"
-    bl_description = "Resolve auto-save sync conflict with external file"
-    
-    action: EnumProperty(
-        items=[
-            ('OVERWRITE', "Force Delete Remote Jobs", "Overwrite remote file with local state (Destructive)"),
-            ('MERGE', "Merge Missing Jobs", "Import jobs from remote file into local queue")
-        ]
-    )
 
-    def execute(self, context):
-        settings = context.scene.batch_render_settings
-        if not settings.conflict_detected: return {'CANCELLED'}
-        
-        if self.action == 'OVERWRITE':
-            settings.conflict_detected = False
-            settings.conflict_info = ""
-            write_batch_file(context)
-            self.report({'WARNING'}, "Remote changes overwritten.")
-            
-        elif self.action == 'MERGE':
-            # Perform additive merge
-            batch_path, _ = get_batch_file_path(context)
-            if batch_path and os.path.exists(batch_path):
-                remote_state = parse_batch_file_to_state(batch_path)
-                if remote_state:
-                    local_state = capture_local_state(context)
-                    # We merge remote into local. 
-                    # Existing jobs are preserved (Local wins conflicts naturally via capture).
-                    # Missing jobs are added.
-                    merged, _ = merge_queue_states(local_state, remote_state, -1, -1)
-                    apply_state_to_ui(context, merged)
-                
-            settings.conflict_detected = False
-            settings.conflict_info = ""
-            write_batch_file(context)
-            self.report({'INFO'}, "Merged remote jobs.")
-            
-        return {'FINISHED'}
 
 class BATCH_RENDER_OT_reload_queue(bpy.types.Operator):
     bl_idname = "batch_render.reload_queue"
@@ -3030,26 +2929,7 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
         settings = scene.batch_render_settings
         queue = scene.batch_render_jobs
         
-        # --- CONFLICT WARNING ---
-        if settings.conflict_detected:
-            layout.alert = True
-            box = layout.box()
-            box.label(text="SYNC CONFLICT: Remote Jobs Missing!", icon='ERROR')
-            box.label(text="Saving now would delete jobs added by others.")
-            if settings.conflict_info:
-                box.label(text=f"Missing: {settings.conflict_info}")
-            
-            row = box.row()
-            row.scale_y = 1.5
-            op = row.operator("batch_render.resolve_conflict", text="Sync (Add Missing Jobs)", icon='FILE_REFRESH')
-            op.action = 'MERGE'
-            
-            op = row.operator("batch_render.resolve_conflict", text="Overwrite (Delete Remote)", icon='TRASH')
-            op.action = 'OVERWRITE'
-            
-            layout.alert = False
-            layout.separator()
-        
+
         # --- Batch File Configuration (Always Visible) ---
         box = layout.box()
         # box.label(text="Batch File Configuration", icon='FILE_SCRIPT')

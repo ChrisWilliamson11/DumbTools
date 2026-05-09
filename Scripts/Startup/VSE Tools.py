@@ -3,6 +3,8 @@ import bpy
 import os
 import subprocess
 import struct
+import re
+import difflib
 from bpy.app.handlers import persistent
 
 # Blender 5+ VSE helpers and operators
@@ -311,6 +313,25 @@ def read_exr_metadata(filepath):
     return metadata
 
 
+class VSEOpenSpecificBlend(bpy.types.Operator):
+    """Open a specific .blend file"""
+
+    bl_idname = "sequencer.open_specific_blend"
+    bl_label = "Open Specific Blend"
+    bl_options = {"REGISTER", "UNDO"}
+    
+    filepath: bpy.props.StringProperty(name="File Path", subtype="FILE_PATH")
+
+    def execute(self, context):
+        if not self.filepath or not os.path.exists(self.filepath):
+            self.report({"ERROR"}, "Invalid or missing file path.")
+            return {"CANCELLED"}
+            
+        self.report({"INFO"}, f"Opening {os.path.basename(self.filepath)}")
+        subprocess.Popen([bpy.app.binary_path, self.filepath])
+        return {"FINISHED"}
+
+
 class VSEOpenSourceBlend(bpy.types.Operator):
     """Open the source .blend file from strip metadata"""
 
@@ -388,9 +409,55 @@ class VSEOpenSourceBlend(bpy.types.Operator):
             self.report({"ERROR"}, f"Blend file not found: {final_path}")
             return {"CANCELLED"}
 
-        # Open Blender
-        self.report({"INFO"}, f"Opening {os.path.basename(final_path)}")
-        subprocess.Popen([bpy.app.binary_path, final_path])
+        source_name = os.path.basename(final_path)
+        source_name_no_ext = os.path.splitext(source_name)[0]
+        
+        # Regex to strip common version suffixes, e.g., _v01, .001, -01, _1, v2
+        base_name_match = re.sub(r'[\._\- ]*[vV]?\d+$', '', source_name_no_ext)
+        if not base_name_match:
+            base_name_match = source_name_no_ext
+
+        directory = os.path.dirname(final_path)
+        matched_versions = []
+        
+        if os.path.exists(directory):
+            for f in os.listdir(directory):
+                if f.lower().endswith(".blend"):
+                    f_no_ext = os.path.splitext(f)[0]
+                    # Fuzzy match ratio against the source name
+                    ratio = difflib.SequenceMatcher(None, source_name_no_ext, f_no_ext).ratio()
+                    
+                    # Alternatively or additionally, check if it starts with the base name
+                    starts_with_base = f_no_ext.startswith(base_name_match)
+                    
+                    if ratio > 0.6 or starts_with_base:
+                        matched_versions.append({
+                            'name': f,
+                            'path': os.path.join(directory, f),
+                            'is_source': (f == source_name)
+                        })
+        
+        # Sort versions alphabetically
+        matched_versions.sort(key=lambda x: x['name'])
+        
+        if len(matched_versions) <= 1:
+            self.report({"INFO"}, f"Opening {os.path.basename(final_path)}")
+            subprocess.Popen([bpy.app.binary_path, final_path])
+            return {"FINISHED"}
+        
+        # We have multiple versions, show a popup
+        def draw_versions(self, context):
+            self.layout.label(text="Choose Version to Open:")
+            self.layout.separator()
+            for v in matched_versions:
+                icon = "CHECKMARK" if v['is_source'] else "FILE_BLEND"
+                text = v['name']
+                if v['is_source']:
+                    text += " (Source)"
+                op = self.layout.operator("sequencer.open_specific_blend", text=text, icon=icon)
+                op.filepath = v['path']
+                
+        context.window_manager.popup_menu(draw_versions, title="Open Source Blend", icon='FILE_BLEND')
 
         return {"FINISHED"}
 
@@ -521,6 +588,11 @@ def sequencer_menu_func(self, context):
     self.layout.menu("SEQUENCER_MT_dumbtools")
 
 
+def sequencer_context_menu_func(self, context):
+    self.layout.separator()
+    self.layout.operator("sequencer.open_source_blend", text="Open Source Blend", icon='FILE_BLEND')
+
+
 # ---------- Registration ----------
 
 _classes = (
@@ -531,6 +603,7 @@ _classes = (
     VSESetDurationToSelected,
     VSEMoveSelectedToStart,
     VSEMoveSelectedToEnd,
+    VSEOpenSpecificBlend,
     VSEOpenSourceBlend,
     VSEBrowseSource,
     VSEDumbToolsMenu,
@@ -549,6 +622,8 @@ def register():
         bpy.utils.register_class(cls)
 
     bpy.types.SEQUENCER_MT_editor_menus.append(sequencer_menu_func)
+    if hasattr(bpy.types, "SEQUENCER_MT_context_menu"):
+        bpy.types.SEQUENCER_MT_context_menu.append(sequencer_context_menu_func)
 
     # Scene properties for playhead-driven features
     bpy.types.Scene.vse_selection_follows_playhead = bpy.props.BoolProperty(
@@ -587,6 +662,11 @@ def unregister():
             pass
     try:
         bpy.types.SEQUENCER_MT_editor_menus.remove(sequencer_menu_func)
+    except Exception:
+        pass
+    try:
+        if hasattr(bpy.types, "SEQUENCER_MT_context_menu"):
+            bpy.types.SEQUENCER_MT_context_menu.remove(sequencer_context_menu_func)
     except Exception:
         pass
 

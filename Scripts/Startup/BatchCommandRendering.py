@@ -3106,8 +3106,6 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
         row.prop(settings, "show_job_queue", icon="TRIA_DOWN" if settings.show_job_queue else "TRIA_RIGHT", emboss=False, text="Job Queue")
         
         if settings.show_job_queue:
-            row = layout.row()
-            row.template_list("BATCH_RENDER_UL_jobs", "", scene, "batch_render_jobs", scene, "batch_render_active_job_index")
             
             # Button Block (Underneath)
             col = layout.column(align=True)
@@ -3125,24 +3123,10 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
             row.operator("batch_render.move_job", icon='TRIA_UP', text="Move Up").direction = 'UP'
             row.operator("batch_render.move_job", icon='TRIA_DOWN', text="Move Down").direction = 'DOWN'  
             
-            # Metadata title
-            row = col.row(align=True)
-            row.label(text="Metadata")
-            # Row 1.5: Metadata
-            row = col.row(align=True)
-            row.operator("batch_render.refresh_metadata", text="Refresh Selected", icon='FILE_REFRESH').mode = 'SELECTED'
-            row.operator("batch_render.refresh_metadata", text="Refresh All", icon='FILE_REFRESH').mode = 'ALL'
-            # status title
-            row = col.row(align=True)
-            row.label(text="Set Job Status")
             # Row 2: Job Status
             row = col.row(align=True)          
             row.operator("batch_render.set_job_pending", icon='FILE_REFRESH', text="Pending")
             row.operator("batch_render.set_job_done", icon='CHECKBOX_HLT', text="Done")
-            #Output Frames Title
-            row = col.row(align=True)
-            row.label(text="Output Frames")
-            # Row 4: Actions
             row = col.row(align=True)
             row.operator("batch_render.archive_frames", icon='FILE_ARCHIVE', text="Archive")
             row.operator("batch_render.delete_frames", icon='X', text="Delete Frames")
@@ -3152,6 +3136,9 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
             row.operator("batch_render.open_output_folder", icon='FILE_FOLDER', text="Open Folder")
             row.operator("batch_render.open_job_file", icon='BLENDER', text="Open Blend File")
             
+            row = layout.row()
+            row.template_list("BATCH_RENDER_UL_jobs", "", scene, "batch_render_jobs", scene, "batch_render_active_job_index")
+
             # --- Chunking Status List (Inside Job Queue) ---
             idx = scene.batch_render_active_job_index
             if 0 <= idx < len(queue):

@@ -41,12 +41,12 @@ def save_global_config(context):
     global _IS_LOADING_CONFIG
     if _IS_LOADING_CONFIG:
         return
-        
+
     if not context or not context.scene: return
 
     settings = context.scene.batch_render_settings
     data = {"batch_file_path": settings.batch_file_path}
-    
+
     try:
         with open(get_config_path(), 'w') as f:
             json.dump(data, f)
@@ -56,32 +56,32 @@ def save_global_config(context):
 def apply_global_config():
     """Timer function to load config safely after startup."""
     global _IS_LOADING_CONFIG
-    
+
     config_path = get_config_path()
     print(f"BatchRender: Checking config at {config_path}")
-    
-    if not os.path.exists(config_path): 
+
+    if not os.path.exists(config_path):
         print("BatchRender: Config file not found.")
         return None
-    
+
     _IS_LOADING_CONFIG = True
     try:
         with open(config_path, 'r') as f:
             data = json.load(f)
-            
+
         print(f"BatchRender: Found Config Data: {data}")
-            
+
         context = bpy.context
         if context.scene:
             settings = context.scene.batch_render_settings
-            if "batch_file_path" in data: 
+            if "batch_file_path" in data:
                 settings.batch_file_path = data["batch_file_path"]
                 print(f"BatchRender: Applied loaded config: {settings.batch_file_path}")
             else:
                 print("BatchRender: Config data missing 'batch_file_path'")
         else:
             print("BatchRender: No active scene to apply config")
-            
+
     except Exception as e:
         print(f"BatchRender: Failed to load config: {e}")
     finally:
@@ -100,10 +100,10 @@ def get_batch_file_path(context):
     """Calculates the full absolute path to the batch file based on settings."""
     settings = context.scene.batch_render_settings
     raw_path = settings.batch_file_path
-    
+
     if not raw_path:
         return None, "Batch file path is empty"
-        
+
     # Resolve absolute path
     # If starts with //, join with blend file dir
     if raw_path.startswith("//"):
@@ -112,13 +112,13 @@ def get_batch_file_path(context):
         abs_path = bpy.path.abspath(raw_path)
     else:
         abs_path = raw_path
-        
+
     # Validation
     if not abs_path.lower().endswith(('.bat', '.sh', '.cmd')):
         ext = ".bat" if platform.system() == "Windows" else ".sh"
         if not os.path.splitext(abs_path)[1]:
             abs_path += ext
-            
+
     return abs_path, None
 
 def get_target_jobs(context):
@@ -127,9 +127,9 @@ def get_target_jobs(context):
     selected = []
     for i, job in enumerate(queue):
         if job.selected: selected.append((i, job))
-        
+
     if selected: return selected
-    
+
     # Fallback to active
     idx = context.scene.batch_render_active_job_index
     if 0 <= idx < len(queue):
@@ -140,7 +140,7 @@ def get_target_chunks(context, job):
     """Returns list of chunk objects. Uses selection if any, else active."""
     selected = [c for c in job.chunks if c.selected]
     if selected: return selected
-    
+
     # Fallback to active
     idx = context.scene.batch_render_active_chunk_index
     if 0 <= idx < len(job.chunks):
@@ -158,11 +158,11 @@ def parse_batch_file_to_state(filepath):
     state = {'globals': {}, 'jobs': []}
     if not filepath or not os.path.exists(filepath):
         return state
-        
+
     try:
         with open(filepath, 'r') as f:
             lines = f.readlines()
-            
+
         for line in lines:
             line = line.strip()
             # Look for metadata comment
@@ -176,7 +176,7 @@ def parse_batch_file_to_state(filepath):
                 try: state['globals'] = json.loads(g_meta)
                 except: pass
                 continue
-                
+
             if meta_str:
                 try:
                     data = json.loads(meta_str)
@@ -185,20 +185,20 @@ def parse_batch_file_to_state(filepath):
     except Exception as e:
         print(f"BatchRender: Parse Error: {e}")
         return None
-        
+
     return state
 
 def capture_local_state(context):
     """Captures the current UI state into a dictionary structure."""
     settings = context.scene.batch_render_settings
     queue = context.scene.batch_render_jobs
-    
+
     # Globals
     g_data = {}
     for k in settings.bl_rna.properties.keys():
         if k == "rna_type" or k == "batch_file_path" or k == "last_known_mtime": continue
         g_data[k] = getattr(settings, k)
-        
+
     # Jobs
     j_list = []
     for job in queue:
@@ -207,19 +207,19 @@ def capture_local_state(context):
         # Actually logic is in write_batch_file, let's duplicate the key list for now or make a helper?
         # Helper is better. see get_job_data_dict below.
         pass # implemented in loop below
-        
+
         # Quick serialize
         meta = {}
         for k in job.bl_rna.properties.keys():
             if k == "rna_type" or k == "is_saved" or k == "chunks": continue
             meta[k] = getattr(job, k)
-        
+
         # Job ID for merging
         # We don't have a persistent UUID. We use SceneName + Filepath as key?
         # Or index?
         # Let's trust the data.
         j_list.append(meta)
-        
+
     return {'globals': g_data, 'jobs': j_list}
 
 def apply_state_to_ui(context, state):
@@ -229,40 +229,40 @@ def apply_state_to_ui(context, state):
     try:
         settings = context.scene.batch_render_settings
         queue = context.scene.batch_render_jobs
-        
+
         # Apply Globals
         # Skip UI-only properties that should remain local-controlled during session
         ui_props = {'show_job_queue', 'show_selected_job', 'show_chunk_details', 'show_chunk_status', 'show_file_config', 'show_global_options', 'show_queue_overrides'}
-        
+
         for k, v in state.get('globals', {}).items():
             if k in ui_props: continue
-            
+
             if hasattr(settings, k):
                 try: setattr(settings, k, v)
                 except: pass
-                
+
         # Apply Jobs
         _clear_saved_jobs(context)
-        
+
         for data in state.get('jobs', []):
             item = queue.add()
             item.is_saved = True
-            
+
             for k, v in data.items():
                 if hasattr(item, k):
                     try: setattr(item, k, v)
                     except: pass
-            
+
             # Ensure UUID exists (migration)
             if not item.uuid:
                 item.uuid = str(uuid.uuid4())
-            
+
             # Restore cached progress (dict access)
             if 'cached_progress' in data:
                 item['cached_progress'] = data['cached_progress']
             if 'cached_chunk_progress' in data:
                 item['cached_chunk_progress'] = data['cached_chunk_progress']
-                    
+
             # Trigger chunk refresh
             refresh_job_chunks(item, context.scene.batch_render_settings, get_batch_file_path(context)[0])
     finally:
@@ -281,11 +281,11 @@ def load_queue_from_file(context):
     try:
         state = parse_batch_file_to_state(filepath)
         apply_state_to_ui(context, state)
-        
+
         # Update last known UUIDs from the loaded queue
         uuids = [j.uuid for j in context.scene.batch_render_jobs if j.uuid]
         context.scene.batch_render_settings.last_known_uuids = ",".join(uuids)
-                    
+
     except Exception as e:
         print(f"Error loading batch file: {e}")
     finally:
@@ -303,13 +303,13 @@ def _clear_saved_jobs(context):
     for i in range(len(queue) - 1, -1, -1):
         if queue[i].is_saved:
             queue.remove(i)
-            
+
 def merge_queue_states(local, remote, base_uuids_str, active_idx=-1):
     """
     Merges Local and Remote states using a 3-way merge approach.
     """
     merged = {'globals': local['globals'].copy(), 'jobs': []}
-    
+
     for k, v in remote.get('globals', {}).items():
         if k not in merged['globals']:
             merged['globals'][k] = v
@@ -317,21 +317,21 @@ def merge_queue_states(local, remote, base_uuids_str, active_idx=-1):
     base_uuids = set(u.strip() for u in base_uuids_str.split(',') if u.strip())
     l_jobs = local.get('jobs', [])
     r_jobs = remote.get('jobs', [])
-    
+
     l_dict = {j.get('uuid'): j for j in l_jobs if j.get('uuid')}
     r_dict = {j.get('uuid'): j for j in r_jobs if j.get('uuid')}
-    
+
     active_uuid = None
     if 0 <= active_idx < len(l_jobs):
         active_uuid = l_jobs[active_idx].get('uuid')
-        
+
     merged_jobs = []
     seen_uuids = set()
-    
+
     for l_job in l_jobs:
         u = l_job.get('uuid')
         if not u: continue
-        
+
         if u in r_dict:
             # Modified in both. Favor Local if it's the active job, else Remote.
             if u == active_uuid:
@@ -347,11 +347,11 @@ def merge_queue_states(local, remote, base_uuids_str, active_idx=-1):
                 # Local added it. Keep it.
                 merged_jobs.append(l_job)
         seen_uuids.add(u)
-        
+
     for r_job in r_jobs:
         u = r_job.get('uuid')
         if not u or u in seen_uuids: continue
-        
+
         if u in base_uuids:
             # Local deleted it. Drop it.
             pass
@@ -368,7 +368,7 @@ def auto_save_batch(self, context):
     if not context or not context.scene: return
     # Avoid recursion or saving during load/write
     if _IS_LOADING_CONFIG or _IS_WRITING_BATCH: return
-    
+
     # Just call write_batch_file, which handles optimistic locking and 3-way merge
     write_batch_file(context)
 
@@ -405,17 +405,17 @@ def resolve_job_output_path(job, settings, blend_path):
     # 3. Cached Scene Default
     else:
         raw_path = job.sc_filepath
-        
+
     if not raw_path: return None
-        
+
     if raw_path.startswith("//"):
         base_dir = os.path.dirname(blend_path)
         abs_path = os.path.join(base_dir, raw_path[2:])
     else:
         abs_path = raw_path
-        
+
     abs_path = os.path.normpath(abs_path)
-    
+
     # If path doesn't look like a dir (e.g. C:/Out/Image_), get dirname
     if not abs_path.endswith(os.sep) and not os.path.isdir(abs_path):
         return os.path.dirname(abs_path)
@@ -432,17 +432,17 @@ def get_job_output_prefix(job, settings, blend_path):
     # 3. Cached Scene Default
     else:
         raw_path = job.sc_filepath
-        
+
     if not raw_path: return ""
-        
+
     if raw_path.startswith("//"):
         base_dir = os.path.dirname(blend_path)
         abs_path = os.path.join(base_dir, raw_path[2:])
     else:
         abs_path = raw_path
-        
+
     abs_path = os.path.normpath(abs_path)
-    
+
     # If path doesn't look like a dir (e.g. C:/Out/Image_), get basename
     if not abs_path.endswith(os.sep) and not os.path.isdir(abs_path):
         return os.path.basename(abs_path)
@@ -452,11 +452,11 @@ def get_frames_from_disk(directory, prefix=""):
     """Returns a set of integer frame numbers found in the directory, optionally filtered by strict prefix."""
     if not directory or not os.path.exists(directory):
         return set()
-        
+
     found_frames = set()
     try:
         files = os.listdir(directory)
-        
+
         # Determine Matching Strategy
         if prefix:
             # Strict: Must Start with Prefix + Digits + Ext
@@ -470,14 +470,14 @@ def get_frames_from_disk(directory, prefix=""):
         for f in files:
             if f.startswith("."): continue
             if prefix and not f.startswith(prefix): continue
-            
+
             match = regex.search(f)
             if match:
                 found_frames.add(int(match.group(1)))
-                
+
     except Exception:
         pass
-        
+
     return found_frames
 
 def scan_disk_frames(directory, prefix=""):
@@ -491,7 +491,7 @@ def get_existing_frame_files(directory, prefix=""):
     """Returns a list of absolute paths to frame files, optionally filtered by strict prefix."""
     if not directory or not os.path.exists(directory):
         return []
-        
+
     found_files = []
     try:
         files = os.listdir(directory)
@@ -499,35 +499,35 @@ def get_existing_frame_files(directory, prefix=""):
              regex = re.compile(r'^' + re.escape(prefix) + r'(\d+)\.[a-zA-Z0-9]+$')
         else:
              regex = re.compile(r'(\d+)\.[a-zA-Z0-9]+$')
-        
+
         for f in files:
             if f.startswith("."): continue
             if prefix and not f.startswith(prefix): continue
-            
+
             if regex.search(f):
                 found_files.append(os.path.join(directory, f))
-                
+
     except Exception:
         return []
-        
+
     return found_files
 
 def write_batch_file(context):
     """Writes the current queue to the batch file. Returns (path, None) or (None, error_msg)."""
     global _IS_WRITING_BATCH
-    if _IS_WRITING_BATCH: 
+    if _IS_WRITING_BATCH:
         return None, "Already writing"
-        
+
     _IS_WRITING_BATCH = True
     try:
         settings = context.scene.batch_render_settings
         queue = context.scene.batch_render_jobs
-        
+
 
         script_path, error = get_batch_file_path(context)
         if error:
             return None, error
-        
+
         base_dir = os.path.dirname(script_path)
         if not os.path.exists(base_dir):
             try:
@@ -539,7 +539,7 @@ def write_batch_file(context):
         lock_dir = script_path + ".lock"
         lock_acquired = False
         import time
-        
+
         for _ in range(10):
             try:
                 os.mkdir(lock_dir)
@@ -547,10 +547,10 @@ def write_batch_file(context):
                 break
             except FileExistsError:
                 time.sleep(0.1)
-                
+
         if not lock_acquired:
             print("BatchRender: Warning: Could not acquire write lock, proceeding anyway.")
-            
+
         try:
             if os.path.exists(script_path) and settings.last_known_mtime > 0:
                 curr_mtime = os.path.getmtime(script_path)
@@ -570,15 +570,15 @@ def write_batch_file(context):
                     try: os.rmdir(lock_dir)
                     except: pass
                 return None, "No jobs in queue"
-                
+
             blender_bin = bpy.app.binary_path
         except Exception as e:
             print(f"BatchRender: Merge Error: {e}")
             blender_bin = bpy.app.binary_path
-        
+
         lines = []
         is_windows = platform.system() == "Windows"
-        
+
         if is_windows:
             lines.append("@echo off")
             lines.append("cd /d \"%~dp0\"")
@@ -595,7 +595,7 @@ def write_batch_file(context):
             # lines.append("echo Locked > %LOCK_FILE%")
             lines.append("REM ------------------")
             lines.append("")
-            
+
             # Generate External Handler Script
             handler_script_path = os.path.join(base_dir, "batch_context_handler.py")
             try:
@@ -730,7 +730,7 @@ def write_batch_file(context):
                     hf.write("\n")
                     hf.write("smart_render_wrapper()\n")
             except:
-                print("Failed to write handler script") 
+                print("Failed to write handler script")
         else:
             lines.append("#!/bin/sh")
 
@@ -741,7 +741,7 @@ def write_batch_file(context):
         for k in settings.bl_rna.properties.keys():
             if k == "rna_type" or k == "batch_file_path": continue
             g_data[k] = getattr(settings, k)
-            
+
         g_json = json.dumps(g_data)
         if is_windows:
             lines.append(f"REM FLIP_BATCH_GLOBAL: {g_json}")
@@ -759,14 +759,14 @@ def write_batch_file(context):
                 job.sc_filepath = scn.render.filepath
 
         print(f"DEBUG: Processing {len(queue)} jobs...")
-        
+
         if is_windows and settings.use_queue_loop:
             lines.append(":LOOP_START")
             lines.append("REM --- Batch Queue Loop Start ---")
 
         for i, job in enumerate(queue):
             meta = {
-                'filepath': job.filepath, 
+                'filepath': job.filepath,
                 'uuid': job.uuid,
                 'scene_name': job.scene_name,
                 'enabled': job.enabled,
@@ -805,43 +805,43 @@ def write_batch_file(context):
                 lines.append(f"REM FLIP_BATCH_META: {meta_json}")
             else:
                 lines.append(f"# FLIP_BATCH_META: {meta_json}")
-                
+
             if not job.enabled:
                 continue
-            
+
             # Block PC Logic
             if is_windows and job.use_overrides and job.use_custom_block_list and job.blocked_computers:
                 cleaned = [x.strip() for x in job.blocked_computers.split(',') if x.strip()]
                 for pc in cleaned:
                     lines.append(f'if /I "%COMPUTERNAME%"=="{pc}" goto SKIP_JOB_{i}')
                 lines.append("")
-                
+
             cmd_parts = [f'"{blender_bin}"']
             if settings.use_background: cmd_parts.append("-b")
             cmd_parts.append(f'"{job.filepath}"')
             cmd_parts.append("-S")
             cmd_parts.append(f'"{job.scene_name}"')
-            
+
             use_out = False
             out_val = ""
-            
+
             if job.use_overrides and job.use_custom_output:
                 use_out = True
                 out_val = job.output_path
             elif settings.use_override_output:
                 use_out = True
                 out_val = settings.output_path
-            
+
             if use_out:
                 cmd_parts.extend(["-o", f'"{out_val}"'])
-                
+
             if settings.use_override_engine: cmd_parts.extend(["-E", settings.engine_type])
             if settings.use_override_format: cmd_parts.extend(["-F", settings.render_format])
             if settings.use_extension: cmd_parts.extend(["-x", "1"])
             if settings.use_threads: cmd_parts.extend(["-t", str(settings.threads)])
-            
+
             overrides = {}
-            
+
             if job.use_overrides and job.use_custom_samples:
                 overrides["cycles.samples"] = job.samples
             elif settings.use_override_samples:
@@ -850,11 +850,11 @@ def write_batch_file(context):
             if settings.use_override_denoising:
                 overrides["cycles.use_denoising"] = settings.denoising_state
                 if settings.denoising_state: overrides["cycles.denoiser"] = settings.denoiser_type
-                
+
             if settings.use_override_color_mode: overrides["render.image_settings.color_mode"] = settings.color_mode
             if settings.use_override_overwrite: overrides["render.use_overwrite"] = settings.use_overwrite
             if settings.use_override_placeholders: overrides["render.use_placeholder"] = settings.use_placeholders
-            
+
             # Resolve Chunking Settings
             do_chunking = False
             chunk_size = 10
@@ -885,7 +885,7 @@ def write_batch_file(context):
                     overrides["render.simplify_image_limit"] = settings.simplify_image_limit
                 elif hasattr(context.scene, "cycles") and hasattr(context.scene.cycles, "texture_limit_render"):
                      overrides["cycles.texture_limit_render"] = settings.simplify_image_limit
-                
+
             # Volumetrics Override
             if job.use_overrides and job.use_custom_volumetrics:
                 overrides["cycles.volume_biased"] = job.volume_biased
@@ -893,15 +893,15 @@ def write_batch_file(context):
             elif settings.use_override_volumetrics:
                 overrides["cycles.volume_biased"] = settings.volume_biased
                 overrides["cycles.volume_step_rate"] = settings.volume_step_rate
-            
+
             # Note: We no longer append to --python-expr.
             # We serialize 'overrides' to FLIP_BATCH_OVERRIDES env var later.
-            
+
             # Frame Range Logic
             use_frames = False
             start = 1
             end = 1
-            
+
             if job.use_overrides and job.use_custom_frames:
                 use_frames = True
                 start = job.frame_start
@@ -919,7 +919,7 @@ def write_batch_file(context):
             # Calculate Job ID & Progress Dir
             job_id_str = get_computed_job_id(job)
             progress_dir_abs = os.path.join(os.path.dirname(script_path), "progress")
-            
+
             # Set Environment Variables
             if is_windows:
                 lines.append(f'set FLIP_BATCH_ID={job_id_str}')
@@ -941,47 +941,47 @@ def write_batch_file(context):
             if do_chunking and is_windows:
                  # Resolve lock directory
                  # Since output path might be relative (//), we can't easily mkdir it from batch unless we are in the dir.
-                 # Strategy: Ensure "_chunks" exists. 
+                 # Strategy: Ensure "_chunks" exists.
                  # We will use attributes of the job to create a unique ID if paths are messy.
                  # Actually, output path is usually the most reliable "shared" location.
-                 
+
                  # Logic:
                  # Loop from start to end by chunk_size
                  total_frames = (end - start) + 1
                  if total_frames < 1: total_frames = 1
-                 
+
                  lines.append(f"REM --- Chunking Job: {job.scene_name} ({start}-{end}) ---")
                  # We need to make sure the output directory exists so we can make _chunks inside it
-                 # BUT, out_val might contain #### placeholders. 
+                 # BUT, out_val might contain #### placeholders.
                  # We should strip placeholders (digits, #) from the end to get the dir.
                  # Relying on 'out_val' string from UI.
-                 
+
                  # Simplification: Just assume out_val is a directory-like prefix or contains placeholders.
                  # If out_val ends with slash, it's a dir. If not, it might be filename.
                  # Let's try to append "_chunks".
-                 
-                 # Safe bet: Use a standard "render_chunks" folder next to the .bat file? 
+
+                 # Safe bet: Use a standard "render_chunks" folder next to the .bat file?
                  # No, needs to be shared storage.
                  # Use the Output Path.
-                 
+
                  lock_dir_rel = "chunks"
-                 
+
                  current = start
                  while current <= end:
                      c_end = min(current + chunk_size - 1, end)
-                     
+
                      # Chunk ID: {RobustID}_{Start}_{End}
                      chunk_id = f"{job_id_str}_{current}_{c_end}"
-                     
+
                      lock_name = f"{lock_dir_rel}\\{chunk_id}"
-                     
+
                      # Label for skipping this chunk
                      chunk_label = f"SKIP_{chunk_id}"
-                     
-                     lines.append(f"if exist \"{lock_name}.done\" GOTO {chunk_label}")
-                     
 
-                     
+                     lines.append(f"if exist \"{lock_name}.done\" GOTO {chunk_label}")
+
+
+
                      # Attempt Lock
                      # Clean up any previous error/log files if retrying automatically
                      if is_windows:
@@ -991,7 +991,7 @@ def write_batch_file(context):
                          # But shell redirection ">" overwrites anyway. So it's fine.
                      else:
                          lines.append(f"if [ -f \"{lock_name}.error\" ]; then rm \"{lock_name}.error\"; fi")
-                     
+
                      # Try to acquire lock
                      lines.append(f'mkdir "{lock_name}.lock" 2>nul')
                      lines.append(f'if errorlevel 1 (')
@@ -1009,8 +1009,8 @@ def write_batch_file(context):
                      else:
                           lines.append(f'    hostname > "{lock_name}.lock/owner"')
                      lines.append(f')')
-                     
-                     
+
+
                      # Set Env Vars for Wrapper
                      if is_windows:
                          lines.append(f"set FLIP_BATCH_CHUNK_MODE=1")
@@ -1022,17 +1022,17 @@ def write_batch_file(context):
                          lines.append(f"export FLIP_BATCH_CHUNK_ID=\"{chunk_id}\"")
                          lines.append(f"export FLIP_BATCH_CHUNK_START={current}")
                          lines.append(f"export FLIP_BATCH_CHUNK_END={c_end}")
-                     
+
                      # Run Command (Subset for chunk)
                      chunk_cmd = list(cmd_parts)
                      # No -- args needed, we use env vars.
                      # Just add -a (Animation) to trigger render
                      chunk_cmd.append("-a")
-                     
+
                      if settings.use_frame_jump: chunk_cmd.extend(["-j", str(settings.frame_jump)])
-                     
+
                      lines.append(" ".join(chunk_cmd))
-                     
+
                      # On Success: Create Done, Remove Lock
                      lines.append(f"if %errorlevel% neq 0 (")
                      if is_windows:
@@ -1049,8 +1049,8 @@ def write_batch_file(context):
                      if is_windows:
                          lines.append(f"    timeout /t 1 /nobreak >nul")
                          lines.append(f"    rmdir /s /q \"{lock_name}.lock\"")
-                         # Cleanup log if success? 
-                         # lines.append(f"    del \"{lock_name}.log\"") 
+                         # Cleanup log if success?
+                         # lines.append(f"    del \"{lock_name}.log\"")
                      else:
                          lines.append(f"    sleep 1")
                          lines.append(f"    rm -rf \"{lock_name}.lock\"")
@@ -1058,7 +1058,7 @@ def write_batch_file(context):
                      # Remove error file if it existed from previous run
                      lines.append(f"    if exist \"{lock_name}.error\" del \"{lock_name}.error\"")
                      lines.append(f")")
-                     
+
                      lines.append(f":{chunk_label}")
                      current += chunk_size
 
@@ -1066,8 +1066,8 @@ def write_batch_file(context):
                 # Standard Render (No Chunking)
                 cmd_parts.extend(["-s", str(start), "-e", str(end)])
                 if settings.use_frame_jump: cmd_parts.extend(["-j", str(settings.frame_jump)])
-                
-                if settings.use_specific_frame: 
+
+                if settings.use_specific_frame:
                     cmd_parts.extend(["-f", str(settings.specific_frame)]) # Overrides -s/-e/-a if present? No, -f is separate
                     # Actually logic above is mutually exclusive?
                     # The original code appended -f OR -a.
@@ -1084,25 +1084,25 @@ def write_batch_file(context):
                     # Re-eval:
                     final_cmd = []
                     # ... (Clean rebuild of args)
-                    
+
                 # Simplest fix: Just append assembled.
                 lines.append(" ".join(cmd_parts))
                 if is_windows: lines.append("if %errorlevel% neq 0 echo Error in previous command")
-                
+
             if is_windows:
                  lines.append(f"")
                  lines.append(f":SKIP_JOB_{i}")
                  lines.append(f"REM ------------------")
                  lines.append("")
 
-        if is_windows: 
+        if is_windows:
             # Only delete lock if NOT looping (since we stay alive)
             if not settings.use_queue_loop:
                 pass # lines.append("if exist %LOCK_FILE% del %LOCK_FILE%")
-            
+
             if settings.use_pause_at_end:
                  lines.append("pause")
-            
+
             if settings.use_queue_loop:
                  lines.append("timeout /t 5")
                  lines.append("goto LOOP_START")
@@ -1115,7 +1115,7 @@ def write_batch_file(context):
                 bak1 = script_path + ".bak1"
                 bak2 = script_path + ".bak2"
                 bak3 = script_path + ".bak3"
-                
+
                 if os.path.exists(bak2):
                     shutil.copy2(bak2, bak3)
                 if os.path.exists(bak1):
@@ -1127,7 +1127,7 @@ def write_batch_file(context):
         try:
             with open(script_path, 'w') as f:
                 f.write("\n".join(lines))
-                
+
             if not is_windows:
                 try:
                     st = os.stat(script_path)
@@ -1136,20 +1136,20 @@ def write_batch_file(context):
 
         except IOError as e:
             return None, f"Error writing file: {e}"
-            
+
         for job in queue:
             job.is_saved = True
         save_global_config(context)
-        
+
         # Update Timestamp (We just wrote it, so we are up to date)
         try:
             settings.last_known_mtime = os.path.getmtime(script_path)
             uuids = [j.uuid for j in queue if j.uuid]
             settings.last_known_uuids = ",".join(uuids)
         except: pass
-            
+
         return script_path, None
-        
+
     finally:
         if 'lock_dir' in locals() and lock_acquired:
             try: os.rmdir(lock_dir)
@@ -1168,30 +1168,30 @@ def write_batch_file(context):
 def get_computed_job_id(job):
     """Returns the robust Job ID (Sanitized Filename_SceneName_OutputHash)."""
     f_base = os.path.splitext(os.path.basename(job.filepath))[0]
-    
+
     # Calculate simple hash of the output path to uniquify the ID
     # This ensures that if we change output folder, we don't pick up old progress
     out_path = job.sc_filepath
     if job.use_overrides and job.use_custom_output:
         out_path = job.output_path
-        
-    # Use global settings if not overridden? 
+
+    # Use global settings if not overridden?
     # Technically "resolve_job_output_path" is better but we don't have access to 'settings' or 'context' here efficiently
     # and we want this ID to be stable based on the JOB properties.
-    # If the user uses Global Output, that might change for ALL jobs. 
+    # If the user uses Global Output, that might change for ALL jobs.
     # Ideally the ID should reflect where it writes.
-    
+
     # Let's stick to Job-local data + fallback to sc_filepath.
     if not out_path: out_path = ""
-    
+
     # Simple Hash (Adler32 or similar? just sum for now or built-in hash)
     # Use hex of hash
     import zlib
     path_hash = zlib.adler32(out_path.encode('utf-8')) & 0xffffffff
     hash_str = f"{path_hash:08x}"
-    
+
     raw_id = f"{f_base}_{job.scene_name}_{hash_str}"
-    
+
     # Strict sanitation: Allow only Alphanumeric, ., -, _
     return "".join(c for c in raw_id if c.isalnum() or c in ('_', '-', '.'))
 
@@ -1212,19 +1212,19 @@ def get_job_progress_frames(job, batch_path):
     Receipt format: {Job_ID}_{Frame}.done
     """
     if not batch_path: return set()
-    
+
     progress_dir = os.path.join(os.path.dirname(batch_path), "progress")
     # print(f"DEBUG: Scanning progress dir: {progress_dir}") # Noise
     if not os.path.exists(progress_dir):
         print(f"DEBUG: Progress dir not found: {progress_dir}")
         return set()
-        
+
     job_id = get_computed_job_id(job)
     prefix = f"{job_id}_"
-    
+
     finished_frames = set()
     regex = re.compile(rf"{re.escape(job_id)}_(\d+)\.done$")
-    
+
     try:
         files = os.listdir(progress_dir)
         # print(f"DEBUG: Found {len(files)} files in progress dir")
@@ -1235,21 +1235,21 @@ def get_job_progress_frames(job, batch_path):
                  if m:
                      finished_frames.add(int(m.group(1)))
                      found_any = True
-        
+
         if not found_any:
             print(f"DEBUG: No receipts found for JobID: {job_id} (Prefix: {prefix})")
-            
+
     except Exception as e:
         print(f"DEBUG: Error scanning progress: {e}")
         pass
-        
+
     return finished_frames
 
 def refresh_job_chunks(job, settings, batch_path):
     # Resolve Chunk Settings
     do_chunking = False
     chunk_size = 10
-    
+
     # Priority: Job Override > Global Override > False
     if job.use_overrides and job.use_custom_chunking:
         do_chunking = job.use_chunking
@@ -1257,11 +1257,11 @@ def refresh_job_chunks(job, settings, batch_path):
     elif settings.use_chunking: # Global
         do_chunking = True
         chunk_size = settings.chunk_size
-        
+
     if not do_chunking:
          job.chunks.clear()
          return
-         
+
     # Resolve Range
     start = job.sc_frame_start
     end = job.sc_frame_end
@@ -1271,24 +1271,24 @@ def refresh_job_chunks(job, settings, batch_path):
     elif settings.use_override_frames:
         start = settings.frame_start
         end = settings.frame_end
-        
+
     job.chunks.clear()
-    
+
     current = start
     while current <= end:
         c_end = min(current + chunk_size - 1, end)
-        
+
         item = job.chunks.add()
         item.name = f"{current}-{c_end}"
         item.start = current
         item.end = c_end
         item.owner = ""
-        
+
         lock_file, done_file = resolve_chunk_paths(batch_path, job, current, c_end)
-        
+
         # Check Error File
         error_file = lock_file.replace('.lock', '.error')
-        
+
         if os.path.exists(done_file):
             item.status = "Done"
             item.icon = "CHECKBOX_HLT"
@@ -1298,7 +1298,7 @@ def refresh_job_chunks(job, settings, batch_path):
         elif os.path.exists(lock_file):
             item.status = "Rendering"
             item.icon = "TIME"
-            
+
             # Pruning Logic
             is_stale = False
             if settings.chunk_timeout > 0:
@@ -1308,41 +1308,41 @@ def refresh_job_chunks(job, settings, batch_path):
                     check_time = os.path.getmtime(hb_file)
                 else:
                     check_time = os.path.getmtime(lock_file)
-                
+
                 limit_seconds = settings.chunk_timeout * 60
                 if (datetime.datetime.now().timestamp() - check_time) > limit_seconds:
                      is_stale = True
-            
+
             if is_stale:
                 try:
                     shutil.rmtree(lock_file, ignore_errors=True)
                     print(f"BatchRender: Pruned stale chunk {item.name}")
                 except Exception as e:
                     print(f"BatchRender: Failed to prune {lock_file}: {e}")
-                
+
                 item.status = "Pending"
                 item.icon = "CHECKBOX_DEHLT"
             else:
                 # Read Owner
                 owner_path = os.path.join(lock_file, "owner")
                 if os.path.exists(owner_path):
-                    try: 
+                    try:
                         with open(owner_path, 'r') as f:
                             item.owner = f.read().strip()
                     except: pass
         else:
             item.status = "Pending"
             item.icon = "CHECKBOX_DEHLT"
-        
+
         current += chunk_size
-        
+
     # Calculate Chunk Progress
     total_chunks = len(job.chunks)
     done_chunks = 0
     for c in job.chunks:
         if c.status == 'Done':
             done_chunks += 1
-            
+
     if total_chunks > 0:
         job.cached_chunk_progress = (done_chunks / total_chunks) * 100.0
     else:
@@ -1360,18 +1360,18 @@ def realign_job_chunks_logic(job, settings, batch_path):
     base_dir = os.path.dirname(batch_path)
     chunks_dir = os.path.join(base_dir, "chunks")
     # chunks_dir might not exist yet if no render started, but we need to clear it if it does
-    
+
     # 1. Gather finished frames FROM PROGRESS RECEIPTS (Truth)
     finished_frames = get_job_progress_frames(job, batch_path)
-    
+
     # 2. Delete ALL old chunk files for this job
     # We clean both Legacy (SceneName) and Robust (ID) to ensure clean slate.
     robust_id = get_computed_job_id(job)
     legacy_id = re.sub(r'[^a-zA-Z0-9]', '_', job.scene_name)
-    
+
     robust_prefix = f"{robust_id}_"
     legacy_prefix = f"{legacy_id}_"
-    
+
     if os.path.exists(chunks_dir):
         try:
             for f in os.listdir(chunks_dir):
@@ -1384,7 +1384,7 @@ def realign_job_chunks_logic(job, settings, batch_path):
         except Exception as e:
             print(f"Error clearing chunks: {e}")
             return
-    
+
     # 3. Regenerate & Apply
     do_chunking = False
     chunk_size = 10
@@ -1394,7 +1394,7 @@ def realign_job_chunks_logic(job, settings, batch_path):
     elif settings.use_chunking:
         do_chunking = True
         chunk_size = settings.chunk_size
-        
+
     if not do_chunking or chunk_size < 1:
         job.chunks.clear()
         return
@@ -1407,27 +1407,27 @@ def realign_job_chunks_logic(job, settings, batch_path):
     elif settings.use_override_frames:
         start = settings.frame_start
         end = settings.frame_end
-        
+
     current = start
     while current <= end:
         c_end = min(current + chunk_size - 1, end)
-        
+
         # Check if this NEW chunk is fully present on disk
         is_fully_done = True
         for f in range(current, c_end + 1):
             if f not in finished_frames:
                 is_fully_done = False
                 break
-        
+
         if is_fully_done:
             # Create .done file
             _, done_file = resolve_chunk_paths(batch_path, job, current, c_end)
             try:
                 with open(done_file, 'w') as f: f.write("realigned")
             except: pass
-            
+
         current += chunk_size
-        
+
     # Finally, refresh UI list
     refresh_job_chunks(job, settings, batch_path)
 
@@ -1438,7 +1438,7 @@ def update_realign_chunks(self, context):
     # self is either BatchRenderJob or BatchRenderSettings?
     # If settings, iterate all jobs.
     # If job, just that job.
-    
+
     scene = context.scene
     settings = scene.batch_render_settings
     batch_path, _ = get_batch_file_path(context)
@@ -1454,7 +1454,7 @@ def update_realign_chunks(self, context):
         # Job Update
         # self is the job
         realign_job_chunks_logic(self, settings, batch_path)
-        
+
     # Manual Save Only: Do NOT auto-save here.
     # auto_save_batch(self, context)
 
@@ -1476,31 +1476,31 @@ class BatchRenderJob(bpy.types.PropertyGroup):
     is_saved: BoolProperty(name="Saved", default=False) # Internal, no update
     enabled: BoolProperty(name="Enabled", default=True)
     selected: BoolProperty(name="Selected", default=False)
-    
+
     # Cached Scene Info
     sc_frame_start: IntProperty(name="Start", default=0)
     sc_frame_end: IntProperty(name="End", default=0)
     sc_filepath: StringProperty(name="Scene Output Path", default="")
-    
+
     # Progress Info
     frames_on_disk: StringProperty(name="Frames on Disk", default="")
     # Runtime cache for progress bars
     cached_progress: FloatProperty(name="Disk Progress", default=0.0)
     cached_chunk_progress: FloatProperty(name="Chunk Progress", default=0.0)
-    
+
     # Overrides
     use_overrides: BoolProperty(name="Override Global Settings", default=False)
-    
+
     use_custom_frames: BoolProperty(name="Override Frame Range", default=False)
     frame_start: IntProperty(name="Start", default=1)
     frame_end: IntProperty(name="End", default=250)
-    
+
     use_custom_samples: BoolProperty(name="Override Samples", default=False)
     samples: IntProperty(name="Samples", default=128, min=1)
-    
+
     use_custom_output: BoolProperty(name="Override Output", default=False)
     output_path: StringProperty(name="Output Path", subtype='DIR_PATH', default="//")
-    
+
     use_custom_persistent_data: BoolProperty(name="Override Persistent Data", default=False)
     persistent_data: BoolProperty(name="Persistent Data", default=False)
 
@@ -1522,7 +1522,7 @@ class BatchRenderJob(bpy.types.PropertyGroup):
         ],
         default='0'
     )
-    
+
     # Volumetrics
     use_custom_volumetrics: BoolProperty(name="Override Volumetrics", default=False)
     volume_biased: BoolProperty(name="Biased", default=True)
@@ -1532,9 +1532,9 @@ class BatchRenderJob(bpy.types.PropertyGroup):
     use_custom_chunking: BoolProperty(name="Override Chunking", default=False)
     use_chunking: BoolProperty(name="Use Chunking", default=False)
     chunk_size: IntProperty(name="Chunk Size", default=10, min=1, update=update_realign_chunks)
-    
+
     chunks: CollectionProperty(type=BatchRenderChunk)
-    
+
     # Block List
     use_custom_block_list: BoolProperty(name="Override Block List", default=False)
     blocked_computers: StringProperty(name="Blocked Computers", default="", description="Comma-separated list of PC names to block")
@@ -1546,36 +1546,36 @@ class BatchRenderJob(bpy.types.PropertyGroup):
 def batch_render_auto_refresh_timer():
     context = bpy.context
     if not context or not context.scene: return 5.0
-    
+
     try:
         settings = context.scene.batch_render_settings
         batch_path, _ = get_batch_file_path(context)
-        
-        # 1. Sync Check (Always check, even if auto-refresh is off? 
+
+        # 1. Sync Check (Always check, even if auto-refresh is off?
         # No, let's tie it to auto-refresh OR run a separate slower timer?
         # User implies "Sync" is a new feature. Let's assume enabled by Auto-Refresh for now
         # OR force it to always run slowly?
-        # Let's run Sync check regardless of 'use_auto_refresh' property? 
+        # Let's run Sync check regardless of 'use_auto_refresh' property?
         # But the function is registered via that property.
         # Ideally Sync is always on. But for now, let's use the same timer.
-        
+
         # Wait, if we use the same timer, we must enable it. but user might not want "Check Progress" spam.
-        # Let's decouple Sync from Check Progress. 
+        # Let's decouple Sync from Check Progress.
         # Check Progress is expensive (disk IO). Sync Check (getmtime) is cheap.
-        
+
         # 1. Sync Check REMOVED (Manual Save Only)
         # We no longer check mtime or reload automatically.
-        
+
         # 2. Progress Check (Only if enabled)
         if settings.use_auto_refresh:
             if batch_path:
                 for job in context.scene.batch_render_jobs:
                      refresh_job_chunks(job, settings, batch_path)
-                     
+
     except Exception as e:
         # print(f"Timer Error: {e}")
         return 10.0
-    
+
     # If auto-refresh is off, we still want to run for Sync?
     # Current logic: `update_auto_refresh_timer` registers/unregisters this.
     # So if OFF, this doesn't run.
@@ -1584,7 +1584,7 @@ def batch_render_auto_refresh_timer():
     # Let's keep it simple: Sync works when Auto-Check is ON.
     # User Request: "make sure everything we do autosaves".
     # Sync implies always on. I should probably change registration logic.
-    
+
     return float(settings.auto_refresh_interval)
 
 def update_auto_refresh_timer(self, context):
@@ -1594,43 +1594,43 @@ def update_auto_refresh_timer(self, context):
     else:
         if bpy.app.timers.is_registered(batch_render_auto_refresh_timer):
             bpy.app.timers.unregister(batch_render_auto_refresh_timer)
-            
+
     # Trigger auto-save to persist the toggle state
     auto_save_batch(self, context)
 
 class BatchRenderSettings(bpy.types.PropertyGroup):
     use_background: BoolProperty(name="Background (-b)", default=True)
-    
+
     use_override_frames: BoolProperty(name="Override Frame Range", default=False)
     frame_start: IntProperty(name="Start (-s)", default=1)
     frame_end: IntProperty(name="End (-e)", default=250)
-    
+
     use_specific_frame: BoolProperty(name="Render Specific Frame (-f)", default=False)
     specific_frame: IntProperty(name="Frame", default=1)
-    
+
     use_frame_jump: BoolProperty(name="Frame Jump (-j)", default=False)
     frame_jump: IntProperty(name="Jump Step", default=1)
-    
+
     use_override_output: BoolProperty(name="Override Output (-o)", default=False)
     output_path: StringProperty(name="Output Path", subtype='DIR_PATH', default="//render_out")
     use_extension: BoolProperty(name="Use Extension (-x)", default=True)
     use_pause_at_end: BoolProperty(name="Pause at End", default=False)
-    
+
     use_override_engine: BoolProperty(name="Override Engine (-E)", default=False)
     engine_type: EnumProperty(
         items=[('CYCLES', "Cycles", ""), ('BLENDER_EEVEE', "Eevee", ""), ('BLENDER_WORKBENCH', "Workbench", "")],
         default='CYCLES'
     )
-    
+
     use_threads: BoolProperty(name="Set Threads (-t)", default=False)
     threads: IntProperty(name="Threads", default=0, min=0, max=1024)
-    
+
     use_cycles_device: BoolProperty(name="Set Cycles Device", default=False)
     cycles_device: EnumProperty(
         items=[('CPU', "CPU", ""), ('CUDA', "CUDA", ""), ('OPTIX', "OPTIX", ""), ('HIP', "HIP", ""), ('ONEAPI', "ONEAPI", ""), ('METAL', "METAL", "")],
         default='CUDA'
     )
-    
+
     use_override_format: BoolProperty(name="Override Format (-F)", default=False)
     render_format: EnumProperty(
         items=[('PNG', "PNG", ""), ('JPEG', "JPEG", ""), ('OPEN_EXR', "OpenEXR", ""), ('TIFF', "TIFF", ""), ('TGA', "Targa", "")],
@@ -1639,20 +1639,20 @@ class BatchRenderSettings(bpy.types.PropertyGroup):
 
     use_override_samples: BoolProperty(name="Override Samples", default=False)
     samples: IntProperty(name="Samples", default=128, min=1)
-    
+
     use_override_denoising: BoolProperty(name="Override Denoising", default=False)
     denoising_state: BoolProperty(name="Denoising", default=True)
     denoiser_type: EnumProperty(items=[('OPTIX', "OptiX", ""), ('OPENIMAGEDENOISE', "OpenImageDenoise", "")], default='OPTIX')
-    
+
     use_override_color_mode: BoolProperty(name="Override Color Mode", default=False)
     color_mode: EnumProperty(items=[('BW', "BW", ""), ('RGB', "RGB", ""), ('RGBA', "RGBA", "")], default='RGBA')
-    
+
     use_override_overwrite: BoolProperty(name="Override Overwrite", default=False)
     use_overwrite: BoolProperty(name="Overwrite Existing", default=True)
-    
+
     use_override_persistent_data: BoolProperty(name="Override Persistent Data", default=False)
     persistent_data: BoolProperty(name="Persistent Data", default=False)
-    
+
     # Simplify
     use_override_simplify: BoolProperty(name="Override Simplify", default=False)
     simplify_use: BoolProperty(name="Simplify", default=True)
@@ -1671,21 +1671,21 @@ class BatchRenderSettings(bpy.types.PropertyGroup):
         ],
         default='0'
     )
-    
+
     # Volumetrics
     use_override_volumetrics: BoolProperty(name="Override Volumetrics", default=False)
     volume_biased: BoolProperty(name="Biased", default=True)
     volume_step_rate: FloatProperty(name="Max Step Size", default=1.0, precision=2)
-    
+
     use_override_placeholders: BoolProperty(name="Override Placeholders", default=False)
     use_placeholders: BoolProperty(name="Placeholders", default=False)
-    
+
     # Chunking
     use_override_chunking: BoolProperty(name="Override Chunking", default=False)
     use_chunking: BoolProperty(name="Use Chunking", default=False)
     # Default chunk size 10
     chunk_size: IntProperty(name="Chunk Size", default=10, min=1, update=update_realign_chunks)
-    
+
     # UI State
     show_file_config: BoolProperty(default=False)
     show_job_queue: BoolProperty(default=True)
@@ -1694,34 +1694,34 @@ class BatchRenderSettings(bpy.types.PropertyGroup):
     show_chunk_details: BoolProperty(name="Show Details", default=False)
     show_global_options: BoolProperty(default=False)
     show_queue_overrides: BoolProperty(default=False)
-    
+
     # Advanced / Loop
     use_queue_loop: BoolProperty(
-        name="Loop Queue", 
-        description="Automatically restart the batch queue when finished (Ctrl+C to stop)", 
+        name="Loop Queue",
+        description="Automatically restart the batch queue when finished (Ctrl+C to stop)",
         default=False
     )
-    
+
     chunk_timeout: IntProperty(
-        name="Chunk Timeout (min)", 
-        description="Max time (minutes) since last heartbeat before a chunk is considered crashed and reset. 0 = Disabled", 
-        default=0, 
+        name="Chunk Timeout (min)",
+        description="Max time (minutes) since last heartbeat before a chunk is considered crashed and reset. 0 = Disabled",
+        default=0,
         min=0
     )
-    
+
     # Auto-Refresh & Sync
     use_auto_refresh: BoolProperty(name="Auto Progress Check", default=False, description="Automatically check for progress and prune stale chunks", update=update_auto_refresh_timer)
     auto_refresh_interval: IntProperty(name="Interval (s)", default=10, min=1, description="Seconds between progress checks", update=auto_save_batch)
-    
-    
+
+
     # Sync tracking
     last_known_mtime: FloatProperty(default=0.0)
     last_known_uuids: StringProperty(default="")
 
     batch_file_path: StringProperty(
 
-        name="Batch File", 
-        subtype='FILE_PATH', 
+        name="Batch File",
+        subtype='FILE_PATH',
         default="//batch_render.bat",
         description="Full path to the batch script",
         update=update_batch_location
@@ -1741,13 +1741,13 @@ class BATCH_RENDER_UL_chunks(bpy.types.UIList):
         row = layout.row(align=True)
         row.prop(item, "selected", text="")
         row.label(text=item.name)
-        
+
         # Status
         icon_name = "FILE_BLANK"
         if hasattr(item, "icon"): icon_name = item.icon
-            
+
         row.label(text=item.status, icon=icon_name)
-        
+
         if item.owner:
             row.label(text=f"({item.owner})", icon='DESKTOP')
 
@@ -1755,58 +1755,58 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname):
         # | Enabled | File (25%) | Scene (25%) | Range (15%) | % (10%) | Disk (25%) |
-        
+
         row = layout.row(align=True)
-        
+
         # Col 0: Controls
         # Split Checkbox automatically isolates it
         split = row.split(factor=0.04)
-        
+
         # Left: Checkbox (Enabled)
         left_col = split.column()
         left_col.prop(item, "enabled", text="", icon_only=True)
-        
+
         # Right: Content (Disabled if job is disabled)
         right_col = split.column()
         right_col.enabled = item.enabled
-        
+
         # Build Content Row inside Right
         sub = right_col.row(align=True)
-        
+
         # Check for active rendering chunks
         is_rendering = False
         for c in item.chunks:
             if c.status == 'Rendering':
                 is_rendering = True
                 break
-                
+
         icon_status = 'FILE_TICK' if item.is_saved else 'FILE_NEW'
         if is_rendering:
             icon_status = 'TIME'
-            
+
         sub.label(text="", icon=icon_status)
-        
+
         # Split remaining
-        data_row = sub.split(factor=0.5) 
-        
+        data_row = sub.split(factor=0.5)
+
         # Col 1: File
         file_part = data_row
         fname = os.path.basename(item.filepath)
         file_part.label(text=fname, icon='FILE_BLEND')
-        
+
         scene_row = data_row.split(factor=0.37)
-        
+
         # Col 2: Scene
         scene_part = scene_row
         scene_part.label(text=item.scene_name, icon='SCENE_DATA')
-        
+
         range_row = scene_row.split(factor=0.24)
-        
+
         # Col 3: Range
         range_part = range_row
         start = item.sc_frame_start
         end = item.sc_frame_end
-        
+
         # Use overridden range if active for calculating percentage
         calc_start = start
         calc_end = end
@@ -1822,12 +1822,12 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
         else:
             range_txt = f"{calc_start}-{calc_end}"
         range_part.label(text=range_txt)
-        
+
         percent_row = range_row.split(factor=0.5)
-        
+
         # Col 4: Percent
         pct_part = percent_row
-        
+
         chunk_pct = item.get('cached_chunk_progress', 0.0)
         disk_pct = item.get('cached_progress', 0.0)
         pct_part.label(text=f"{chunk_pct:.0f}%")
@@ -1836,7 +1836,7 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
         #disk_part = percent_row
         #disk_txt = item.frames_on_disk if item.frames_on_disk else "-"
         #disk_part.label(text=disk_txt)
-        
+
         # if not item.enabled:
         #    data_row.enabled = False
 
@@ -1852,18 +1852,18 @@ class BATCH_RENDER_OT_scan_disk(bpy.types.Operator):
     bl_idname = "batch_render.scan_disk"
     bl_label = "Check Progress"
     bl_description = "Scan output folders for rendered frames (Fast)"
-    
+
     def execute(self, context):
         queue = context.scene.batch_render_jobs
         settings = context.scene.batch_render_settings
         # Pre-resolve batch path for chunk scanning
         batch_path, _ = get_batch_file_path(context)
-        
+
         has_changes = False
         count = 0
         for i, job in enumerate(queue):
             # if not job.enabled: continue # User requested scan all
-            
+
             # Resolve range for progress calculation
             start = job.sc_frame_start
             end = job.sc_frame_end
@@ -1873,33 +1873,33 @@ class BATCH_RENDER_OT_scan_disk(bpy.types.Operator):
             elif settings.use_override_frames:
                 start = settings.frame_start
                 end = settings.frame_end
-                
+
             total_frames = max(1, (end - start) + 1)
-            
+
             # Use Progress Receipts (Truth)
             # Use Progress Receipts (Truth)
             if batch_path:
                 found_frames_set = get_job_progress_frames(job, batch_path)
-                
+
                 # Check Disk Files (Legacy/Fallback/Pre-existing)
                 # We ALWAYS check disk to account for pre-existing frames (Skip Existing support)
                 out_path = resolve_job_output_path(job, settings, job.filepath)
                 out_prefix = get_job_output_prefix(job, settings, job.filepath)
-                
+
                 disk_frames_set = set()
                 if out_path and os.path.exists(out_path):
                      disk_frames_set = get_frames_from_disk(out_path, prefix=out_prefix)
 
                 # Merge sets
                 final_set = found_frames_set.union(disk_frames_set)
-                
+
                 # Filter to Job Range ONLY
-                # This ensures we don't count "junk" frames (e.g. 1, 10, 20 from test renders) 
+                # This ensures we don't count "junk" frames (e.g. 1, 10, 20 from test renders)
                 # that fall outside the current render target.
                 filtered_set = {f for f in final_set if start <= f <= end}
-                
+
                 found_count = len(filtered_set)
-                
+
                 if filtered_set:
                      job.frames_on_disk = format_frame_ranges(list(filtered_set))
                 else:
@@ -1909,46 +1909,46 @@ class BATCH_RENDER_OT_scan_disk(bpy.types.Operator):
                 new_prog = 0.0
                 if total_frames > 0:
                      new_prog = (found_count / total_frames) * 100.0
-                
+
                 if abs(new_prog - old_prog) > 0.01:
                     job['cached_progress'] = new_prog
                 else:
                     job['cached_progress'] = new_prog # Update anyway for float precision, but don't force write yet?
-                    
+
                 if found_count > 0: count += 1
-                
+
             else:
                  job.frames_on_disk = "?"
                  job['cached_progress'] = 0.0
-            
+
             # Refresh chunk status for this job
             if batch_path:
                 # Capture old chunk progress
                 old_chunk_prog = job.get('cached_chunk_progress', 0.0)
-                
+
                 refresh_job_chunks(job, settings, batch_path)
-                
+
                 new_chunk_prog = job.get('cached_chunk_progress', 0.0)
-                
+
                 # If progress changed, we need to save
                 # Check both disk and chunk progress for changes
                 disk_diff = abs(job.get('cached_progress', 0.0) - old_prog)
                 chunk_diff = abs(new_chunk_prog - old_chunk_prog)
-                
+
                 if disk_diff > 0.01 or chunk_diff > 0.01:
                     pass # We always write now
-                
+
         # Persist the updated progress data ALWAYS (Reverted optimization)
         write_batch_file(context)
-                
-        self.report({'INFO'}, f"Scanned progress for {len(queue)} jobs") 
+
+        self.report({'INFO'}, f"Scanned progress for {len(queue)} jobs")
         return {'FINISHED'}
 
 class BATCH_RENDER_OT_scan_job_chunks(bpy.types.Operator):
     bl_idname = "batch_render.scan_job_chunks"
     bl_label = "Refresh Chunk Status"
     bl_description = "Check lock/done files in chunks folder"
-    
+
     def execute(self, context):
         idx = context.scene.batch_render_active_job_index
         queue = context.scene.batch_render_jobs
@@ -1963,36 +1963,36 @@ class BATCH_RENDER_OT_set_chunk_status(bpy.types.Operator):
     bl_idname = "batch_render.set_chunk_status"
     bl_label = "Set Status"
     bl_description = "Manually set chunk status"
-    
+
     action: EnumProperty(
         items=[
             ('DONE', "Set Done", "Mark chunk as completed"),
             ('PENDING', "Set Pending", "Reset chunk to pending (clear lock/done)")
         ]
     )
-    
+
     def execute(self, context):
         idx = context.scene.batch_render_active_job_index
         queue = context.scene.batch_render_jobs
         if idx < 0 or idx >= len(queue): return {'CANCELLED'}
         job = queue[idx]
-        
+
         chunks = get_target_chunks(context, job)
         if not chunks: return {'CANCELLED'}
-        
+
         batch_path, _ = get_batch_file_path(context)
         if not batch_path: return {'CANCELLED'}
-        
+
         # Common paths
         base_dir = os.path.dirname(batch_path)
         progress_dir = os.path.join(base_dir, "progress")
         j_id = get_computed_job_id(job)
-        
+
         count = 0
-        
+
         for chunk in chunks:
             lock_file, done_file = resolve_chunk_paths(batch_path, job, chunk.start, chunk.end)
-            
+
             try:
                 if self.action == 'DONE':
                     # Ensure chunks dir exists
@@ -2002,7 +2002,7 @@ class BATCH_RENDER_OT_set_chunk_status(bpy.types.Operator):
                     # Remove lock if exists
                     if os.path.exists(lock_file):
                         shutil.rmtree(lock_file, ignore_errors=True)
-                    
+
                     # Create frame receipts
                     if not os.path.exists(progress_dir): os.makedirs(progress_dir)
                     for f_num in range(chunk.start, chunk.end + 1):
@@ -2010,13 +2010,13 @@ class BATCH_RENDER_OT_set_chunk_status(bpy.types.Operator):
                         if not os.path.exists(receipt):
                             try: open(receipt, 'w').close()
                             except: pass
-                        
+
                 elif self.action == 'PENDING':
                     if os.path.exists(done_file):
                         os.remove(done_file)
                     if os.path.exists(lock_file):
                         shutil.rmtree(lock_file, ignore_errors=True)
-                    
+
                     # Remove frame receipts
                     if os.path.exists(progress_dir):
                         for f_num in range(chunk.start, chunk.end + 1):
@@ -2030,7 +2030,7 @@ class BATCH_RENDER_OT_set_chunk_status(bpy.types.Operator):
 
         # Refresh status immediately
         refresh_job_chunks(job, context.scene.batch_render_settings, batch_path)
-        
+
         self.report({'INFO'}, f"Updated {count} chunks")
         return {'FINISHED'}
 
@@ -2038,7 +2038,7 @@ class BATCH_RENDER_OT_set_job_pending(bpy.types.Operator):
     bl_idname = "batch_render.set_job_pending"
     bl_label = "Restart Job"
     bl_description = "Clear all chunk progress (delete .done/.lock files) for this job"
-    
+
     @classmethod
     def poll(cls, context):
         queue = context.scene.batch_render_jobs
@@ -2051,20 +2051,20 @@ class BATCH_RENDER_OT_set_job_pending(bpy.types.Operator):
 
         settings = context.scene.batch_render_settings
         batch_path, _ = get_batch_file_path(context)
-        if not batch_path: 
+        if not batch_path:
             self.report({'ERROR'}, "Batch file not saved")
             return {'CANCELLED'}
-        
+
         base_dir = os.path.dirname(batch_path)
         chunks_dir = os.path.join(base_dir, "chunks")
         progress_dir = os.path.join(base_dir, "progress")
-        
+
         total_count = 0
-        
+
         for idx, job in targets:
             robust_id = get_computed_job_id(job)
             legacy_id = re.sub(r'[^a-zA-Z0-9]', '_', job.scene_name)
-            
+
             # 1. Clear Chunks (Legacy + Robust)
             if os.path.exists(chunks_dir):
                 try:
@@ -2076,7 +2076,7 @@ class BATCH_RENDER_OT_set_job_pending(bpy.types.Operator):
                             total_count += 1
                 except Exception as e:
                     print(f"Error clearing chunks: {e}")
-    
+
             # 2. Clear Progress Receipts (Robust Only)
             if os.path.exists(progress_dir):
                 try:
@@ -2088,10 +2088,10 @@ class BATCH_RENDER_OT_set_job_pending(bpy.types.Operator):
                             total_count += 1
                 except Exception as e:
                     print(f"Error clearing progress: {e}")
-    
+
             # Refresh UI
             refresh_job_chunks(job, settings, batch_path)
-            
+
         self.report({'INFO'}, f"Cleared {total_count} files for {len(targets)} jobs")
         return {'FINISHED'}
 
@@ -2099,7 +2099,7 @@ class BATCH_RENDER_OT_set_job_done(bpy.types.Operator):
     bl_idname = "batch_render.set_job_done"
     bl_label = "Set Job Done"
     bl_description = "Mark all chunks and frames as Done for this job"
-    
+
     @classmethod
     def poll(cls, context):
         queue = context.scene.batch_render_jobs
@@ -2109,28 +2109,28 @@ class BATCH_RENDER_OT_set_job_done(bpy.types.Operator):
     def execute(self, context):
         targets = get_target_jobs(context)
         if not targets: return {'CANCELLED'}
-        
+
         settings = context.scene.batch_render_settings
         batch_path, _ = get_batch_file_path(context)
-        if not batch_path: 
+        if not batch_path:
             self.report({'ERROR'}, "Batch file not saved")
             return {'CANCELLED'}
-            
+
         base_dir = os.path.dirname(batch_path)
         chunks_dir = os.path.join(base_dir, "chunks")
         progress_dir = os.path.join(base_dir, "progress")
         os.makedirs(chunks_dir, exist_ok=True)
         os.makedirs(progress_dir, exist_ok=True)
-        
+
         count_c = 0
         count_f = 0
-        
+
         for idx, job in targets:
             robust_id = get_computed_job_id(job)
-            
+
             if not job.chunks:
                 refresh_job_chunks(job, settings, batch_path)
-                
+
             for chunk in job.chunks:
                 lock_file, done_file = resolve_chunk_paths(batch_path, job, chunk.start, chunk.end)
                 if not os.path.exists(done_file):
@@ -2138,11 +2138,11 @@ class BATCH_RENDER_OT_set_job_done(bpy.types.Operator):
                         with open(done_file, 'w') as f: f.write("done")
                         count_c += 1
                     except: pass
-                
+
                 if os.path.exists(lock_file):
                     try: shutil.rmtree(lock_file, ignore_errors=True)
                     except: pass
-                    
+
                 for f_num in range(chunk.start, chunk.end + 1):
                     receipt = os.path.join(progress_dir, f"{robust_id}_{f_num}.done")
                     if not os.path.exists(receipt):
@@ -2150,9 +2150,9 @@ class BATCH_RENDER_OT_set_job_done(bpy.types.Operator):
                             open(receipt, 'w').close()
                             count_f += 1
                         except: pass
-                        
+
             refresh_job_chunks(job, settings, batch_path)
-            
+
         self.report({'INFO'}, f"Marked {count_c} chunks and {count_f} frames as Done")
         return {'FINISHED'}
 
@@ -2162,7 +2162,7 @@ class BATCH_RENDER_OT_archive_frames(bpy.types.Operator):
     bl_idname = "batch_render.archive_frames"
     bl_label = "Archive Frames"
     bl_description = "Move existing rendered frames to a timestamped subfolder"
-    
+
     @classmethod
     def poll(cls, context):
         queue = context.scene.batch_render_jobs
@@ -2172,27 +2172,27 @@ class BATCH_RENDER_OT_archive_frames(bpy.types.Operator):
     def execute(self, context):
         targets = get_target_jobs(context)
         if not targets: return {'CANCELLED'}
-        
+
         settings = context.scene.batch_render_settings
         total_count = 0
-        
+
         for idx, job in targets:
             out_path = resolve_job_output_path(job, settings, job.filepath)
             if not out_path or not os.path.exists(out_path): continue
-            
+
             files_to_move = get_existing_frame_files(out_path)
             if not files_to_move: continue
-            
+
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             archive_name = f"Archive_{timestamp}"
             archive_path = os.path.join(out_path, archive_name)
-            
+
             try:
                 os.makedirs(archive_path)
             except OSError as e:
                 print(f"Failed to create archive folder for {job.scene_name}: {e}")
                 continue
-                
+
             count = 0
             for src in files_to_move:
                 fname = os.path.basename(src)
@@ -2203,7 +2203,7 @@ class BATCH_RENDER_OT_archive_frames(bpy.types.Operator):
                 except Exception as e:
                     print(f"Failed to move {src}: {e}")
             total_count += count
-                
+
         self.report({'INFO'}, f"Archived {total_count} frames for {len(targets)} jobs")
         bpy.ops.batch_render.scan_disk()
         return {'FINISHED'}
@@ -2212,7 +2212,7 @@ class BATCH_RENDER_OT_delete_frames(bpy.types.Operator):
     bl_idname = "batch_render.delete_frames"
     bl_label = "Delete Output Frames"
     bl_description = "Permanently delete existing rendered frames for this job"
-    
+
     @classmethod
     def poll(cls, context):
         queue = context.scene.batch_render_jobs
@@ -2225,17 +2225,17 @@ class BATCH_RENDER_OT_delete_frames(bpy.types.Operator):
     def execute(self, context):
         targets = get_target_jobs(context)
         if not targets: return {'CANCELLED'}
-        
+
         settings = context.scene.batch_render_settings
         total_count = 0
-        
+
         for idx, job in targets:
             out_path = resolve_job_output_path(job, settings, job.filepath)
             if not out_path or not os.path.exists(out_path): continue
-            
+
             files_to_delete = get_existing_frame_files(out_path)
             if not files_to_delete: continue
-            
+
             count = 0
             for fpath in files_to_delete:
                 try:
@@ -2244,7 +2244,7 @@ class BATCH_RENDER_OT_delete_frames(bpy.types.Operator):
                 except Exception as e:
                     print(f"Failed to delete {fpath}: {e}")
             total_count += count
-                
+
         self.report({'INFO'}, f"Deleted {total_count} frames from {len(targets)} jobs")
         bpy.ops.batch_render.scan_disk()
         return {'FINISHED'}
@@ -2255,7 +2255,7 @@ class BATCH_RENDER_OT_preview_output(bpy.types.Operator):
     bl_idname = "batch_render.preview_output"
     bl_label = "Preview Output"
     bl_description = "Play rendered sequence in a new Blender instance"
-    
+
     @classmethod
     def poll(cls, context):
         queue = context.scene.batch_render_jobs
@@ -2265,39 +2265,39 @@ class BATCH_RENDER_OT_preview_output(bpy.types.Operator):
     def execute(self, context):
         targets = get_target_jobs(context)
         if not targets: return {'CANCELLED'}
-        
+
         settings = context.scene.batch_render_settings
         launched_count = 0
-        
+
         for idx, job in targets:
             # Resolve output path
             out_path = resolve_job_output_path(job, settings, job.filepath)
             if not out_path or not os.path.exists(out_path):
                 continue
-                
+
             # Get files to find first frame, filtering by prefix!
             prefix = get_job_output_prefix(job, settings, job.filepath)
             frames = get_existing_frame_files(out_path, prefix)
-            if not frames: 
+            if not frames:
                 self.report({'WARNING'}, f"No frames found for {job.scene_name} in {out_path}")
                 continue
-            
+
             frames.sort()
             first_frame = frames[0]
-            
+
             blender_bin = bpy.app.binary_path
-            
+
             # Command: blender -a -c 8192 <first_frame>
             cmd = [blender_bin, "-a", "-c", "8192", first_frame]
-            
+
             self.report({'INFO'}, f"Launching Preview for {os.path.basename(first_frame)}...")
-            
+
             try:
                 subprocess.Popen(cmd)
                 launched_count += 1
             except Exception as e:
                 print(f"Failed to launch preview: {e}")
-                
+
         if launched_count > 0:
             self.report({'INFO'}, f"Launched {launched_count} previews")
             return {'FINISHED'}
@@ -2309,57 +2309,95 @@ class BATCH_RENDER_OT_open_job_file(bpy.types.Operator):
     bl_idname = "batch_render.open_job_file"
     bl_label = "Open Scene"
     bl_description = "Open the selected job's scene file in a new Blender instance"
-    
+
     @classmethod
     def poll(cls, context):
         queue = context.scene.batch_render_jobs
         idx = context.scene.batch_render_active_job_index
         return 0 <= idx < len(queue)
-    
+
     def execute(self, context):
         queue = context.scene.batch_render_jobs
         idx = context.scene.batch_render_active_job_index
         job = queue[idx]
-        
+
         if not job.filepath or not os.path.exists(job.filepath):
              self.report({'ERROR'}, "File not found")
              return {'CANCELLED'}
-             
+
         blender_bin = bpy.app.binary_path
         try:
             subprocess.Popen([blender_bin, job.filepath])
             self.report({'INFO'}, f"Opening {job.scene_name}...")
         except Exception as e:
             self.report({'ERROR'}, f"Failed to open Blender: {e}")
-            
+
+        return {'FINISHED'}
+
+class BATCH_RENDER_OT_replace_blend(bpy.types.Operator):
+    bl_idname = "batch_render.replace_blend"
+    bl_label = "Replace Blend"
+    bl_description = "Replace the selected job's .blend file path with a different file"
+
+    filepath: StringProperty(subtype='FILE_PATH')
+    filter_glob: StringProperty(default="*.blend", options={'HIDDEN'})
+
+    @classmethod
+    def poll(cls, context):
+        queue = context.scene.batch_render_jobs
+        idx = context.scene.batch_render_active_job_index
+        return 0 <= idx < len(queue)
+
+    def invoke(self, context, event):
+        queue = context.scene.batch_render_jobs
+        idx = context.scene.batch_render_active_job_index
+        job = queue[idx]
+        if job.filepath and os.path.exists(job.filepath):
+            self.filepath = job.filepath
+        context.window_manager.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
+    def execute(self, context):
+        queue = context.scene.batch_render_jobs
+        idx = context.scene.batch_render_active_job_index
+        job = queue[idx]
+
+        if not self.filepath.lower().endswith(".blend"):
+            self.report({'ERROR'}, "Please select a .blend file")
+            return {'CANCELLED'}
+
+        job.filepath = self.filepath
+        job.is_saved = False
+        auto_save_batch(context)
+        self.report({'INFO'}, f"Replaced blend: {os.path.basename(self.filepath)}")
         return {'FINISHED'}
 
 class BATCH_RENDER_OT_open_output_folder(bpy.types.Operator):
     bl_idname = "batch_render.open_output_folder"
     bl_label = "Open Folder"
     bl_description = "Open the output folder in File Explorer"
-    
+
     @classmethod
     def poll(cls, context):
         queue = context.scene.batch_render_jobs
         idx = context.scene.batch_render_active_job_index
         return 0 <= idx < len(queue)
-    
+
     def execute(self, context):
         queue = context.scene.batch_render_jobs
         idx = context.scene.batch_render_active_job_index
         job = queue[idx]
         settings = context.scene.batch_render_settings
-        
+
         path = resolve_job_output_path(job, settings, job.filepath)
         if not path:
              self.report({'WARNING'}, "Could not resolve output path")
              return {'CANCELLED'}
-             
+
         if not os.path.exists(path):
              self.report({'WARNING'}, f"Path does not exist: {path}")
              return {'CANCELLED'}
-             
+
         try:
             if platform.system() == "Windows":
                 os.startfile(path)
@@ -2369,14 +2407,14 @@ class BATCH_RENDER_OT_open_output_folder(bpy.types.Operator):
                 subprocess.Popen(["xdg-open", path])
         except Exception as e:
              self.report({'ERROR'}, f"Failed to open folder: {e}")
-             
+
         return {'FINISHED'}
 
 class BATCH_RENDER_OT_refresh_metadata(bpy.types.Operator):
     bl_idname = "batch_render.refresh_metadata"
     bl_label = "Refresh Metadata"
     bl_description = "Query external files to update Scene Range and Output Path (Non-blocking)"
-    
+
     mode: EnumProperty(
         items=[
             ('SELECTED', "Selected Job", "Refresh only the currently selected job"),
@@ -2384,7 +2422,7 @@ class BATCH_RENDER_OT_refresh_metadata(bpy.types.Operator):
         ],
         default='SELECTED'
     )
-    
+
     _timer = None
     _jobs_to_refresh = []
     _current_process = None
@@ -2392,7 +2430,7 @@ class BATCH_RENDER_OT_refresh_metadata(bpy.types.Operator):
     _temp_file_path = None
     _data_file_path = None
     _script_file_path = None
-    
+
     def modal(self, context, event):
         if event.type == 'TIMER':
             if self._current_process:
@@ -2415,12 +2453,12 @@ class BATCH_RENDER_OT_refresh_metadata(bpy.types.Operator):
                                         print(f"BatchRender: [Background Log] \n{log_f.read()}")
                             except Exception as e:
                                 print(f"BatchRender: Error reading JSON file: {e}")
-                            
+
                             # Clean up data file
                             try: os.remove(self._data_file_path)
                             except: pass
                             self._data_file_path = None
-                        
+
                         else:
                             print(f"BatchRender: Expected data file missing: {self._data_file_path}")
 
@@ -2435,7 +2473,7 @@ class BATCH_RENDER_OT_refresh_metadata(bpy.types.Operator):
                             try: os.remove(self._script_file_path)
                             except: pass
                             self._script_file_path = None
-                            
+
                         # Force UI redraw
                         for win in context.window_manager.windows:
                             for area in win.screen.areas:
@@ -2444,28 +2482,28 @@ class BATCH_RENDER_OT_refresh_metadata(bpy.types.Operator):
 
                     except Exception as e:
                          print(f"Error handling process result: {e}")
-                    
+
                     self._current_process = None
                     self._start_next_process(context)
-            
+
             if self._current_process is None and not self._jobs_to_refresh:
                 wm = context.window_manager
                 wm.event_timer_remove(self._timer)
-                
+
                 # Auto-save to persist metadata
                 write_batch_file(context)
-                
+
                 self.report({'INFO'}, "Metadata Refresh Complete & Saved")
                 bpy.ops.batch_render.scan_disk()
                 return {'FINISHED'}
-                
+
         return {'PASS_THROUGH'}
-        
+
     # execute method remains same... (omitted from chunk)
 
     def execute(self, context):
         queue = context.scene.batch_render_jobs
-        
+
         targets = []
         if self.mode == 'SELECTED':
              idx = context.scene.batch_render_active_job_index
@@ -2473,7 +2511,7 @@ class BATCH_RENDER_OT_refresh_metadata(bpy.types.Operator):
                  targets = [queue[idx]]
         else:
              targets = [j for j in queue if j.enabled]
-        
+
         self._jobs_to_refresh = []
         for job in targets:
             # Find index in full queue (since job object is same)
@@ -2483,14 +2521,14 @@ class BATCH_RENDER_OT_refresh_metadata(bpy.types.Operator):
                 # Assuming simple search
                 i = -1
                 for k, q_job in enumerate(queue):
-                    if q_job == job: 
+                    if q_job == job:
                         i = k
                         break
                 if i == -1: continue # Should not happen
-                
+
                 if not job.enabled: continue # Double check
             except: continue
-            
+
             # Ensure absolute path
             fpath = bpy.path.abspath(job.filepath)
             if job.filepath != bpy.data.filepath:
@@ -2499,69 +2537,69 @@ class BATCH_RENDER_OT_refresh_metadata(bpy.types.Operator):
                  else:
                      print(f"BatchRender: File not found: {fpath}")
 
-        
+
         if not self._jobs_to_refresh:
             self.report({'WARNING'}, "No external jobs found or files missing")
             return {'FINISHED'}
-            
+
         wm = context.window_manager
         self._timer = wm.event_timer_add(0.2, window=context.window)
         wm.modal_handler_add(self)
-        
+
         self.report({'INFO'}, f"Refreshing {len(self._jobs_to_refresh)} external jobs...")
         self._start_next_process(context)
         return {'RUNNING_MODAL'}
 
     def _start_next_process(self, context):
         if not self._jobs_to_refresh: return
-            
+
         idx, fpath, sname = self._jobs_to_refresh.pop(0)
         self._current_job_data = (idx, os.path.basename(fpath), sname)
-        
+
         blender_bin = bpy.app.binary_path
-        
+
         # Create temp file for JSON Data
         tf_data = tempfile.NamedTemporaryFile(delete=False, mode='w+', suffix=".json")
         self._data_file_path = tf_data.name
         tf_data.close()
-        
+
         # Create temp file for Stdout (Debug)
         tf_log = tempfile.NamedTemporaryFile(delete=False, mode='w+', suffix=".log")
         self._temp_file_path = tf_log.name
-        tf_log.close() 
-        
+        tf_log.close()
+
         # Create temp file for Python Script
         tf_script = tempfile.NamedTemporaryFile(delete=False, mode='w+', suffix=".py")
         self._script_file_path = tf_script.name
-        
+
         # Robust Python Logic: Full multi-line script
         safe_json_path = self._data_file_path.replace("\\", "\\\\")
-        
+
         script_content = "import bpy, json\n"
         script_content += "data = []\n"
         script_content += "for s in bpy.data.scenes:\n"
         script_content += "    data.append({'name': s.name, 'start': s.frame_start, 'end': s.frame_end, 'path': s.render.filepath})\n"
         script_content += f"with open('{safe_json_path}', 'w') as f:\n"
         script_content += "    json.dump(data, f)\n"
-        
+
         tf_script.write(script_content)
         tf_script.close()
-        
+
         cmd = [blender_bin, "-b", fpath, "--python", self._script_file_path]
         print(f"BatchRender: Querying {os.path.basename(fpath)} -> {self._data_file_path}")
-        
+
         startupinfo = None
         if platform.system() == "Windows":
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            
+
         try:
             with open(self._temp_file_path, 'w') as f_out:
                 self._current_process = subprocess.Popen(
-                    cmd, 
-                    stdout=f_out, 
-                    stderr=f_out, 
-                    text=True, 
+                    cmd,
+                    stdout=f_out,
+                    stderr=f_out,
+                    text=True,
                     startupinfo=startupinfo
                 )
         except Exception as e:
@@ -2572,12 +2610,12 @@ class BATCH_RENDER_OT_refresh_metadata(bpy.types.Operator):
     def _process_json_data(self, data):
         queue = bpy.context.scene.batch_render_jobs
         idx_target, fname_target, sname_target = self._current_job_data
-        
-        if idx_target >= len(queue): return 
+
+        if idx_target >= len(queue): return
         job = queue[idx_target]
-        
+
         print(f"BatchRender: [DEBUG] Processing JSON for Job '{job.scene_name}'")
-        
+
         found = False
         for s_data in data:
             s_name = s_data.get('name')
@@ -2588,7 +2626,7 @@ class BATCH_RENDER_OT_refresh_metadata(bpy.types.Operator):
                 found = True
                 print(f"BatchRender: [DEBUG] Updated Job '{s_name}' Range: {job.sc_frame_start}-{job.sc_frame_end}")
                 break
-                
+
         if not found:
             print(f"BatchRender: [DEBUG] Scene '{job.scene_name}' not found in file data: {[s['name'] for s in data]}")
 
@@ -2597,11 +2635,11 @@ class BATCH_RENDER_OT_deduplicate_jobs(bpy.types.Operator):
     bl_idname = "batch_render.deduplicate_jobs"
     bl_label = "Smart Deduplicate"
     bl_description = "Remove jobs with identical Filename + Scene Name (Fixes Z:/H: drive dupes)"
-    
+
     def execute(self, context):
         queue = context.scene.batch_render_jobs
         groups = {}
-        
+
         # First pass: Index all jobs
         for i, job in enumerate(queue):
             if not job.filepath: continue
@@ -2610,7 +2648,7 @@ class BATCH_RENDER_OT_deduplicate_jobs(bpy.types.Operator):
             sig = (bname, sname)
             if sig not in groups: groups[sig] = []
             groups[sig].append(i)
-            
+
         removals = []
         for sig, indices in groups.items():
             if len(indices) > 1:
@@ -2620,14 +2658,14 @@ class BATCH_RENDER_OT_deduplicate_jobs(bpy.types.Operator):
                     job = queue[idx]
                     path_exists = os.path.exists(bpy.path.abspath(job.filepath))
                     candidates.append((idx, path_exists, len(job.filepath)))
-                
+
                 # Sort: Exists=True first, then Longer Path (Absolute), then Index
                 candidates.sort(key=lambda x: (x[1], x[2]), reverse=True)
                 winner_idx = candidates[0][0]
-                
+
                 for c in candidates:
                     if c[0] != winner_idx: removals.append(c[0])
-                
+
         if removals:
             removals.sort(reverse=True)
             for idx in removals:
@@ -2642,19 +2680,19 @@ class BATCH_RENDER_OT_remove_placeholders(bpy.types.Operator):
     bl_idname = "batch_render.remove_placeholders"
     bl_label = "Remove Placeholders"
     bl_description = "Delete 0-byte files from output directories"
-    
+
     def execute(self, context):
         targets = get_target_jobs(context)
         settings = context.scene.batch_render_settings
-        
+
         count = 0
-        
+
         for idx, job in targets:
             out_path = resolve_job_output_path(job, settings, job.filepath)
             out_prefix = get_job_output_prefix(job, settings, job.filepath)
-            
+
             if not out_path or not os.path.exists(out_path): continue
-            
+
             files = get_existing_frame_files(out_path, prefix=out_prefix)
             for f in files:
                 try:
@@ -2676,9 +2714,9 @@ class BATCH_RENDER_OT_move_job(bpy.types.Operator):
     bl_idname = "batch_render.move_job"
     bl_label = "Move Job"
     bl_description = "Move selected job up or down"
-    
+
     direction: EnumProperty(items=[('UP', "Up", ""), ('DOWN', "Down", "")])
-    
+
     @classmethod
     def poll(cls, context):
         queue = context.scene.batch_render_jobs
@@ -2686,22 +2724,22 @@ class BATCH_RENDER_OT_move_job(bpy.types.Operator):
 
     def execute(self, context):
         queue = context.scene.batch_render_jobs
-        
+
         # Get all selected indices
         selected_indices = [i for i, job in enumerate(queue) if job.selected]
-        
+
         # Fallback to active if none selected
         if not selected_indices:
             idx = context.scene.batch_render_active_job_index
             if 0 <= idx < len(queue):
                 selected_indices = [idx]
-        
+
         if not selected_indices: return {'CANCELLED'}
-        
+
         # Capture active index to update it
         current_active = context.scene.batch_render_active_job_index
         new_active = current_active
-        
+
         # Move Logic
         if self.direction == 'UP':
             # Process Top-to-Bottom
@@ -2712,7 +2750,7 @@ class BATCH_RENDER_OT_move_job(bpy.types.Operator):
                 if dest >= 0 and not queue[dest].selected:
                     queue.move(idx, dest)
                     if idx == current_active: new_active = dest
-                    
+
         else: # DOWN
             # Process Bottom-to-Top
             selected_indices.sort(reverse=True)
@@ -2722,13 +2760,13 @@ class BATCH_RENDER_OT_move_job(bpy.types.Operator):
                 if dest < len(queue) and not queue[dest].selected:
                     queue.move(idx, dest)
                     if idx == current_active: new_active = dest
-                    
+
         # Update active index to follow selection
         context.scene.batch_render_active_job_index = new_active
-        
+
         # Trigger Auto-Save
         write_batch_file(context)
-        
+
         return {'FINISHED'}
 
 class BATCH_RENDER_OT_add_scene_job(bpy.types.Operator):
@@ -2736,52 +2774,52 @@ class BATCH_RENDER_OT_add_scene_job(bpy.types.Operator):
     bl_label = "Add Scene"
     bl_options = {'REGISTER', 'UNDO'}
 
-    def invoke(self, context, event): 
+    def invoke(self, context, event):
         # Populate candidates with local scenes
         candidates = context.scene.batch_render_import_candidates
         candidates.clear()
-        
+
         for s in bpy.data.scenes:
             item = candidates.add()
             item.name = s.name
             # Default to selecting only the current scene
             item.selected = (s == context.scene)
-            
+
         return context.window_manager.invoke_props_dialog(self, width=400)
 
-    def draw(self, context): 
+    def draw(self, context):
         layout = self.layout
         layout.label(text="Select Scenes to Add:")
         layout.template_list("BATCH_RENDER_UL_import_list", "", context.scene, "batch_render_import_candidates", context.scene, "batch_render_import_active_index")
-    
+
     def execute(self, context):
         queue = context.scene.batch_render_jobs
         candidates = context.scene.batch_render_import_candidates
-        
+
         added_count = 0
         for cand in candidates:
             if cand.selected:
                 if cand.name not in bpy.data.scenes: continue
-                
+
                 scn = bpy.data.scenes[cand.name]
-                
+
                 item = queue.add()
                 item.uuid = str(uuid.uuid4())
                 item.filepath = bpy.data.filepath
                 item.scene_name = scn.name
-                
+
                 item.sc_frame_start = scn.frame_start
                 item.sc_frame_end = scn.frame_end
                 item.sc_filepath = scn.render.filepath
                 item.is_saved = False
                 added_count += 1
-        
+
         if added_count > 0:
             # Trigger Auto-Save (which will set item.is_saved = True)
             write_batch_file(context)
             self.report({'INFO'}, f"Added {added_count} scenes")
             return {'FINISHED'}
-        
+
         return {'CANCELLED'}
 
 class BATCH_RENDER_OT_select_scenes_from_file(bpy.types.Operator):
@@ -2789,7 +2827,7 @@ class BATCH_RENDER_OT_select_scenes_from_file(bpy.types.Operator):
     bl_label = "Select Scenes"
     bl_options = {'REGISTER', 'UNDO'}
     filepath: StringProperty()
-    
+
     def invoke(self, context, event):
         if not self.filepath or not os.path.isfile(self.filepath): return {'CANCELLED'}
         candidates = context.scene.batch_render_import_candidates
@@ -2799,15 +2837,15 @@ class BATCH_RENDER_OT_select_scenes_from_file(bpy.types.Operator):
                 for name in from_.scenes:
                     item = candidates.add()
                     item.name = name
-                    item.selected = True 
+                    item.selected = True
         except Exception: return {'CANCELLED'}
         return context.window_manager.invoke_props_dialog(self, width=400)
-        
+
     def draw(self, context):
         layout = self.layout
         layout.label(text=f"File: {os.path.basename(self.filepath)}")
         layout.template_list("BATCH_RENDER_UL_import_list", "", context.scene, "batch_render_import_candidates", context.scene, "batch_render_import_active_index")
-    
+
     def execute(self, context):
         queue = context.scene.batch_render_jobs
         for cand in context.scene.batch_render_import_candidates:
@@ -2817,7 +2855,7 @@ class BATCH_RENDER_OT_select_scenes_from_file(bpy.types.Operator):
                 item.filepath = self.filepath
                 item.scene_name = cand.name
                 item.is_saved = False
-        
+
         # Trigger Auto-Save
         write_batch_file(context)
         return {'FINISHED'}
@@ -2837,21 +2875,21 @@ class BATCH_RENDER_OT_remove_job(bpy.types.Operator):
     def poll(cls, context): return context.scene.batch_render_jobs
     def execute(self, context):
         queue = context.scene.batch_render_jobs
-        
+
         # Get targets (sorted descending to avoid index shift issues)
         targets = get_target_jobs(context)
         if not targets: return {'CANCELLED'}
-        
+
         # Sort by index descending
         targets.sort(key=lambda x: x[0], reverse=True)
-        
+
         for idx, job in targets:
             queue.remove(idx)
-            
+
         # Reset active index
         if len(queue) > 0:
             context.scene.batch_render_active_job_index = max(0, min(context.scene.batch_render_active_job_index, len(queue)-1))
-        
+
         # Trigger Auto-Save
         write_batch_file(context)
         return {'FINISHED'}
@@ -2888,7 +2926,7 @@ class BATCH_RENDER_OT_generate_and_run(bpy.types.Operator):
         if error:
             self.report({'ERROR'}, error)
             return {'CANCELLED'}
-            
+
         # Run it
         try:
             if platform.system() == "Windows":
@@ -2898,7 +2936,7 @@ class BATCH_RENDER_OT_generate_and_run(bpy.types.Operator):
         except Exception as e:
             self.report({'ERROR'}, f"Failed to run script: {e}")
             return {'CANCELLED'}
-            
+
         return {'FINISHED'}
 
 
@@ -2922,21 +2960,21 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
     bl_space_type = 'PROPERTIES'
     bl_region_type = 'WINDOW'
     bl_context = "render"
-    
+
     def draw(self, context):
         layout = self.layout
         scene = context.scene
         settings = scene.batch_render_settings
         queue = scene.batch_render_jobs
-        
+
 
         # --- Batch File Configuration (Always Visible) ---
         box = layout.box()
         # box.label(text="Batch File Configuration", icon='FILE_SCRIPT')
-        
+
         row = box.row()
         row.prop(settings, "batch_file_path")
-        
+
         # Show resolved absolute path
         abs_path, _ = get_batch_file_path(context)
         if abs_path:
@@ -2945,7 +2983,7 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
                  box.label(text="Synced: Ready for Multi-User", icon='LINK_BLEND')
         else:
              box.label(text="Resolved: (Invalid)", icon='ERROR')
-        
+
         row = box.row()
         row.scale_y = 1.0
         row.operator("batch_render.reload_queue", text="Reload Queue", icon='FILE_REFRESH')
@@ -2956,63 +2994,63 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
         row = layout.row()
         row.scale_y = 1.3
         row.operator("batch_render.save_batch", icon='FILE_TICK', text="Save Batch")
-        row.operator("batch_render.generate_and_run", icon='PLAY', text="Save & Run")        
+        row.operator("batch_render.generate_and_run", icon='PLAY', text="Save & Run")
         # --- Global Options (Collapsible, under Refresh) ---
         row = layout.row()
-        
+
         row.prop(settings, "show_global_options", icon="TRIA_DOWN" if settings.show_global_options else "TRIA_RIGHT", emboss=False, text="Global Options")
-        
+
         if settings.show_global_options:
             root_box = layout.box()
-            
+
             # --- Command Line Options ---
             col = root_box.column(align=True)
             col.label(text="Command Line Options", icon='CONSOLE')
-            
+
             row = col.row()
             row.prop(settings, "use_background")
             row = col.row()
             row.prop(settings, "use_pause_at_end", text="Pause at End")
-            
+
             row = col.row()
             row.prop(settings, "use_queue_loop")
-            
+
             row = col.row()
             row.prop(settings, "use_auto_refresh")
             if settings.use_auto_refresh:
                 row.prop(settings, "auto_refresh_interval", text="Interval")
-            
+
             row = col.row()
             row.prop(settings, "use_chunking", text="Enable Chunking")
             if settings.use_chunking:
                 row.prop(settings, "chunk_size")
                 row.prop(settings, "chunk_timeout")
-            
+
         # --- Queue Overrides ---
         row = layout.row()
         row.prop(settings, "show_queue_overrides", icon="TRIA_DOWN" if settings.show_queue_overrides else "TRIA_RIGHT", emboss=False, text="Queue Overrides")
-        
+
         if settings.show_queue_overrides:
             ov_box = layout.box()
             ov_box.label(text="Queue Overrides", icon='SETTINGS')
-            
+
             # Frame Range
             row = ov_box.row()
             row.prop(settings, "use_override_frames", text="Override Range")
             if settings.use_override_frames:
                 row.prop(settings, "frame_start")
                 row.prop(settings, "frame_end")
-                
+
             row = ov_box.row()
             row.prop(settings, "use_specific_frame", text="Render Single Frame")
             if settings.use_specific_frame:
                 row.prop(settings, "specific_frame")
-                
+
             row = ov_box.row()
             row.prop(settings, "use_frame_jump")
             if settings.use_frame_jump:
                 row.prop(settings, "frame_jump")
-            
+
             ov_box.separator()
 
             # Output
@@ -3020,15 +3058,15 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
             row.prop(settings, "use_override_output", text="Override Path")
             if settings.use_override_output:
                 row.prop(settings, "output_path", text="")
-            
+
             row = ov_box.row()
             row.prop(settings, "use_extension", text="Add Extension (-x)")
-            
+
             row = ov_box.row()
             row.prop(settings, "use_override_placeholders")
             if settings.use_override_placeholders:
                 row.prop(settings, "use_placeholders")
-            
+
             ov_box.separator()
 
             # Engine
@@ -3036,7 +3074,7 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
             row.prop(settings, "use_override_engine")
             if settings.use_override_engine:
                 row.prop(settings, "engine_type", text="")
-                
+
             row = ov_box.row()
             row.prop(settings, "use_override_format")
             if settings.use_override_format:
@@ -3049,22 +3087,22 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
             row.prop(settings, "use_threads")
             if settings.use_threads:
                 row.prop(settings, "threads")
-            
+
             row = ov_box.row()
             row.prop(settings, "use_cycles_device")
             if settings.use_cycles_device:
                 row.prop(settings, "cycles_device", text="")
-            
+
             ov_box.separator()
 
             # --- Python Overrides ---
             ov_box.label(text="Scene Overrides (Python)")
-            
+
             row = ov_box.row()
             row.prop(settings, "use_override_samples")
             if settings.use_override_samples:
                 row.prop(settings, "samples")
-                
+
             row = ov_box.row()
             row.prop(settings, "use_override_denoising")
             if settings.use_override_denoising:
@@ -3076,12 +3114,12 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
             row.prop(settings, "use_override_color_mode")
             if settings.use_override_color_mode:
                 row.prop(settings, "color_mode", text="")
-                
+
             row = ov_box.row()
             row.prop(settings, "use_override_overwrite")
             if settings.use_override_overwrite:
                 row.prop(settings, "use_overwrite")
-                
+
             row = ov_box.row()
             row.prop(settings, "use_override_persistent_data")
             if settings.use_override_persistent_data:
@@ -3093,7 +3131,7 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
                 row.prop(settings, "simplify_use", text="Enable")
                 row.prop(settings, "simplify_subdivision_render", text="Subdiv")
                 row.prop(settings, "simplify_image_limit", text="")
-                
+
             row = ov_box.row()
             row.prop(settings, "use_override_volumetrics")
             if settings.use_override_volumetrics:
@@ -3104,14 +3142,14 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
         # --- Job Queue ---
         row = layout.row()
         row.prop(settings, "show_job_queue", icon="TRIA_DOWN" if settings.show_job_queue else "TRIA_RIGHT", emboss=False, text="Job Queue")
-        
+
         if settings.show_job_queue:
-            
+
             # Button Block (Underneath)
             col = layout.column(align=True)
             # management title
             row = col.row(align=True)
-            
+
             # Row 1: Management
             row = col.row(align=True)
             row.operator("batch_render.add_scene_job", icon='ADD', text="Add Scene")
@@ -3121,10 +3159,10 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
             row.operator("batch_render.clear_jobs", icon='TRASH', text="Clear All")
             row = col.row(align=True)
             row.operator("batch_render.move_job", icon='TRIA_UP', text="Move Up").direction = 'UP'
-            row.operator("batch_render.move_job", icon='TRIA_DOWN', text="Move Down").direction = 'DOWN'  
-            
+            row.operator("batch_render.move_job", icon='TRIA_DOWN', text="Move Down").direction = 'DOWN'
+
             # Row 2: Job Status
-            row = col.row(align=True)          
+            row = col.row(align=True)
             row.operator("batch_render.set_job_pending", icon='FILE_REFRESH', text="Pending")
             row.operator("batch_render.set_job_done", icon='CHECKBOX_HLT', text="Done")
             row = col.row(align=True)
@@ -3135,7 +3173,8 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
             row.operator("batch_render.preview_output", icon='PLAY', text="Preview Output")
             row.operator("batch_render.open_output_folder", icon='FILE_FOLDER', text="Open Folder")
             row.operator("batch_render.open_job_file", icon='BLENDER', text="Open Blend File")
-            
+            row.operator("batch_render.replace_blend", icon='FILE_BLEND', text="Replace Blend")
+
             row = layout.row()
             row.template_list("BATCH_RENDER_UL_jobs", "", scene, "batch_render_jobs", scene, "batch_render_active_job_index")
 
@@ -3145,17 +3184,17 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
                 active_job = queue[idx]
                 if active_job.use_chunking or settings.use_chunking:
                     box = layout.box()
-                    
+
                     # Custom Header
                     row = box.row()
                     icon = "TRIA_DOWN" if settings.show_chunk_details else "TRIA_RIGHT"
                     row.prop(settings, "show_chunk_details", icon=icon, emboss=False, text=f"Chunks: {active_job.scene_name}")
-                    
+
                     if settings.show_chunk_details:
                         # Full List View
                         row = box.row()
                         row.template_list("BATCH_RENDER_UL_chunks", "", active_job, "chunks", scene, "batch_render_active_chunk_index", rows=5)
-                        
+
                         row = box.row()
                         row.operator("batch_render.set_chunk_status", text="Set Done", icon='CHECKBOX_HLT').action = 'DONE'
                         row.operator("batch_render.set_chunk_status", text="Set Pending", icon='CHECKBOX_DEHLT').action = 'PENDING'
@@ -3164,23 +3203,23 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
                         row = box.row()
                         row.prop(active_job, "cached_chunk_progress", text="Progress", slider=True, emboss=False)
                         row.enabled = False # Read-only look
-            
+
             # --- Selected Job Overrides (Nested in Queue) ---
             idx = scene.batch_render_active_job_index
             if 0 <= idx < len(queue):
                 job = queue[idx]
                 layout.separator()
-                
+
                 # Make it look like a child panel (indented box?)
                 # Actually just standard prop with sub-box
                 row = layout.row()
                 row.prop(settings, "show_selected_job", icon="TRIA_DOWN" if settings.show_selected_job else "TRIA_RIGHT", emboss=False, text=f"Selected Job: {job.scene_name}")
-                
+
                 if settings.show_selected_job:
                     box = layout.box()
                     row = box.row()
                     row.prop(job, "enabled", text="Enabled")
-                    
+
                     if job.enabled:
                         box.prop(job, "use_overrides")
                         if job.use_overrides:
@@ -3190,19 +3229,19 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
                             if job.use_custom_frames:
                                 row.prop(job, "frame_start")
                                 row.prop(job, "frame_end")
-                            
+
                             # Samples
                             row = box.row()
                             row.prop(job, "use_custom_samples")
                             if job.use_custom_samples:
                                 row.prop(job, "samples")
-                                
+
                             # Output
                             row = box.row()
                             row.prop(job, "use_custom_output")
                             if job.use_custom_output:
                                 row.prop(job, "output_path", text="")
-                                
+
                             # Chunking
                             row = box.row()
                             row.prop(job, "use_custom_chunking")
@@ -3210,13 +3249,13 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
                                  row.prop(job, "use_chunking")
                                  if job.use_chunking:
                                      row.prop(job, "chunk_size")
-                                     
+
                             # Persistent Data
                             row = box.row()
                             row.prop(job, "use_custom_persistent_data")
                             if job.use_custom_persistent_data:
                                 row.prop(job, "persistent_data")
-                                
+
                             # Simplify
                             row = box.row()
                             row.prop(job, "use_custom_simplify")
@@ -3225,7 +3264,7 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
                                 col.prop(job, "simplify_use", text="Enable")
                                 col.prop(job, "simplify_subdivision_render", text="Subdiv")
                                 col.prop(job, "simplify_image_limit", text="")
-        
+
                             # Volumetrics
                             row = box.row()
                             row.prop(job, "use_custom_volumetrics")
@@ -3233,14 +3272,14 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
                                 col = row.column(align=True)
                                 col.prop(job, "volume_biased", text="Biased")
                                 col.prop(job, "volume_step_rate", text="Step Rate")
-                                
+
                             # Block PC List
                             row = box.row()
                             row.prop(job, "use_custom_block_list")
                             if job.use_custom_block_list:
                                  # Corrected property reference
                                  row.prop(job, "blocked_computers", text="Block PCs")
-                    
+
 
 
 
@@ -3276,6 +3315,7 @@ classes = (
     BATCH_RENDER_OT_remove_placeholders,
     BATCH_RENDER_OT_preview_output,
     BATCH_RENDER_OT_open_job_file,
+    BATCH_RENDER_OT_replace_blend,
     BATCH_RENDER_OT_open_output_folder,
     BATCH_RENDER_OT_move_job,
     BATCH_RENDER_PT_main,
@@ -3293,9 +3333,9 @@ def register():
 
     bpy.types.Scene.batch_render_import_candidates = CollectionProperty(type=BatchRenderImportItem)
     bpy.types.Scene.batch_render_import_active_index = IntProperty()
-    
+
     bpy.app.handlers.load_post.append(load_global_config_handler)
-    
+
     # Force load immediately for manual script execution
     apply_global_config()
 
@@ -3305,10 +3345,10 @@ def unregister():
 
     if load_global_config_handler in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(load_global_config_handler)
-        
+
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-        
+
     del bpy.types.Scene.batch_render_jobs
     del bpy.types.Scene.batch_render_active_job_index
     del bpy.types.Scene.batch_render_settings

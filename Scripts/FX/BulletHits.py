@@ -85,12 +85,37 @@ def copy_and_align(template_col, matrix_world, birth_frame, target_obj_name):
             if abc_mod and abc_mod.cache_file:
                 abc_mod.cache_file = abc_mod.cache_file.copy()
                 new_cache = abc_mod.cache_file
+
+                # Handle Override Frame keyframes (single-file Alembic with 2 keyframes)
+                # The override_frame property is keyframed on the CacheFile itself.
+                # We find the fcurve for "override_frame", grab the first keyframe's
+                # timeline position, and shift ALL keyframes by the same delta so the
+                # animation starts at birth_frame while preserving playback speed.
+                shifted = False
                 if new_cache.animation_data and new_cache.animation_data.action:
                     new_cache.animation_data.action = new_cache.animation_data.action.copy()
                     act = new_cache.animation_data.action
-                    start_frame = min((fc.keyframe_points[0].co[0] for fc in iter_fcurves(act) if fc.data_path.endswith("frame")), default=None)
-                    if start_frame is not None:
-                        shift_action(act, (birth_frame - 1) - start_frame)
+
+                    for fc in iter_fcurves(act):
+                        if fc.data_path == "override_frame" or fc.data_path.endswith("override_frame"):
+                            if len(fc.keyframe_points) >= 1:
+                                orig_start = fc.keyframe_points[0].co[0]
+                                abc_delta = birth_frame - orig_start
+                                for kp in fc.keyframe_points:
+                                    kp.co[0] += abc_delta
+                                fc.update()
+                                shifted = True
+                                print(f"  Shifted override_frame keyframes by {abc_delta} (start {orig_start} -> {birth_frame})")
+
+                    # Fallback: old pattern where the data_path ends with "frame"
+                    if not shifted:
+                        start_frame = min((fc.keyframe_points[0].co[0] for fc in iter_fcurves(act) if fc.data_path.endswith("frame") and len(fc.keyframe_points) > 0), default=None)
+                        if start_frame is not None:
+                            shift_action(act, birth_frame - start_frame)
+                            shifted = True
+
+                if not shifted:
+                    print(f"  Warning: No keyframes found on CacheFile for {new_alembic.name}")
 
         bpy.context.view_layer.update()
         new_empty.matrix_world = matrix_world

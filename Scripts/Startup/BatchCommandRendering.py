@@ -1778,8 +1778,7 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
 
         # Build Content Row inside Right
         sub = right_col.row(align=True)
-        if is_complete and item.enabled:
-            sub.active = False  # Dim without fully disabling — visually quieter
+        sub.active = not is_complete  # Always explicit — prevents state bleed between UIList rows
 
         # Check for active rendering chunks
         is_rendering = False

@@ -2368,7 +2368,7 @@ class BATCH_RENDER_OT_replace_blend(bpy.types.Operator):
 
         job.filepath = self.filepath
         job.is_saved = False
-        auto_save_batch(context)
+        write_batch_file(context)
         self.report({'INFO'}, f"Replaced blend: {os.path.basename(self.filepath)}")
         return {'FINISHED'}
 

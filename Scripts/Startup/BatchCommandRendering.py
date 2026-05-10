@@ -259,9 +259,7 @@ def apply_state_to_ui(context, state):
             if not item.uuid:
                 item.uuid = str(uuid.uuid4())
 
-            # Restore cached progress (dict access)
-            if 'cached_progress' in data:
-                item['cached_progress'] = data['cached_progress']
+            # Restore cached chunk progress (dict access)
             if 'cached_chunk_progress' in data:
                 item['cached_chunk_progress'] = data['cached_chunk_progress']
 
@@ -449,44 +447,7 @@ def get_job_output_prefix(job, settings, blend_path):
         return os.path.basename(abs_path)
     return ""
 
-def get_frames_from_disk(directory, prefix=""):
-    """Returns a set of integer frame numbers found in the directory, optionally filtered by strict prefix."""
-    if not directory or not os.path.exists(directory):
-        return set()
 
-    found_frames = set()
-    try:
-        files = os.listdir(directory)
-
-        # Determine Matching Strategy
-        if prefix:
-            # Strict: Must Start with Prefix + Digits + Ext
-            # e.g. "Scene_0001.png" matches "Scene_"
-            # "Scene_Comp_0001.png" does NOT match "Scene_" (Comp is not digits)
-            regex = re.compile(r'^' + re.escape(prefix) + r'(\d+)\.[a-zA-Z0-9]+$')
-        else:
-            # Loose: Ends with Digits + Ext
-            regex = re.compile(r'(\d+)\.[a-zA-Z0-9]+$')
-
-        for f in files:
-            if f.startswith("."): continue
-            if prefix and not f.startswith(prefix): continue
-
-            match = regex.search(f)
-            if match:
-                found_frames.add(int(match.group(1)))
-
-    except Exception:
-        pass
-
-    return found_frames
-
-def scan_disk_frames(directory, prefix=""):
-    """Scans directory for numbered sequence files, returns formatted string and count."""
-    found_frames = sorted(list(get_frames_from_disk(directory, prefix)))
-    if not found_frames:
-         return "", 0
-    return format_frame_ranges(found_frames), len(found_frames)
 
 def get_existing_frame_files(directory, prefix=""):
     """Returns a list of absolute paths to frame files, optionally filtered by strict prefix."""
@@ -774,8 +735,6 @@ def write_batch_file(context):
                 'sc_frame_start': job.sc_frame_start,
                 'sc_frame_end': job.sc_frame_end,
                 'sc_filepath': job.sc_filepath,
-                'frames_on_disk': job.frames_on_disk,
-                'cached_progress': job.get('cached_progress', 0.0),
                 'cached_chunk_progress': job.get('cached_chunk_progress', 0.0),
                 'use_overrides': job.use_overrides,
                 'use_custom_frames': job.use_custom_frames,
@@ -1459,6 +1418,16 @@ def update_realign_chunks(self, context):
     # Manual Save Only: Do NOT auto-save here.
     # auto_save_batch(self, context)
 
+def mark_job_unsaved(self, context):
+    """Update callback: marks this job as needing a save whenever a user-editable property changes."""
+    if not _IS_LOADING_CONFIG:
+        self.is_saved = False
+
+def _update_chunk_size(self, context):
+    """Chains realign + dirty-mark for chunk_size changes."""
+    update_realign_chunks(self, context)
+    mark_job_unsaved(self, context)
+
 class BatchRenderChunk(bpy.types.PropertyGroup):
     name: StringProperty(name="Range")
     status: StringProperty(name="Status", default="Pending")
@@ -1475,7 +1444,7 @@ class BatchRenderJob(bpy.types.PropertyGroup):
     filepath: StringProperty(name="File Path", subtype='FILE_PATH', default="")
     scene_name: StringProperty(name="Scene Name", default="")
     is_saved: BoolProperty(name="Saved", default=False) # Internal, no update
-    enabled: BoolProperty(name="Enabled", default=True)
+    enabled: BoolProperty(name="Enabled", default=True, update=mark_job_unsaved)
     selected: BoolProperty(name="Selected", default=False)
 
     # Cached Scene Info
@@ -1483,32 +1452,29 @@ class BatchRenderJob(bpy.types.PropertyGroup):
     sc_frame_end: IntProperty(name="End", default=0)
     sc_filepath: StringProperty(name="Scene Output Path", default="")
 
-    # Progress Info
-    frames_on_disk: StringProperty(name="Frames on Disk", default="")
-    # Runtime cache for progress bars
-    cached_progress: FloatProperty(name="Disk Progress", default=0.0)
+    # Runtime cache for chunk progress
     cached_chunk_progress: FloatProperty(name="Chunk Progress", default=0.0)
 
     # Overrides
-    use_overrides: BoolProperty(name="Override Global Settings", default=False)
+    use_overrides: BoolProperty(name="Override Global Settings", default=False, update=mark_job_unsaved)
 
-    use_custom_frames: BoolProperty(name="Override Frame Range", default=False)
-    frame_start: IntProperty(name="Start", default=1)
-    frame_end: IntProperty(name="End", default=250)
+    use_custom_frames: BoolProperty(name="Override Frame Range", default=False, update=mark_job_unsaved)
+    frame_start: IntProperty(name="Start", default=1, update=mark_job_unsaved)
+    frame_end: IntProperty(name="End", default=250, update=mark_job_unsaved)
 
-    use_custom_samples: BoolProperty(name="Override Samples", default=False)
-    samples: IntProperty(name="Samples", default=128, min=1)
+    use_custom_samples: BoolProperty(name="Override Samples", default=False, update=mark_job_unsaved)
+    samples: IntProperty(name="Samples", default=128, min=1, update=mark_job_unsaved)
 
-    use_custom_output: BoolProperty(name="Override Output", default=False)
-    output_path: StringProperty(name="Output Path", subtype='DIR_PATH', default="//")
+    use_custom_output: BoolProperty(name="Override Output", default=False, update=mark_job_unsaved)
+    output_path: StringProperty(name="Output Path", subtype='DIR_PATH', default="//", update=mark_job_unsaved)
 
-    use_custom_persistent_data: BoolProperty(name="Override Persistent Data", default=False)
-    persistent_data: BoolProperty(name="Persistent Data", default=False)
+    use_custom_persistent_data: BoolProperty(name="Override Persistent Data", default=False, update=mark_job_unsaved)
+    persistent_data: BoolProperty(name="Persistent Data", default=False, update=mark_job_unsaved)
 
     # Simplify
-    use_custom_simplify: BoolProperty(name="Override Simplify", default=False)
-    simplify_use: BoolProperty(name="Simplify", default=True)
-    simplify_subdivision_render: IntProperty(name="Max Subdivision", default=6, min=0)
+    use_custom_simplify: BoolProperty(name="Override Simplify", default=False, update=mark_job_unsaved)
+    simplify_use: BoolProperty(name="Simplify", default=True, update=mark_job_unsaved)
+    simplify_subdivision_render: IntProperty(name="Max Subdivision", default=6, min=0, update=mark_job_unsaved)
     simplify_image_limit: EnumProperty(
         name="Texture Limit",
         items=[
@@ -1521,24 +1487,25 @@ class BatchRenderJob(bpy.types.PropertyGroup):
             ('4096', "4096", ""),
             ('8192', "8192", ""),
         ],
-        default='0'
+        default='0',
+        update=mark_job_unsaved
     )
 
     # Volumetrics
-    use_custom_volumetrics: BoolProperty(name="Override Volumetrics", default=False)
-    volume_biased: BoolProperty(name="Biased", default=True)
-    volume_step_rate: FloatProperty(name="Max Step Size", default=1.0, precision=2)
+    use_custom_volumetrics: BoolProperty(name="Override Volumetrics", default=False, update=mark_job_unsaved)
+    volume_biased: BoolProperty(name="Biased", default=True, update=mark_job_unsaved)
+    volume_step_rate: FloatProperty(name="Max Step Size", default=1.0, precision=2, update=mark_job_unsaved)
 
     # Chunking
-    use_custom_chunking: BoolProperty(name="Override Chunking", default=False)
-    use_chunking: BoolProperty(name="Use Chunking", default=False)
-    chunk_size: IntProperty(name="Chunk Size", default=10, min=1, update=update_realign_chunks)
+    use_custom_chunking: BoolProperty(name="Override Chunking", default=False, update=mark_job_unsaved)
+    use_chunking: BoolProperty(name="Use Chunking", default=False, update=mark_job_unsaved)
+    chunk_size: IntProperty(name="Chunk Size", default=10, min=1, update=_update_chunk_size)
 
     chunks: CollectionProperty(type=BatchRenderChunk)
 
     # Block List
-    use_custom_block_list: BoolProperty(name="Override Block List", default=False)
-    blocked_computers: StringProperty(name="Blocked Computers", default="", description="Comma-separated list of PC names to block")
+    use_custom_block_list: BoolProperty(name="Override Block List", default=False, update=mark_job_unsaved)
+    blocked_computers: StringProperty(name="Blocked Computers", default="", description="Comma-separated list of PC names to block", update=mark_job_unsaved)
 
 
 
@@ -1771,10 +1738,9 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
         right_col = split.column()
         right_col.enabled = item.enabled
 
-        # Pre-read progress so we can use it for both dimming and the label
+        # Pre-read chunk progress for both row dimming and the % label
         chunk_pct = item.get('cached_chunk_progress', 0.0)
-        disk_pct  = item.get('cached_progress', 0.0)
-        is_complete = max(chunk_pct, disk_pct) >= 100.0
+        is_complete = chunk_pct >= 100.0
 
         # Build Content Row inside Right
         sub = right_col.row(align=True)
@@ -1836,11 +1802,6 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
         pct_part = percent_row
         pct_part.label(text=f"{chunk_pct:.0f}%")
 
-        # Col 5: Disk
-        #disk_part = percent_row
-        #disk_txt = item.frames_on_disk if item.frames_on_disk else "-"
-        #disk_part.label(text=disk_txt)
-
         # if not item.enabled:
         #    data_row.enabled = False
 
@@ -1852,101 +1813,7 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
 # Operators
 # -------------------------------------------------------------------
 
-class BATCH_RENDER_OT_scan_disk(bpy.types.Operator):
-    bl_idname = "batch_render.scan_disk"
-    bl_label = "Check Progress"
-    bl_description = "Scan output folders for rendered frames (Fast)"
 
-    def execute(self, context):
-        queue = context.scene.batch_render_jobs
-        settings = context.scene.batch_render_settings
-        # Pre-resolve batch path for chunk scanning
-        batch_path, _ = get_batch_file_path(context)
-
-        has_changes = False
-        count = 0
-        for i, job in enumerate(queue):
-            # if not job.enabled: continue # User requested scan all
-
-            # Resolve range for progress calculation
-            start = job.sc_frame_start
-            end = job.sc_frame_end
-            if job.use_overrides and job.use_custom_frames:
-                start = job.frame_start
-                end = job.frame_end
-            elif settings.use_override_frames:
-                start = settings.frame_start
-                end = settings.frame_end
-
-            total_frames = max(1, (end - start) + 1)
-
-            # Use Progress Receipts (Truth)
-            # Use Progress Receipts (Truth)
-            if batch_path:
-                found_frames_set = get_job_progress_frames(job, batch_path)
-
-                # Check Disk Files (Legacy/Fallback/Pre-existing)
-                # We ALWAYS check disk to account for pre-existing frames (Skip Existing support)
-                out_path = resolve_job_output_path(job, settings, job.filepath)
-                out_prefix = get_job_output_prefix(job, settings, job.filepath)
-
-                disk_frames_set = set()
-                if out_path and os.path.exists(out_path):
-                     disk_frames_set = get_frames_from_disk(out_path, prefix=out_prefix)
-
-                # Merge sets
-                final_set = found_frames_set.union(disk_frames_set)
-
-                # Filter to Job Range ONLY
-                # This ensures we don't count "junk" frames (e.g. 1, 10, 20 from test renders)
-                # that fall outside the current render target.
-                filtered_set = {f for f in final_set if start <= f <= end}
-
-                found_count = len(filtered_set)
-
-                if filtered_set:
-                     job.frames_on_disk = format_frame_ranges(list(filtered_set))
-                else:
-                     job.frames_on_disk = "-"
-
-                old_prog = job.get('cached_progress', 0.0)
-                new_prog = 0.0
-                if total_frames > 0:
-                     new_prog = (found_count / total_frames) * 100.0
-
-                if abs(new_prog - old_prog) > 0.01:
-                    job['cached_progress'] = new_prog
-                else:
-                    job['cached_progress'] = new_prog # Update anyway for float precision, but don't force write yet?
-
-                if found_count > 0: count += 1
-
-            else:
-                 job.frames_on_disk = "?"
-                 job['cached_progress'] = 0.0
-
-            # Refresh chunk status for this job
-            if batch_path:
-                # Capture old chunk progress
-                old_chunk_prog = job.get('cached_chunk_progress', 0.0)
-
-                refresh_job_chunks(job, settings, batch_path)
-
-                new_chunk_prog = job.get('cached_chunk_progress', 0.0)
-
-                # If progress changed, we need to save
-                # Check both disk and chunk progress for changes
-                disk_diff = abs(job.get('cached_progress', 0.0) - old_prog)
-                chunk_diff = abs(new_chunk_prog - old_chunk_prog)
-
-                if disk_diff > 0.01 or chunk_diff > 0.01:
-                    pass # We always write now
-
-        # Persist the updated progress data ALWAYS (Reverted optimization)
-        write_batch_file(context)
-
-        self.report({'INFO'}, f"Scanned progress for {len(queue)} jobs")
-        return {'FINISHED'}
 
 class BATCH_RENDER_OT_scan_job_chunks(bpy.types.Operator):
     bl_idname = "batch_render.scan_job_chunks"
@@ -2093,7 +1960,8 @@ class BATCH_RENDER_OT_set_job_pending(bpy.types.Operator):
                 except Exception as e:
                     print(f"Error clearing progress: {e}")
 
-            # Refresh UI
+            # Reset cached chunk progress so the row brightens immediately in the UI
+            job['cached_chunk_progress'] = 0.0
             refresh_job_chunks(job, settings, batch_path)
 
         self.report({'INFO'}, f"Cleared {total_count} files for {len(targets)} jobs")
@@ -2160,8 +2028,6 @@ class BATCH_RENDER_OT_set_job_done(bpy.types.Operator):
         self.report({'INFO'}, f"Marked {count_c} chunks and {count_f} frames as Done")
         return {'FINISHED'}
 
-# (Note: scan_disk needs update below)
-
 class BATCH_RENDER_OT_archive_frames(bpy.types.Operator):
     bl_idname = "batch_render.archive_frames"
     bl_label = "Archive Frames"
@@ -2209,7 +2075,6 @@ class BATCH_RENDER_OT_archive_frames(bpy.types.Operator):
             total_count += count
 
         self.report({'INFO'}, f"Archived {total_count} frames for {len(targets)} jobs")
-        bpy.ops.batch_render.scan_disk()
         return {'FINISHED'}
 
 class BATCH_RENDER_OT_delete_frames(bpy.types.Operator):
@@ -2250,7 +2115,6 @@ class BATCH_RENDER_OT_delete_frames(bpy.types.Operator):
             total_count += count
 
         self.report({'INFO'}, f"Deleted {total_count} frames from {len(targets)} jobs")
-        bpy.ops.batch_render.scan_disk()
         return {'FINISHED'}
 
 
@@ -2498,7 +2362,6 @@ class BATCH_RENDER_OT_refresh_metadata(bpy.types.Operator):
                 write_batch_file(context)
 
                 self.report({'INFO'}, "Metadata Refresh Complete & Saved")
-                bpy.ops.batch_render.scan_disk()
                 return {'FINISHED'}
 
         return {'PASS_THROUGH'}
@@ -2707,7 +2570,6 @@ class BATCH_RENDER_OT_remove_placeholders(bpy.types.Operator):
                     print(f"Failed to check/delete {f}: {e}")
 
         self.report({'INFO'}, f"Removed {count} placeholder files")
-        bpy.ops.batch_render.scan_disk()
         return {'FINISHED'}
 
 
@@ -2951,7 +2813,6 @@ class BATCH_RENDER_OT_reload_queue(bpy.types.Operator):
     bl_description = "Reload from file (Discards pending changes)"
     def execute(self, context):
         load_queue_from_file(context)
-        bpy.ops.batch_render.scan_disk()
         return {'FINISHED'}
 
 # -------------------------------------------------------------------
@@ -2992,7 +2853,6 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
         row.scale_y = 1.0
         row.operator("batch_render.reload_queue", text="Reload Queue", icon='FILE_REFRESH')
         row.operator("batch_render.refresh_metadata", text="Refresh Metadata", icon='IMPORT')
-        row.operator("batch_render.scan_disk", text="Check Progress", icon='DISK_DRIVE')
         # --- Run ---
         layout.separator()
         has_unsaved = any(not job.is_saved for job in queue)
@@ -3312,7 +3172,6 @@ classes = (
     BATCH_RENDER_OT_reload_queue,
     BATCH_RENDER_OT_refresh_metadata,
     BATCH_RENDER_OT_deduplicate_jobs,
-    BATCH_RENDER_OT_scan_disk,
     BATCH_RENDER_OT_scan_job_chunks,
     BATCH_RENDER_OT_set_chunk_status,
     BATCH_RENDER_OT_set_job_pending,

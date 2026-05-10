@@ -1833,9 +1833,9 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
         pct_part.label(text=f"{chunk_pct:.0f}%")
 
         # Col 5: Disk
-        disk_part = percent_row
-        disk_txt = item.frames_on_disk if item.frames_on_disk else "-"
-        disk_part.label(text=disk_txt)
+        #disk_part = percent_row
+        #disk_txt = item.frames_on_disk if item.frames_on_disk else "-"
+        #disk_part.label(text=disk_txt)
         
         # if not item.enabled:
         #    data_row.enabled = False

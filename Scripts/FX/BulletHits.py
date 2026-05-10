@@ -35,6 +35,10 @@ def iter_fcurves(action):
         for layer in action.layers:
             if hasattr(layer, "strips"):
                 for strip in layer.strips:
+                    if hasattr(strip, "channelbags"):
+                        for bag in strip.channelbags:
+                            if hasattr(bag, "fcurves"):
+                                for fc in bag.fcurves: yield fc
                     if hasattr(strip, "fcurves"):
                         for fc in strip.fcurves: yield fc
                     elif hasattr(strip, "channels"):
@@ -97,7 +101,7 @@ def copy_and_align(template_col, matrix_world, birth_frame, target_obj_name):
                     act = new_cache.animation_data.action
 
                     for fc in iter_fcurves(act):
-                        if fc.data_path == "override_frame" or fc.data_path.endswith("override_frame"):
+                        if fc.data_path == "frame" or fc.data_path.endswith(".frame"):
                             if len(fc.keyframe_points) >= 1:
                                 orig_start = fc.keyframe_points[0].co[0]
                                 abc_delta = birth_frame - orig_start

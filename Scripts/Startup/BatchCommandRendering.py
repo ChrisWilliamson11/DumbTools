@@ -1823,7 +1823,7 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
             range_txt = f"{calc_start}-{calc_end}"
         range_part.label(text=range_txt)
         
-        percent_row = range_row.split(factor=0.32)
+        percent_row = range_row.split(factor=0.5)
         
         # Col 4: Percent
         pct_part = percent_row

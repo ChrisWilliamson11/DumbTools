@@ -1787,7 +1787,7 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
         sub.label(text="", icon=icon_status)
         
         # Split remaining
-        data_row = sub.split(factor=0.27) 
+        data_row = sub.split(factor=0.5) 
         
         # Col 1: File
         file_part = data_row

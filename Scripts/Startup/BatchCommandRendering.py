@@ -241,8 +241,10 @@ def apply_state_to_ui(context, state):
                 try: setattr(settings, k, v)
                 except: pass
 
-        # Apply Jobs
-        _clear_saved_jobs(context)
+        # Apply Jobs — always full clear; unsaved jobs are already captured in
+        # local_state by capture_local_state() before any merge, so nothing is lost.
+        for i in range(len(queue) - 1, -1, -1):
+            queue.remove(i)
 
         for data in state.get('jobs', []):
             item = queue.add()
@@ -360,7 +362,6 @@ def merge_queue_states(local, remote, base_uuids_str, active_idx=-1):
             merged_jobs.append(r_job)
 
     merged['jobs'] = merged_jobs
-    return merged, False
     return merged, False
 
 def auto_save_batch(self, context):
@@ -1770,8 +1771,15 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
         right_col = split.column()
         right_col.enabled = item.enabled
 
+        # Pre-read progress so we can use it for both dimming and the label
+        chunk_pct = item.get('cached_chunk_progress', 0.0)
+        disk_pct  = item.get('cached_progress', 0.0)
+        is_complete = max(chunk_pct, disk_pct) >= 100.0
+
         # Build Content Row inside Right
         sub = right_col.row(align=True)
+        if is_complete and item.enabled:
+            sub.active = False  # Dim without fully disabling — visually quieter
 
         # Check for active rendering chunks
         is_rendering = False
@@ -1827,9 +1835,6 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
 
         # Col 4: Percent
         pct_part = percent_row
-
-        chunk_pct = item.get('cached_chunk_progress', 0.0)
-        disk_pct = item.get('cached_progress', 0.0)
         pct_part.label(text=f"{chunk_pct:.0f}%")
 
         # Col 5: Disk
@@ -2991,10 +2996,13 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
         row.operator("batch_render.scan_disk", text="Check Progress", icon='DISK_DRIVE')
         # --- Run ---
         layout.separator()
-        row = layout.row()
-        row.scale_y = 1.3
-        row.operator("batch_render.save_batch", icon='FILE_TICK', text="Save Batch")
-        row.operator("batch_render.generate_and_run", icon='PLAY', text="Save & Run")
+        has_unsaved = any(not job.is_saved for job in queue)
+        save_row = layout.row(align=True)
+        save_row.scale_y = 1.3
+        save_sub = save_row.row(align=True)
+        save_sub.alert = has_unsaved
+        save_sub.operator("batch_render.save_batch", icon='FILE_TICK', text="Save Batch")
+        save_row.operator("batch_render.generate_and_run", icon='PLAY', text="Save & Run")
         # --- Global Options (Collapsible, under Refresh) ---
         row = layout.row()
 

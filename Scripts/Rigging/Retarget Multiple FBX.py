@@ -8,11 +8,18 @@ from bpy.types import OperatorFileListElement
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Constraint snapshot / restore
-#  The bake operator clears constraints from baked bones. We snapshot them
-#  before the loop and restore after each clip so the next clip's import
-#  drives the target rig correctly.
+#  Retargeting-constraint snapshot / restore
+#  We only snapshot constraints that TARGET the source rig (Copy Rotation,
+#  Copy Location, Copy Transforms, etc. pointing at the source armature).
+#  Internal rig constraints (IK, IK-FK switches, drivers) are left untouched
+#  throughout the entire process.
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _is_retarget_constraint(c, source_rig):
+    """Return True if this constraint targets the source rig (= a retarget constraint)."""
+    return (hasattr(c, 'target') and c.target is not None
+            and c.target == source_rig)
+
 
 def _read_constraint_props(c):
     """Extract serialisable data from a single constraint."""
@@ -40,19 +47,42 @@ def _read_constraint_props(c):
     return d
 
 
-def snapshot_constraints(arm_obj):
-    """Return {bone_name: [constraint_data, ...]} for all pose bones."""
+def snapshot_retarget_constraints(arm_obj, source_rig):
+    """Return {bone_name: [constraint_data, ...]} for retargeting constraints only.
+    Only captures constraints that target source_rig."""
     snap = {}
     for pbone in arm_obj.pose.bones:
-        clist = [_read_constraint_props(c) for c in pbone.constraints]
+        clist = [_read_constraint_props(c) for c in pbone.constraints
+                 if _is_retarget_constraint(c, source_rig)]
         if clist:
             snap[pbone.name] = clist
     return snap
 
 
-def restore_constraints(arm_obj, snapshot):
-    """Re-apply constraints from a snapshot dict."""
-    # Ensure we have an active object in object mode before touching constraints
+def remove_retarget_constraints(arm_obj, source_rig):
+    """Remove only the constraints on arm_obj that target source_rig.
+    All internal rig constraints (IK, drivers, IK-FK switches) are preserved."""
+    # Ensure object mode
+    if bpy.context.object is None:
+        arm_obj.select_set(True)
+        bpy.context.view_layer.objects.active = arm_obj
+    if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+    removed = 0
+    for pbone in arm_obj.pose.bones:
+        to_remove = [c for c in pbone.constraints
+                     if _is_retarget_constraint(c, source_rig)]
+        for c in to_remove:
+            pbone.constraints.remove(c)
+            removed += 1
+    return removed
+
+
+def restore_retarget_constraints(arm_obj, snapshot):
+    """Re-add retargeting constraints from a snapshot dict.
+    Does NOT clear existing constraints — only adds the snapshotted ones back."""
+    # Ensure object mode
     if bpy.context.object is None:
         arm_obj.select_set(True)
         bpy.context.view_layer.objects.active = arm_obj
@@ -63,10 +93,6 @@ def restore_constraints(arm_obj, snapshot):
         pbone = arm_obj.pose.bones.get(bone_name)
         if pbone is None:
             continue
-        # Clear whatever the bake left behind
-        for c in reversed(list(pbone.constraints)):
-            pbone.constraints.remove(c)
-        # Re-create
         for d in clist:
             try:
                 c = pbone.constraints.new(type=d['type'])
@@ -344,7 +370,7 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
             frame_end=scn.frame_end,
             only_selected=True,
             visual_keying=True,
-            clear_constraints=True,   # constraints gone — restored after
+            clear_constraints=False,  # preserve IK, drivers, IK-FK switches
             clear_parents=False,
             use_current_action=True,
             bake_types={'POSE'},
@@ -446,11 +472,11 @@ class RETARGET_OT_multiple_fbx(Operator):
         total = len(fbx_files)
         print(f"\n[RetargetFBX] ── Starting batch: {total} file(s) ──")
 
-        # ── Snapshot target constraints before anything touches them ──────────
-        constraint_snapshot = snapshot_constraints(target_rig)
+        # ── Snapshot retargeting constraints before anything touches them ──────
+        constraint_snapshot = snapshot_retarget_constraints(target_rig, source_rig)
         if not any(constraint_snapshot.values()):
             self.report({'WARNING'},
-                "No constraints found on target rig bones. "
+                "No retargeting constraints found on target rig bones. "
                 "Make sure the target rig is constrained to the source rig.")
 
         # Remember original source action so we can restore it at the end
@@ -493,16 +519,23 @@ class RETARGET_OT_multiple_fbx(Operator):
             if baked:
                 baked_actions.append(baked)
 
-            # Restore constraints ONLY between clips — to prime the rig for
-            # the next FBX import. After the last clip, constraints stay off
-            # so the saved .blend shows clean NLA playback without constraints
-            # fighting or hiding the baked animation tracks.
+            # After bake: remove only the retargeting constraints (the ones
+            # targeting the source rig). Internal constraints (IK, drivers,
+            # IK-FK switches) are untouched by both the bake and this removal.
+            if props.do_bake and baked:
+                n_removed = remove_retarget_constraints(target_rig, source_rig)
+                print(f"[RetargetFBX] Removed {n_removed} retarget constraint(s), "
+                      f"internal rig constraints preserved.")
+
+            # Between clips: re-add retargeting constraints so the next FBX
+            # import can drive the target rig through constraints again.
+            # After the last clip, leave them off for clean NLA playback.
             is_last_clip = (i == total - 1)
             if props.do_bake and not is_last_clip:
-                print("[RetargetFBX] Restoring constraints (preparing for next clip)...")
-                restore_constraints(target_rig, constraint_snapshot)
+                print("[RetargetFBX] Restoring retarget constraints (preparing for next clip)...")
+                restore_retarget_constraints(target_rig, constraint_snapshot)
             elif props.do_bake and is_last_clip:
-                print("[RetargetFBX] Last clip done — constraints left off for clean NLA playback.")
+                print("[RetargetFBX] Last clip done — retarget constraints left off for clean NLA playback.")
 
 
         wm.progress_update(total)

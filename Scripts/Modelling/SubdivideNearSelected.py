@@ -140,15 +140,15 @@ class MESH_OT_subdivide_near_selected(bpy.types.Operator):
 
         kd = self._build_kdtree(target_points)
 
-        # --- Enter Edit Mode & iterate -----------------------------
-        prev_mode = active_obj.mode
-        if prev_mode != 'EDIT':
-            bpy.ops.object.mode_set(mode='EDIT')
-
+        # --- Work entirely in Object Mode via bmesh.new() ----------
+        # Avoiding bpy.ops.object.mode_set() inside execute() is
+        # critical: those calls push their own undo entries, which
+        # makes *them* the "last operator" and hides our F9 panel.
         final_threshold = self.base_threshold
 
         for iteration in range(self.max_iterations):
-            bm = bmesh.from_edit_mesh(active_obj.data)
+            bm = bmesh.new()
+            bm.from_mesh(active_obj.data)
             bm.faces.ensure_lookup_table()
 
             # Biased progression: higher gamma = effect concentrates closer
@@ -172,6 +172,7 @@ class MESH_OT_subdivide_near_selected(bpy.types.Operator):
                     faces_to_subdivide.append(face)
 
             if not faces_to_subdivide:
+                bm.free()
                 break
 
             edges_to_sub = list({e for f in faces_to_subdivide for e in f.edges})
@@ -182,10 +183,10 @@ class MESH_OT_subdivide_near_selected(bpy.types.Operator):
                 cuts=1,
                 use_grid_fill=True,
             )
-            bmesh.update_edit_mesh(active_obj.data)
 
-        # --- Return to previous mode --------------------------------
-        bpy.ops.object.mode_set(mode='OBJECT')
+            bm.to_mesh(active_obj.data)
+            bm.free()
+            active_obj.data.update()
 
         face_count = len(active_obj.data.polygons)
         self.report(

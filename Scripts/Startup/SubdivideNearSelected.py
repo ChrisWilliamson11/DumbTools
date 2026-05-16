@@ -56,18 +56,8 @@ class MESH_OT_subdivide_near_selected(bpy.types.Operator):
     )
 
     # ------------------------------------------------------------------
-    # Poll / UI
+    # UI
     # ------------------------------------------------------------------
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        if not obj or obj.type != 'MESH':
-            return False
-        # Need at least one other selected object to use as target
-        if len(context.selected_objects) < 2:
-            return False
-        return True
 
     def draw(self, context):
         layout = self.layout
@@ -128,6 +118,17 @@ class MESH_OT_subdivide_near_selected(bpy.types.Operator):
 
     def execute(self, context):
         active_obj = context.active_object
+
+        if not active_obj or active_obj.type != 'MESH':
+            self.report({'ERROR'}, "Active object must be a mesh.")
+            return {'CANCELLED'}
+
+        if len(context.selected_objects) < 2:
+            self.report(
+                {'ERROR'},
+                "Select at least one other object to use as proximity target.",
+            )
+            return {'CANCELLED'}
 
         # --- Gather target points ----------------------------------
         target_points = self._gather_target_points(context, active_obj)
@@ -197,22 +198,33 @@ class MESH_OT_subdivide_near_selected(bpy.types.Operator):
         return {'FINISHED'}
 
     def invoke(self, context, event):
-        # Run immediately so the result appears and the F9 panel is populated
         return self.execute(context)
 
 
 # ------------------------------------------------------------------
-# Registration (DumbTools exec() pattern)
+# Menu entry & Registration (DumbTools Startup pattern)
 # ------------------------------------------------------------------
 
+def menu_draw(self, context):
+    self.layout.operator(
+        MESH_OT_subdivide_near_selected.bl_idname,
+        text="Subdivide Near Selected",
+        icon='MOD_SUBSURF',
+    )
+
+
 def register():
+    try:
+        bpy.utils.unregister_class(MESH_OT_subdivide_near_selected)
+    except RuntimeError:
+        pass
     bpy.utils.register_class(MESH_OT_subdivide_near_selected)
+    bpy.types.VIEW3D_MT_object.append(menu_draw)
 
 
 def unregister():
     bpy.utils.unregister_class(MESH_OT_subdivide_near_selected)
-
+    bpy.types.VIEW3D_MT_object.remove(menu_draw)
 
 
 register()
-bpy.ops.mesh.subdivide_near_selected('INVOKE_DEFAULT')

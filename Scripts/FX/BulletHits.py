@@ -169,8 +169,23 @@ def shift_material_image_offsets(obj, birth_frame):
         obj.material_slots[slot_idx].material = new_mat
 
         new_nt = new_mat.node_tree
-        new_nt.animation_data.action = action.copy()
+        if not new_nt.animation_data:
+            continue
+
+        # Blender 5.0+: save slot identifier before swapping the action
+        slot_id = None
+        if hasattr(new_nt.animation_data, 'action_slot') and new_nt.animation_data.action_slot:
+            slot_id = new_nt.animation_data.action_slot.identifier
+
+        new_nt.animation_data.action = new_nt.animation_data.action.copy()
         new_action = new_nt.animation_data.action
+
+        # Blender 5.0+: rebind the slot by matching identifier
+        if slot_id and hasattr(new_action, 'slots'):
+            for s in new_action.slots:
+                if s.identifier == slot_id:
+                    new_nt.animation_data.action_slot = s
+                    break
 
         # ── Find earliest keyframe across all matching curves ─
         earliest = None

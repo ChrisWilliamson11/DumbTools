@@ -21,7 +21,7 @@ class MESH_OT_subdivide_near_selected(bpy.types.Operator):
         description="Number of subdivision passes (higher = finer detail near points)",
         default=5,
         min=1,
-        max=10,
+        max=50,
     )
 
     base_threshold: bpy.props.FloatProperty(
@@ -39,7 +39,7 @@ class MESH_OT_subdivide_near_selected(bpy.types.Operator):
             "Controls how quickly the threshold shrinks per iteration. "
             "Values > 1 concentrate subdivisions closer to the target points"
         ),
-        default=2.2,
+        default=1.0,
         min=0.1,
         soft_max=5.0,
     )

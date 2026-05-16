@@ -163,9 +163,9 @@ def shift_material_image_offsets(obj, birth_frame):
         if not matching_fcs:
             continue
 
-        # ── Make material + node tree + action unique ────────
+        # ── Make material + action unique ────────────────────────
+        # mat.copy() already creates a new node tree; just copy the action
         new_mat = mat.copy()
-        new_mat.node_tree = mat.node_tree.copy()
         obj.material_slots[slot_idx].material = new_mat
 
         new_nt = new_mat.node_tree

@@ -143,6 +143,10 @@ def shift_material_image_offsets(obj, birth_frame):
     if not hasattr(obj, 'material_slots'):
         return
 
+    # Deep-copy mesh data so material slots are independent per object
+    if obj.data and obj.data.users > 1:
+        obj.data = obj.data.copy()
+
     target_start = int(birth_frame) - 1
 
     for slot_idx, slot in enumerate(obj.material_slots):

@@ -212,6 +212,6 @@ def unregister():
     bpy.utils.unregister_class(MESH_OT_subdivide_near_selected)
 
 
-if __name__ == "__main__":
-    register()
-    bpy.ops.mesh.subdivide_near_selected('INVOKE_DEFAULT')
+
+register()
+bpy.ops.mesh.subdivide_near_selected('INVOKE_DEFAULT')

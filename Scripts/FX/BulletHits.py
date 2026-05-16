@@ -129,6 +129,197 @@ def find_templates(source_col_name):
 
 
 # ─────────────────────────────────────────────────────────────
+#  Image-sequence offset shifting
+# ─────────────────────────────────────────────────────────────
+
+def shift_material_image_offsets(obj, birth_frame):
+    """Shift image_user.frame_offset keyframes on all materials so that the
+    first keyframe lands on (birth_frame - 1).
+
+    Only acts on materials whose node-tree action contains fcurves with
+    'image_user.frame_offset' in the data path AND 2+ keyframes.
+    Materials are deep-copied so the source template is never modified.
+    """
+    if not hasattr(obj, 'material_slots'):
+        return
+
+    target_start = int(birth_frame) - 1
+
+    for slot_idx, slot in enumerate(obj.material_slots):
+        mat = slot.material
+        if not mat or not mat.node_tree:
+            continue
+        nt = mat.node_tree
+        if not nt.animation_data or not nt.animation_data.action:
+            continue
+
+        # Check whether any fcurve matches before we bother copying
+        action = nt.animation_data.action
+        matching_fcs = [
+            fc for fc in iter_fcurves(action)
+            if 'image_user.frame_offset' in fc.data_path
+            and len(fc.keyframe_points) >= 2
+        ]
+        if not matching_fcs:
+            continue
+
+        # ── Make material + node tree + action unique ────────
+        new_mat = mat.copy()
+        new_mat.node_tree = mat.node_tree.copy()
+        obj.material_slots[slot_idx].material = new_mat
+
+        new_nt = new_mat.node_tree
+        new_nt.animation_data.action = action.copy()
+        new_action = new_nt.animation_data.action
+
+        # ── Find earliest keyframe across all matching curves ─
+        earliest = None
+        offset_fcs = []
+        for fc in iter_fcurves(new_action):
+            if 'image_user.frame_offset' in fc.data_path and len(fc.keyframe_points) >= 2:
+                offset_fcs.append(fc)
+                first_t = fc.keyframe_points[0].co[0]
+                if earliest is None or first_t < earliest:
+                    earliest = first_t
+
+        if earliest is None:
+            continue
+
+        delta = target_start - earliest
+        for fc in offset_fcs:
+            for kp in fc.keyframe_points:
+                kp.co[0] += delta
+            fc.update()
+
+        print(f"  Shifted image_user.frame_offset on '{new_mat.name}' "
+              f"by {delta} frames (first kf {earliest} -> {target_start})")
+
+
+# ─────────────────────────────────────────────────────────────
+#  Animated flat-object repositioning
+# ─────────────────────────────────────────────────────────────
+
+_TRANSFORM_PATHS = ('location', 'rotation_euler', 'rotation_quaternion', 'scale')
+
+
+def reposition_flat_animated_object(new_obj, src_obj, matrix_world, birth_frame):
+    """Handle a flat object that already has transform keyframes.
+
+    1. Deep-copies its action so timing is independent.
+    2. Time-shifts all transform keyframes so the earliest = birth_frame - 1.
+    3. Spatially repositions location keyframes:
+       - The 2nd keyframe becomes the hit position.
+       - All others are offset by the same amount, rotated from the
+         source orientation into the hit orientation.
+    4. Adds a rotation delta to any rotation_euler keyframes so the
+       animation plays relative to the hit orientation.
+
+    Returns True if the object had transform animation and was handled.
+    """
+    if not new_obj.animation_data or not new_obj.animation_data.action:
+        return False
+
+    action_ref = new_obj.animation_data.action
+    has_transforms = any(
+        fc.data_path in _TRANSFORM_PATHS and len(fc.keyframe_points) >= 1
+        for fc in iter_fcurves(action_ref)
+    )
+    if not has_transforms:
+        return False
+
+    # ── Deep copy action ─────────────────────────────────────
+    new_obj.animation_data.action = action_ref.copy()
+    action = new_obj.animation_data.action
+
+    target_start = int(birth_frame) - 1
+    hit_pos = matrix_world.translation.copy()
+    hit_rot_euler = matrix_world.to_euler()
+
+    # ── Time-shift ───────────────────────────────────────────
+    earliest = None
+    for fc in iter_fcurves(action):
+        if fc.data_path in _TRANSFORM_PATHS and len(fc.keyframe_points) >= 1:
+            t = fc.keyframe_points[0].co[0]
+            if earliest is None or t < earliest:
+                earliest = t
+
+    if earliest is None:
+        return False
+
+    time_delta = target_start - earliest
+    for fc in iter_fcurves(action):
+        if fc.data_path in _TRANSFORM_PATHS:
+            for kp in fc.keyframe_points:
+                kp.co[0] += time_delta
+            fc.update()
+
+    # ── Spatial reposition – location ────────────────────────
+    loc_fcs = {}
+    for fc in iter_fcurves(action):
+        if fc.data_path == 'location':
+            loc_fcs[fc.array_index] = fc
+
+    if (len(loc_fcs) == 3
+            and all(len(loc_fcs[i].keyframe_points) >= 2 for i in range(3))):
+
+        # Source 2nd-keyframe position (the "hit" moment in the original anim)
+        src_hit_pos = mathutils.Vector((
+            loc_fcs[0].keyframe_points[1].co[1],
+            loc_fcs[1].keyframe_points[1].co[1],
+            loc_fcs[2].keyframe_points[1].co[1],
+        ))
+
+        # Rotation delta: source orientation → hit orientation
+        src_rot_mat = src_obj.rotation_euler.to_matrix()
+        hit_rot_mat = hit_rot_euler.to_matrix()
+        rot_delta_mat = hit_rot_mat @ src_rot_mat.inverted()
+
+        # Reposition every keyframe: relative offset rotated into hit space
+        num_kfs = min(len(loc_fcs[i].keyframe_points) for i in range(3))
+        for kf_idx in range(num_kfs):
+            kf_pos = mathutils.Vector((
+                loc_fcs[0].keyframe_points[kf_idx].co[1],
+                loc_fcs[1].keyframe_points[kf_idx].co[1],
+                loc_fcs[2].keyframe_points[kf_idx].co[1],
+            ))
+            relative = kf_pos - src_hit_pos
+            rotated_relative = rot_delta_mat @ relative
+            new_pos = hit_pos + rotated_relative
+
+            loc_fcs[0].keyframe_points[kf_idx].co[1] = new_pos.x
+            loc_fcs[1].keyframe_points[kf_idx].co[1] = new_pos.y
+            loc_fcs[2].keyframe_points[kf_idx].co[1] = new_pos.z
+
+        for i in range(3):
+            loc_fcs[i].update()
+
+        print(f"  Repositioned '{new_obj.name}' location kfs "
+              f"(2nd kf {src_hit_pos} -> {hit_pos})")
+
+    # ── Rotation delta – rotation_euler ──────────────────────
+    rot_fcs = {}
+    for fc in iter_fcurves(action):
+        if fc.data_path == 'rotation_euler':
+            rot_fcs[fc.array_index] = fc
+
+    if rot_fcs:
+        src_rot_euler_vec = mathutils.Vector(src_obj.rotation_euler)
+        hit_rot_euler_vec = mathutils.Vector(hit_rot_euler)
+        rot_euler_delta = hit_rot_euler_vec - src_rot_euler_vec
+
+        for axis_idx, fc in rot_fcs.items():
+            for kp in fc.keyframe_points:
+                kp.co[1] += rot_euler_delta[axis_idx]
+            fc.update()
+    else:
+        # No rotation keyframes — just set static rotation
+        new_obj.rotation_euler = hit_rot_euler
+
+    print(f"  Animated flat object '{new_obj.name}' placed at frame {int(birth_frame)}")
+    return True
+
+
+# ─────────────────────────────────────────────────────────────
 #  Spawning (unified)
 # ─────────────────────────────────────────────────────────────
 
@@ -137,8 +328,9 @@ def spawn_template(template, matrix_world, birth_frame, gen_col):
 
     - *collection* / *hierarchy* modes: duplicate the whole hierarchy,
       position the root, and shift timing on any VDB / cached-Alembic children.
-    - *flat* mode: duplicate the single object and animate its location
-      from its current position to the hit over 1 frame.
+    - *flat* mode (pre-animated): deep-copy action, time-shift, spatially
+      reposition location keyframes with rotation-aware offsets.
+    - *flat* mode (static): create 2 snap keyframes (source → hit).
     """
     root      = template['root']
     objects   = template['objects']
@@ -167,31 +359,33 @@ def spawn_template(template, matrix_world, birth_frame, gen_col):
 
     # ── 3. Position the root ─────────────────────────────────
     if is_flat:
-        # Animate: source position at birth-1, hit position at birth
-        src_origin = root.matrix_world.translation.copy()
-        hit_pos    = matrix_world.translation.copy()
-        hit_rot    = matrix_world.to_euler()
-
         new_root.parent = None
-        new_root.rotation_euler = hit_rot
 
-        # Key source position one frame before
-        new_root.location = src_origin
-        new_root.keyframe_insert(data_path="location", frame=int(birth_frame) - 1)
+        # Try animated repositioning first; fall back to snap keyframes
+        if not reposition_flat_animated_object(new_root, root, matrix_world, birth_frame):
+            src_origin = root.matrix_world.translation.copy()
+            hit_pos    = matrix_world.translation.copy()
+            hit_rot    = matrix_world.to_euler()
 
-        # Key hit position at birth frame
-        new_root.location = hit_pos
-        new_root.keyframe_insert(data_path="location", frame=int(birth_frame))
+            new_root.rotation_euler = hit_rot
 
-        # CONSTANT interpolation so it snaps
-        if new_root.animation_data and new_root.animation_data.action:
-            for fc in iter_fcurves(new_root.animation_data.action):
-                if fc.data_path == "location":
-                    for kp in fc.keyframe_points:
-                        kp.interpolation = 'CONSTANT'
+            # Key source position one frame before
+            new_root.location = src_origin
+            new_root.keyframe_insert(data_path="location", frame=int(birth_frame) - 1)
 
-        print(f"  Spawned flat object '{new_root.name}' at frame {int(birth_frame)} "
-              f"({src_origin} -> {hit_pos})")
+            # Key hit position at birth frame
+            new_root.location = hit_pos
+            new_root.keyframe_insert(data_path="location", frame=int(birth_frame))
+
+            # CONSTANT interpolation so it snaps
+            if new_root.animation_data and new_root.animation_data.action:
+                for fc in iter_fcurves(new_root.animation_data.action):
+                    if fc.data_path == "location":
+                        for kp in fc.keyframe_points:
+                            kp.interpolation = 'CONSTANT'
+
+            print(f"  Spawned static flat object '{new_root.name}' at frame {int(birth_frame)} "
+                  f"({src_origin} -> {hit_pos})")
     else:
         # Hierarchical: just place the root
         new_root.matrix_world = matrix_world
@@ -263,6 +457,32 @@ def spawn_template(template, matrix_world, birth_frame, gen_col):
 
                 if not shifted:
                     print(f"  Warning: No cache keyframes for {new_obj.name}")
+
+        # --- Hierarchy: time-shift object-level transform animation ---
+        if not is_flat and new_obj.animation_data and new_obj.animation_data.action:
+            # VDB objects already had their action shifted above; skip them
+            if src_obj.type != 'VOLUME':
+                new_obj.animation_data.action = new_obj.animation_data.action.copy()
+                # Find earliest transform keyframe
+                earliest = None
+                for fc in iter_fcurves(new_obj.animation_data.action):
+                    if fc.data_path in _TRANSFORM_PATHS and len(fc.keyframe_points) >= 1:
+                        t = fc.keyframe_points[0].co[0]
+                        if earliest is None or t < earliest:
+                            earliest = t
+                if earliest is not None:
+                    td = (int(birth_frame) - 1) - earliest
+                    for fc in iter_fcurves(new_obj.animation_data.action):
+                        if fc.data_path in _TRANSFORM_PATHS:
+                            for kp in fc.keyframe_points:
+                                kp.co[0] += td
+                            fc.update()
+                    print(f"  Time-shifted animation on '{new_obj.name}' by {td} frames")
+
+    # ── 5. Shift image-sequence offsets on material nodes ─────
+    for src_obj in objects:
+        new_obj = old_to_new[src_obj]
+        shift_material_image_offsets(new_obj, birth_frame)
 
     if not is_flat:
         print(f"  Spawned template (root='{new_root.name}', "

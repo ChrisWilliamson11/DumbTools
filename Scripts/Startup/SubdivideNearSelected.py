@@ -24,10 +24,19 @@ class MESH_OT_subdivide_near_selected(bpy.types.Operator):
         max=50,
     )
 
-    base_threshold: bpy.props.FloatProperty(
-        name="Radius",
-        description="Maximum effect radius in Blender units",
+    max_radius: bpy.props.FloatProperty(
+        name="Max Radius",
+        description="Effect radius at the first iteration (widest reach)",
         default=4.0,
+        min=0.001,
+        soft_max=50.0,
+        unit='LENGTH',
+    )
+
+    min_radius: bpy.props.FloatProperty(
+        name="Min Radius",
+        description="Effect radius at the final iteration (tightest detail)",
+        default=0.5,
         min=0.001,
         soft_max=50.0,
         unit='LENGTH',
@@ -63,7 +72,8 @@ class MESH_OT_subdivide_near_selected(bpy.types.Operator):
         layout = self.layout
         layout.use_property_split = True
         layout.prop(self, "max_iterations")
-        layout.prop(self, "base_threshold")
+        layout.prop(self, "max_radius")
+        layout.prop(self, "min_radius")
         layout.prop(self, "gamma")
         layout.prop(self, "min_face_area")
 
@@ -145,17 +155,17 @@ class MESH_OT_subdivide_near_selected(bpy.types.Operator):
         # Avoiding bpy.ops.object.mode_set() inside execute() is
         # critical: those calls push their own undo entries, which
         # makes *them* the "last operator" and hides our F9 panel.
-        final_threshold = self.base_threshold
+        final_threshold = self.max_radius
 
         for iteration in range(self.max_iterations):
             bm = bmesh.new()
             bm.from_mesh(active_obj.data)
             bm.faces.ensure_lookup_table()
 
-            # Biased progression: higher gamma = effect concentrates closer
+            # Lerp from max_radius → min_radius with gamma curve
             progress = iteration / max(1, self.max_iterations - 1)
-            biased_factor = (1.0 - progress) ** self.gamma
-            current_threshold = self.base_threshold * biased_factor
+            curved_progress = progress ** self.gamma
+            current_threshold = self.max_radius + (self.min_radius - self.max_radius) * curved_progress
             final_threshold = current_threshold
 
             mesh_matrix = active_obj.matrix_world

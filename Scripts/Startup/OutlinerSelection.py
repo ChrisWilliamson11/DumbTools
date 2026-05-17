@@ -51,6 +51,10 @@ def get_volumes(objects):
     return [o for o in objects if o.type == 'VOLUME']
 
 
+# Module-level stash for passing data from the popup-spawning operator
+# to the popup's sub-operators (can't set arbitrary attrs on WindowManager RNA)
+_selection_stash = {}
+
 # Pattern to strip trailing numeric suffixes like .001, .002, _001, -001
 _SUFFIX_RE = re.compile(r'[\._\-]\d+$')
 
@@ -105,10 +109,7 @@ class DUMBTOOLS_OT_SelectNameGroup(bpy.types.Operator):
     group_name: bpy.props.StringProperty(name="Group Name")
 
     def execute(self, context):
-        wm = context.window_manager
-        # Retrieve the stashed object names from the window manager property
-        stored = getattr(wm, '_outliner_sel_stash', {})
-        obj_names = stored.get(self.group_name, [])
+        obj_names = _selection_stash.get(self.group_name, [])
         if not obj_names:
             self.report({'WARNING'}, f"No objects found for group '{self.group_name}'")
             return {'CANCELLED'}
@@ -131,9 +132,7 @@ class DUMBTOOLS_OT_SelectAllFiltered(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     def execute(self, context):
-        wm = context.window_manager
-        stored = getattr(wm, '_outliner_sel_stash', {})
-        obj_names = stored.get('__all__', [])
+        obj_names = _selection_stash.get('__all__', [])
         if not obj_names:
             self.report({'WARNING'}, "No objects found")
             return {'CANCELLED'}
@@ -192,13 +191,10 @@ def do_filtered_select(operator, context, filter_func, type_label):
 
     # Multiple name groups exist — show popup to choose
     # Stash data on window manager so the popup operators can read it
-    stash = {}
-    stash['__all__'] = [o.name for o in filtered]
+    _selection_stash.clear()
+    _selection_stash['__all__'] = [o.name for o in filtered]
     for base_name, objs in multi_groups.items():
-        stash[base_name] = [o.name for o in objs]
-    # Include singles under __all__ only (they're already there)
-
-    context.window_manager._outliner_sel_stash = stash
+        _selection_stash[base_name] = [o.name for o in objs]
 
     def draw_popup(self_menu, context):
         layout = self_menu.layout

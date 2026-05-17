@@ -475,7 +475,12 @@ def spawn_template(template, matrix_world, birth_frame, gen_col):
                             shifted = True
 
                 if not shifted:
-                    print(f"  Warning: No cache keyframes for {new_obj.name}")
+                    # No keyframes on the cache — set the offset directly
+                    try:
+                        new_cache.frame_offset = int(birth_frame)
+                        print(f"  Set cache frame_offset={int(birth_frame)} on {new_obj.name} (no keyframes)")
+                    except Exception as e:
+                        print(f"  Warning: Could not set frame_offset on {new_obj.name}: {e}")
 
         # --- Hierarchy: time-shift object-level transform animation ---
         if not is_flat and new_obj.animation_data and new_obj.animation_data.action:

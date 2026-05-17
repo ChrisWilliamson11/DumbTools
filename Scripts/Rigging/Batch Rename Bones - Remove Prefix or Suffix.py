@@ -72,7 +72,7 @@ class DUMBTOOLS_OT_BatchRenameBones(bpy.types.Operator):
         else:
             col = layout.column(align=True)
             col.label(text="Symmetrize names to core + .L/.R")
-            col.label(text="Pairs detected via Left/Right or .L/.R, _L/_R, -L/-R")
+            col.label(text="Pairs detected via .L/.R, _L/_R, -L/-R, _l_/_r_, L_/R_, Left/Right")
         layout.separator()
         layout.operator("dumbtools.restore_last_bone_names", text="Restore Previous Names", icon='RECOVER_LAST')
 
@@ -164,16 +164,34 @@ class DUMBTOOLS_OT_BatchRenameBones(bpy.types.Operator):
 
     def _detect_side_and_core(self, name):
         # Return (core, side) where side in {'L','R',None}
-        # 1) Suffix forms
-        suffixes = ['.L', '.R', '_L', '_R', '-L', '-R']
+        low = name.lower()
+
+        # 1) Suffix forms (case-insensitive): .L, _L, -L, .R, _R, -R
+        suffixes = ['.l', '.r', '_l', '_r', '-l', '-r']
         for suf in suffixes:
-            if name.endswith(suf):
-                side = 'L' if suf.endswith('L') else 'R'
+            if low.endswith(suf):
+                side = 'L' if suf[-1] == 'l' else 'R'
                 core = name[: -len(suf)]
                 core = self._normalize_core(core)
                 return core, side
-        # 2) Contains 'Left'/'Right' (case-insensitive) anywhere
-        low = name.lower()
+
+        # 2) Infix forms: _l_ or _r_ anywhere in the name
+        #    e.g. b_l_upperarm_ik → core "b_upperarm_ik", side L
+        m = re.search(r'(?i)(?<=_)([lr])(?=_)', name)
+        if m:
+            side = 'L' if m.group(1).lower() == 'l' else 'R'
+            # Remove the side letter but keep one underscore as separator
+            core = name[:m.start()] + name[m.end():]
+            return core, side
+
+        # 3) Prefix forms: l_ or r_ at the start (case-insensitive)
+        #    e.g. L_Hand → core "Hand", side L
+        if re.match(r'(?i)^[lr]_', name):
+            side = 'L' if low[0] == 'l' else 'R'
+            core = name[2:]
+            return core, side
+
+        # 4) Contains 'Left'/'Right' (case-insensitive) anywhere
         if 'left' in low and 'right' in low:
             # Ambiguous, skip side detection
             return name, None
@@ -183,6 +201,7 @@ class DUMBTOOLS_OT_BatchRenameBones(bpy.types.Operator):
         if 'right' in low:
             core = self._normalize_core(name)
             return core, 'R'
+
         # No side detected
         return name, None
 

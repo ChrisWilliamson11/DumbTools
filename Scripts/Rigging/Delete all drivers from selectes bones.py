@@ -6,8 +6,11 @@ obj = bpy.context.active_object
 
 # Ensure the active object is an armature
 if obj and obj.type == 'ARMATURE':
-    # Get the selected bones
-    selected_bones = [bone.name for bone in obj.data.bones if bone.select]
+    # Blender 5.0+: .select moved from Bone to PoseBone
+    try:
+        selected_bones = [bone.name for bone in obj.pose.bones if bone.select]
+    except AttributeError:
+        selected_bones = [bone.name for bone in obj.data.bones if bone.select]
     
     # Iterate over each selected bone
     for bone_name in selected_bones:

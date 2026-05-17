@@ -86,7 +86,16 @@ class DUMBTOOLS_OT_BatchRenameBones(bpy.types.Operator):
         arm = obj.data
 
         # Collect selected bone names first (stable list before renaming)
-        selected_names = [b.name for b in arm.bones if b.select]
+        # Blender 5.0+ moved .select from Bone to PoseBone / EditBone
+        sel_pose = getattr(context, 'selected_pose_bones', None)
+        if sel_pose:
+            selected_names = [b.name for b in sel_pose]
+        else:
+            # Fallback for older Blender or non-pose-mode contexts
+            try:
+                selected_names = [b.name for b in obj.pose.bones if b.select]
+            except AttributeError:
+                selected_names = [b.name for b in arm.bones if b.select]
         if not selected_names:
             self.report({'WARNING'}, "No bones selected")
             return {'CANCELLED'}

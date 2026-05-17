@@ -11,7 +11,12 @@ if obj and obj.type == 'ARMATURE':
 
     # Iterate over all selected bones
     for bone in obj.pose.bones:
-        if bone.bone.select:
+        # Blender 5.0+: .select lives on PoseBone, not Bone
+        try:
+            is_selected = bone.select
+        except AttributeError:
+            is_selected = bone.bone.select
+        if is_selected:
             # Remove all constraints from the selected bone
             while bone.constraints:
                 bone.constraints.remove(bone.constraints[0])

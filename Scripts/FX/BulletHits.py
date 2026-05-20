@@ -221,11 +221,11 @@ def shift_material_image_offsets(obj, birth_frame, image_offset=0):
 _TRANSFORM_PATHS = ('location', 'rotation_euler', 'rotation_quaternion', 'scale')
 
 
-def reposition_flat_animated_object(new_obj, src_obj, matrix_world, birth_frame):
+def reposition_flat_animated_object(new_obj, src_obj, matrix_world, birth_frame, object_offset=0):
     """Handle a flat object that already has transform keyframes.
 
     1. Deep-copies its action so timing is independent.
-    2. Time-shifts all transform keyframes so the earliest = birth_frame - 1.
+    2. Time-shifts all transform keyframes so the earliest = birth_frame - 1 + object_offset.
     3. Spatially repositions location keyframes:
        - The 2nd keyframe becomes the hit position.
        - All others are offset by the same amount, rotated from the
@@ -250,7 +250,7 @@ def reposition_flat_animated_object(new_obj, src_obj, matrix_world, birth_frame)
     new_obj.animation_data.action = action_ref.copy()
     action = new_obj.animation_data.action
 
-    target_start = int(birth_frame) - 1
+    target_start = int(birth_frame) - 1 + object_offset
     hit_pos = matrix_world.translation.copy()
     hit_rot_euler = matrix_world.to_euler()
 
@@ -342,7 +342,7 @@ def reposition_flat_animated_object(new_obj, src_obj, matrix_world, birth_frame)
 #  Spawning (unified)
 # ─────────────────────────────────────────────────────────────
 
-def spawn_template(template, matrix_world, birth_frame, gen_col, vdb_offset=0, image_offset=0, alembic_offset=0):
+def spawn_template(template, matrix_world, birth_frame, gen_col, vdb_offset=0, image_offset=0, alembic_offset=0, object_offset=0):
     """Duplicate a template's objects and place/animate them at the bullet hit.
 
     - *collection* / *hierarchy* modes: duplicate the whole hierarchy,
@@ -381,20 +381,20 @@ def spawn_template(template, matrix_world, birth_frame, gen_col, vdb_offset=0, i
         new_root.parent = None
 
         # Try animated repositioning first; fall back to snap keyframes
-        if not reposition_flat_animated_object(new_root, root, matrix_world, birth_frame):
+        if not reposition_flat_animated_object(new_root, root, matrix_world, birth_frame, object_offset):
             src_origin = root.matrix_world.translation.copy()
             hit_pos    = matrix_world.translation.copy()
             hit_rot    = matrix_world.to_euler()
 
             new_root.rotation_euler = hit_rot
 
-            # Key source position one frame before
+            # Key source position one frame before (offset)
             new_root.location = src_origin
-            new_root.keyframe_insert(data_path="location", frame=int(birth_frame) - 1)
+            new_root.keyframe_insert(data_path="location", frame=int(birth_frame) - 1 + object_offset)
 
-            # Key hit position at birth frame
+            # Key hit position at birth frame (offset)
             new_root.location = hit_pos
-            new_root.keyframe_insert(data_path="location", frame=int(birth_frame))
+            new_root.keyframe_insert(data_path="location", frame=int(birth_frame) + object_offset)
 
             # CONSTANT interpolation so it snaps
             if new_root.animation_data and new_root.animation_data.action:
@@ -403,7 +403,7 @@ def spawn_template(template, matrix_world, birth_frame, gen_col, vdb_offset=0, i
                         for kp in fc.keyframe_points:
                             kp.interpolation = 'CONSTANT'
 
-            print(f"  Spawned static flat object '{new_root.name}' at frame {int(birth_frame)} "
+            print(f"  Spawned static flat object '{new_root.name}' at frame {int(birth_frame) + object_offset} "
                   f"({src_origin} -> {hit_pos})")
     else:
         # Hierarchical: just place the root
@@ -495,7 +495,7 @@ def spawn_template(template, matrix_world, birth_frame, gen_col, vdb_offset=0, i
                         if earliest is None or t < earliest:
                             earliest = t
                 if earliest is not None:
-                    td = (int(birth_frame) - 1) - earliest
+                    td = (int(birth_frame) - 1 + object_offset) - earliest
                     for fc in iter_fcurves(new_obj.animation_data.action):
                         if fc.data_path in _TRANSFORM_PATHS:
                             for kp in fc.keyframe_points:
@@ -600,6 +600,12 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
         default=0,
     )
 
+    object_offset: bpy.props.IntProperty(
+        name="Object Animation Offset",
+        description="Offset in frames for object-level transform animations and snaps",
+        default=0,
+    )
+
     def invoke(self, context, event):
         # Try to default to "BulletHits" if it exists
         if "BulletHits" in bpy.data.collections:
@@ -615,6 +621,7 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
         box.prop(self, "vdb_offset", text="VDB Offset")
         box.prop(self, "image_offset", text="Image Sequence")
         box.prop(self, "alembic_offset", text="Alembic Offset")
+        box.prop(self, "object_offset", text="Object Animation")
 
     def execute(self, context):
         active_obj = context.active_object
@@ -653,6 +660,7 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
                 vdb_offset=self.vdb_offset,
                 image_offset=self.image_offset,
                 alembic_offset=self.alembic_offset,
+                object_offset=self.object_offset,
             )
 
         # Restore original frame

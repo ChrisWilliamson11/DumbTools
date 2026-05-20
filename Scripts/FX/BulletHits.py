@@ -132,9 +132,9 @@ def find_templates(source_col_name):
 #  Image-sequence offset shifting
 # ─────────────────────────────────────────────────────────────
 
-def shift_material_image_offsets(obj, birth_frame):
+def shift_material_image_offsets(obj, birth_frame, image_offset=0):
     """Shift image_user.frame_offset keyframes on all materials so that the
-    first keyframe lands on (birth_frame - 1).
+    first keyframe lands on (birth_frame - 1 + image_offset).
 
     Only acts on materials whose node-tree action contains fcurves with
     'image_user.frame_offset' in the data path AND 2+ keyframes.
@@ -147,7 +147,7 @@ def shift_material_image_offsets(obj, birth_frame):
     if obj.data and obj.data.users > 1:
         obj.data = obj.data.copy()
 
-    target_start = int(birth_frame) - 1
+    target_start = int(birth_frame) - 1 + image_offset
 
     for slot_idx, slot in enumerate(obj.material_slots):
         mat = slot.material
@@ -342,7 +342,7 @@ def reposition_flat_animated_object(new_obj, src_obj, matrix_world, birth_frame)
 #  Spawning (unified)
 # ─────────────────────────────────────────────────────────────
 
-def spawn_template(template, matrix_world, birth_frame, gen_col):
+def spawn_template(template, matrix_world, birth_frame, gen_col, vdb_offset=0, image_offset=0, alembic_offset=0):
     """Duplicate a template's objects and place/animate them at the bullet hit.
 
     - *collection* / *hierarchy* modes: duplicate the whole hierarchy,
@@ -416,7 +416,7 @@ def spawn_template(template, matrix_world, birth_frame, gen_col):
         # --- VDB timing ---
         if src_obj.type == 'VOLUME' and new_obj.data:
             try:
-                new_obj.data.frame_start = int(birth_frame - 1)
+                new_obj.data.frame_start = int(birth_frame - 1 + vdb_offset)
             except Exception:
                 pass
 
@@ -426,7 +426,7 @@ def spawn_template(template, matrix_world, birth_frame, gen_col):
                 new_obj.animation_data.action = new_obj.animation_data.action.copy()
                 vis_frame = frame_at_visible(new_obj.animation_data.action)
 
-            delta = birth_frame - vis_frame
+            delta = birth_frame + vdb_offset - vis_frame
             if new_obj.animation_data and new_obj.animation_data.action:
                 shift_action(new_obj.animation_data.action, delta)
             if (new_obj.data and new_obj.data.animation_data
@@ -456,7 +456,7 @@ def spawn_template(template, matrix_world, birth_frame, gen_col):
                         if dp == "frame" or dp.endswith(".frame"):
                             if len(fc.keyframe_points) >= 1:
                                 orig_start = fc.keyframe_points[0].co[0]
-                                abc_delta = birth_frame - orig_start
+                                abc_delta = birth_frame + alembic_offset - orig_start
                                 for kp in fc.keyframe_points:
                                     kp.co[0] += abc_delta
                                 fc.update()
@@ -471,14 +471,14 @@ def spawn_template(template, matrix_world, birth_frame, gen_col):
                             default=None,
                         )
                         if start_frame is not None:
-                            shift_action(act, birth_frame - start_frame)
+                            shift_action(act, birth_frame + alembic_offset - start_frame)
                             shifted = True
 
                 if not shifted:
                     # No keyframes on the cache — set the offset directly
                     try:
-                        new_cache.frame_offset = int(birth_frame)
-                        print(f"  Set cache frame_offset={int(birth_frame)} on {new_obj.name} (no keyframes)")
+                        new_cache.frame_offset = int(birth_frame + alembic_offset)
+                        print(f"  Set cache frame_offset={int(birth_frame + alembic_offset)} on {new_obj.name} (no keyframes)")
                     except Exception as e:
                         print(f"  Warning: Could not set frame_offset on {new_obj.name}: {e}")
 
@@ -506,7 +506,7 @@ def spawn_template(template, matrix_world, birth_frame, gen_col):
     # ── 5. Shift image-sequence offsets on material nodes ─────
     for src_obj in objects:
         new_obj = old_to_new[src_obj]
-        shift_material_image_offsets(new_obj, birth_frame)
+        shift_material_image_offsets(new_obj, birth_frame, image_offset)
 
     if not is_flat:
         print(f"  Spawned template (root='{new_root.name}', "
@@ -582,6 +582,24 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
         items=get_collections,
     )
 
+    vdb_offset: bpy.props.IntProperty(
+        name="VDB Offset",
+        description="Offset in frames for VDB volume sequence start",
+        default=0,
+    )
+
+    image_offset: bpy.props.IntProperty(
+        name="Image Sequence Offset",
+        description="Offset in frames for material image sequences",
+        default=0,
+    )
+
+    alembic_offset: bpy.props.IntProperty(
+        name="Alembic Offset",
+        description="Offset in frames for Alembic cache timing",
+        default=0,
+    )
+
     def invoke(self, context, event):
         # Try to default to "BulletHits" if it exists
         if "BulletHits" in bpy.data.collections:
@@ -591,6 +609,12 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
         layout.prop(self, "source_collection", icon='OUTLINER_COLLECTION')
+
+        box = layout.box()
+        box.label(text="Timing Offsets (Frames)", icon='TIME')
+        box.prop(self, "vdb_offset", text="VDB Offset")
+        box.prop(self, "image_offset", text="Image Sequence")
+        box.prop(self, "alembic_offset", text="Alembic Offset")
 
     def execute(self, context):
         active_obj = context.active_object
@@ -621,7 +645,15 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
 
         for matrix, birth in bullet_hits:
             template = random.choice(templates)
-            spawn_template(template, matrix, birth, gen_col)
+            spawn_template(
+                template,
+                matrix,
+                birth,
+                gen_col,
+                vdb_offset=self.vdb_offset,
+                image_offset=self.image_offset,
+                alembic_offset=self.alembic_offset,
+            )
 
         # Restore original frame
         context.scene.frame_set(original_frame)

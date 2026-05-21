@@ -634,8 +634,8 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
         box.prop(self, "image_offset", text="Image Sequence")
         box.prop(self, "alembic_offset", text="Alembic Offset")
         box.prop(self, "object_offset", text="Object Animation")
-
-        layout.prop(self, "hit_scale", icon='SIZE')
+        layout.separator()
+        layout.prop(self, "hit_scale", text="Scale")
 
     def execute(self, context):
         active_obj = context.active_object

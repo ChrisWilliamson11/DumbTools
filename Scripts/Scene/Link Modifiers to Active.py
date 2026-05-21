@@ -13,6 +13,10 @@ def get_driveable_properties(modifier):
       - read-only properties
       - the 'type' identifier and internal props (rna_type, name, etc.)
       - pointer / collection / string properties (can't be driven)
+
+    NOTE: Do NOT use this for Geometry Nodes (NODES) modifiers — their
+    user-facing inputs are custom properties accessed via bracket notation,
+    not RNA properties. Use get_driveable_geonodes_inputs() instead.
     """
     SKIP_PROPS = {
         'rna_type', 'name', 'type', 'show_viewport', 'show_render',
@@ -34,6 +38,69 @@ def get_driveable_properties(modifier):
                 yield (prop.identifier, False, 0)
 
 
+def get_driveable_geonodes_inputs(modifier):
+    """
+    For Geometry Nodes (NODES type) modifiers, yield
+    (identifier, is_array, array_length) for each input socket in the
+    node group that can be driven.
+
+    Node group inputs are NOT regular RNA properties — they are exposed as
+    custom properties on the modifier and must be accessed / driven via
+    bracket notation:  modifier["Socket_0"],  modifier["Socket_0"][1], etc.
+
+    Supports both Blender 4.x (node_group.interface.items_tree) and
+    Blender 3.x (node_group.inputs).
+    """
+    if modifier.type != 'NODES' or not modifier.node_group:
+        return
+
+    # These socket types hold IDs / geometry / strings — cannot be driven
+    NON_DRIVEABLE = {
+        'NodeSocketGeometry', 'NodeSocketString', 'NodeSocketCollection',
+        'NodeSocketObject', 'NodeSocketMaterial', 'NodeSocketTexture',
+        'NodeSocketImage', 'NodeSocketShader', 'NodeSocketVirtual',
+        'NodeSocketMatrix',
+        # Blender 3.x type-name variants
+        'GEOMETRY', 'STRING', 'COLLECTION', 'OBJECT',
+        'MATERIAL', 'TEXTURE', 'IMAGE', 'SHADER',
+    }
+
+    node_group = modifier.node_group
+    input_items = []
+
+    if hasattr(node_group, 'interface'):
+        # Blender 4.x
+        for item in node_group.interface.items_tree:
+            if (getattr(item, 'item_type', None) == 'SOCKET'
+                    and getattr(item, 'in_out', None) == 'INPUT'):
+                input_items.append(item)
+    elif hasattr(node_group, 'inputs'):
+        # Blender 3.x
+        input_items = list(node_group.inputs)
+
+    for item in input_items:
+        socket_type = getattr(item, 'socket_type', getattr(item, 'type', ''))
+        if socket_type in NON_DRIVEABLE:
+            continue
+
+        identifier = item.identifier
+
+        # Confirm the modifier actually stores this input as an accessible value
+        try:
+            value = modifier[identifier]
+        except (KeyError, TypeError):
+            continue
+
+        # Determine array-ness from the live value (handles Vector, Color, etc.)
+        if hasattr(value, '__len__'):
+            try:
+                yield (identifier, True, len(value))
+                continue
+            except TypeError:
+                pass
+        yield (identifier, False, 0)
+
+
 def build_type_ordered_map(obj):
     """
     Build a dict: modifier_type -> [modifier, ...] preserving stack order.
@@ -45,15 +112,22 @@ def build_type_ordered_map(obj):
 
 
 def add_property_driver(target_obj, target_mod, source_obj, source_mod,
-                        prop_name, array_index=-1):
+                        prop_name, array_index=-1, bracket_notation=False):
     """
     Add a single-variable AVERAGE driver on target_mod.prop_name
     that reads from source_mod.prop_name on source_obj.
 
+    bracket_notation=True  → uses  modifiers["Name"]["prop"]  (Geometry Nodes inputs)
+    bracket_notation=False → uses  modifiers["Name"].prop      (standard RNA props)
+
     Returns True on success, False on failure.
     """
-    data_path_target = f'modifiers["{target_mod.name}"].{prop_name}'
-    data_path_source = f'modifiers["{source_mod.name}"].{prop_name}'
+    if bracket_notation:
+        data_path_target = f'modifiers["{target_mod.name}"]["{prop_name}"]'
+        data_path_source = f'modifiers["{source_mod.name}"]["{prop_name}"]'
+    else:
+        data_path_target = f'modifiers["{target_mod.name}"].{prop_name}'
+        data_path_source = f'modifiers["{source_mod.name}"].{prop_name}'
 
     # Remove any existing driver first
     try:
@@ -62,7 +136,6 @@ def add_property_driver(target_obj, target_mod, source_obj, source_mod,
         else:
             target_obj.driver_remove(data_path_target)
     except Exception:
-        # No existing driver, that's fine
         pass
 
     # Add the driver
@@ -72,7 +145,6 @@ def add_property_driver(target_obj, target_mod, source_obj, source_mod,
         else:
             fcurve = target_obj.driver_add(data_path_target)
     except Exception:
-        # Property cannot be driven (e.g. enum stored as string internally)
         return False
 
     # Handle driver_add returning a list (shouldn't happen with explicit index,
@@ -137,36 +209,56 @@ def link_modifiers(active_obj, selected_objs):
 
             for source_mod, target_mod in pairs:
                 mod_drivers = 0
-                # Use the source modifier's properties as the canonical list
-                for prop_name, is_array, array_length in get_driveable_properties(source_mod):
-                    # Verify the target modifier also has this property
-                    if not hasattr(target_mod, prop_name):
-                        continue
+
+                # Geometry Nodes exposes its inputs as custom properties
+                # (bracket notation), not as RNA properties (dot notation).
+                if mod_type == 'NODES':
+                    props = get_driveable_geonodes_inputs(source_mod)
+                    bracket = True
+                else:
+                    props = get_driveable_properties(source_mod)
+                    bracket = False
+
+                for prop_name, is_array, array_length in props:
+                    # Verify the target modifier also exposes this property
+                    if bracket:
+                        try:
+                            _ = target_mod[prop_name]
+                        except (KeyError, TypeError):
+                            continue
+                    else:
+                        if not hasattr(target_mod, prop_name):
+                            continue
 
                     if is_array:
                         for idx in range(array_length):
                             ok = add_property_driver(
                                 obj, target_mod,
                                 active_obj, source_mod,
-                                prop_name, array_index=idx
+                                prop_name, array_index=idx,
+                                bracket_notation=bracket,
                             )
                             if ok:
                                 mod_drivers += 1
                             else:
                                 skipped_props.append(
-                                    f"{obj.name} → {target_mod.name}.{prop_name}[{idx}]"
+                                    f"{obj.name} → {target_mod.name}"
+                                    f'["{prop_name}"][{idx}]'
                                 )
                     else:
                         ok = add_property_driver(
                             obj, target_mod,
                             active_obj, source_mod,
-                            prop_name
+                            prop_name,
+                            bracket_notation=bracket,
                         )
                         if ok:
                             mod_drivers += 1
                         else:
                             skipped_props.append(
-                                f"{obj.name} → {target_mod.name}.{prop_name}"
+                                f"{obj.name} → {target_mod.name}"
+                                f'["{prop_name}"]' if bracket
+                                else f"{obj.name} → {target_mod.name}.{prop_name}"
                             )
 
                 if mod_drivers > 0:

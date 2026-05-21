@@ -342,7 +342,7 @@ def reposition_flat_animated_object(new_obj, src_obj, matrix_world, birth_frame,
 #  Spawning (unified)
 # ─────────────────────────────────────────────────────────────
 
-def spawn_template(template, matrix_world, birth_frame, gen_col, vdb_offset=0, image_offset=0, alembic_offset=0, object_offset=0):
+def spawn_template(template, matrix_world, birth_frame, gen_col, vdb_offset=0, image_offset=0, alembic_offset=0, object_offset=0, hit_scale=1.0):
     """Duplicate a template's objects and place/animate them at the bullet hit.
 
     - *collection* / *hierarchy* modes: duplicate the whole hierarchy,
@@ -508,6 +508,12 @@ def spawn_template(template, matrix_world, birth_frame, gen_col, vdb_offset=0, i
         new_obj = old_to_new[src_obj]
         shift_material_image_offsets(new_obj, birth_frame, image_offset)
 
+    # ── 6. Scale all Empties ──────────────────────────────────
+    for src_obj in objects:
+        new_obj = old_to_new[src_obj]
+        if new_obj.type == 'EMPTY':
+            new_obj.scale = (hit_scale, hit_scale, hit_scale)
+
     if not is_flat:
         print(f"  Spawned template (root='{new_root.name}', "
               f"{len(objects)} objs) at frame {int(birth_frame)}")
@@ -606,6 +612,12 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
         default=0,
     )
 
+    hit_scale: bpy.props.FloatProperty(
+        name="Scale",
+        description="Scale amount to apply to all spawned Empties",
+        default=1.0,
+    )
+
     def invoke(self, context, event):
         # Try to default to "BulletHits" if it exists
         if "BulletHits" in bpy.data.collections:
@@ -622,6 +634,8 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
         box.prop(self, "image_offset", text="Image Sequence")
         box.prop(self, "alembic_offset", text="Alembic Offset")
         box.prop(self, "object_offset", text="Object Animation")
+
+        layout.prop(self, "hit_scale", icon='SIZE')
 
     def execute(self, context):
         active_obj = context.active_object
@@ -661,6 +675,7 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
                 image_offset=self.image_offset,
                 alembic_offset=self.alembic_offset,
                 object_offset=self.object_offset,
+                hit_scale=self.hit_scale,
             )
 
         # Restore original frame

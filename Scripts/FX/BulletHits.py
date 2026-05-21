@@ -149,10 +149,10 @@ def shift_material_image_offsets(obj, birth_frame, image_offset=0):
             continue
         nt = mat.node_tree
 
-        # Find sequence nodes
+        # Find image nodes
         seq_nodes = [
             n for n in nt.nodes 
-            if getattr(n, 'type', '') == 'TEX_IMAGE' and getattr(n, 'image', None) and n.image.source == 'SEQUENCE'
+            if getattr(n, 'type', '') == 'TEX_IMAGE'
         ]
 
         # Find matching fcurves for frame_offset
@@ -218,10 +218,10 @@ def shift_material_image_offsets(obj, birth_frame, image_offset=0):
                 print(f"  Shifted image_user.frame_offset on '{new_mat.name}' "
                       f"by {delta} frames (first kf {earliest} -> {target_start})")
 
-        # Set frame_start for unkeyed sequence nodes
+        # Set frame_start for unkeyed image nodes
         new_seq_nodes = [
             n for n in new_nt.nodes 
-            if getattr(n, 'type', '') == 'TEX_IMAGE' and getattr(n, 'image', None) and n.image.source == 'SEQUENCE'
+            if getattr(n, 'type', '') == 'TEX_IMAGE'
         ]
         
         for node in new_seq_nodes:

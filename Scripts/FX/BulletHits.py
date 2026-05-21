@@ -135,83 +135,100 @@ def find_templates(source_col_name):
 def shift_material_image_offsets(obj, birth_frame, image_offset=0):
     """Shift image_user.frame_offset keyframes on all materials so that the
     first keyframe lands on (birth_frame - 1 + image_offset).
-
-    Only acts on materials whose node-tree action contains fcurves with
-    'image_user.frame_offset' in the data path AND 2+ keyframes.
-    Materials are deep-copied so the source template is never modified.
+    If there are no offset keyframes, set frame_start directly.
     """
     if not hasattr(obj, 'material_slots'):
         return
 
-    # Deep-copy mesh data so material slots are independent per object
-    if obj.data and obj.data.users > 1:
-        obj.data = obj.data.copy()
-
     target_start = int(birth_frame) - 1 + image_offset
+    copied_mesh = False
 
     for slot_idx, slot in enumerate(obj.material_slots):
         mat = slot.material
         if not mat or not mat.node_tree:
             continue
         nt = mat.node_tree
-        if not nt.animation_data or not nt.animation_data.action:
-            continue
 
-        # Check whether any fcurve matches before we bother copying
-        action = nt.animation_data.action
-        matching_fcs = [
-            fc for fc in iter_fcurves(action)
-            if 'image_user.frame_offset' in fc.data_path
-            and len(fc.keyframe_points) >= 2
+        # Find sequence nodes
+        seq_nodes = [
+            n for n in nt.nodes 
+            if getattr(n, 'type', '') == 'TEX_IMAGE' and getattr(n, 'image', None) and n.image.source == 'SEQUENCE'
         ]
-        if not matching_fcs:
+
+        # Find matching fcurves for frame_offset
+        action = None
+        matching_fcs = []
+        if nt.animation_data and nt.animation_data.action:
+            action = nt.animation_data.action
+            matching_fcs = [
+                fc for fc in iter_fcurves(action)
+                if 'image_user.frame_offset' in fc.data_path
+                and len(fc.keyframe_points) >= 2
+            ]
+
+        if not seq_nodes and not matching_fcs:
             continue
 
         # ── Make material + action unique ────────────────────────
-        # mat.copy() already creates a new node tree; just copy the action
+        if obj.data and obj.data.users > 1 and not copied_mesh:
+            obj.data = obj.data.copy()
+            copied_mesh = True
+
         new_mat = mat.copy()
         obj.material_slots[slot_idx].material = new_mat
-
         new_nt = new_mat.node_tree
-        if not new_nt.animation_data:
-            continue
 
-        # Blender 5.0+: save slot identifier before swapping the action
-        slot_id = None
-        if hasattr(new_nt.animation_data, 'action_slot') and new_nt.animation_data.action_slot:
-            slot_id = new_nt.animation_data.action_slot.identifier
+        shifted_nodes = set()
+        
+        if matching_fcs and new_nt.animation_data:
+            slot_id = None
+            if hasattr(new_nt.animation_data, 'action_slot') and new_nt.animation_data.action_slot:
+                slot_id = new_nt.animation_data.action_slot.identifier
 
-        new_nt.animation_data.action = new_nt.animation_data.action.copy()
-        new_action = new_nt.animation_data.action
+            new_nt.animation_data.action = new_nt.animation_data.action.copy()
+            new_action = new_nt.animation_data.action
 
-        # Blender 5.0+: rebind the slot by matching identifier
-        if slot_id and hasattr(new_action, 'slots'):
-            for s in new_action.slots:
-                if s.identifier == slot_id:
-                    new_nt.animation_data.action_slot = s
-                    break
+            if slot_id and hasattr(new_action, 'slots'):
+                for s in new_action.slots:
+                    if s.identifier == slot_id:
+                        new_nt.animation_data.action_slot = s
+                        break
 
-        # ── Find earliest keyframe across all matching curves ─
-        earliest = None
-        offset_fcs = []
-        for fc in iter_fcurves(new_action):
-            if 'image_user.frame_offset' in fc.data_path and len(fc.keyframe_points) >= 2:
-                offset_fcs.append(fc)
-                first_t = fc.keyframe_points[0].co[0]
-                if earliest is None or first_t < earliest:
-                    earliest = first_t
+            earliest = None
+            offset_fcs = []
+            import re
+            for fc in iter_fcurves(new_action):
+                if 'image_user.frame_offset' in fc.data_path and len(fc.keyframe_points) >= 2:
+                    offset_fcs.append(fc)
+                    first_t = fc.keyframe_points[0].co[0]
+                    if earliest is None or first_t < earliest:
+                        earliest = first_t
+                        
+                    match = re.search(r'nodes\["([^"]+)"\]', fc.data_path)
+                    if match:
+                        shifted_nodes.add(match.group(1))
 
-        if earliest is None:
-            continue
+            if earliest is not None:
+                delta = target_start - earliest
+                for fc in offset_fcs:
+                    for kp in fc.keyframe_points:
+                        kp.co[0] += delta
+                    fc.update()
 
-        delta = target_start - earliest
-        for fc in offset_fcs:
-            for kp in fc.keyframe_points:
-                kp.co[0] += delta
-            fc.update()
+                print(f"  Shifted image_user.frame_offset on '{new_mat.name}' "
+                      f"by {delta} frames (first kf {earliest} -> {target_start})")
 
-        print(f"  Shifted image_user.frame_offset on '{new_mat.name}' "
-              f"by {delta} frames (first kf {earliest} -> {target_start})")
+        # Set frame_start for unkeyed sequence nodes
+        new_seq_nodes = [
+            n for n in new_nt.nodes 
+            if getattr(n, 'type', '') == 'TEX_IMAGE' and getattr(n, 'image', None) and n.image.source == 'SEQUENCE'
+        ]
+        
+        for node in new_seq_nodes:
+            if node.name not in shifted_nodes:
+                if hasattr(node, 'image_user'):
+                    node.image_user.frame_start = target_start
+                    print(f"  Set frame_start={target_start} on image node '{node.name}' in '{new_mat.name}'")
 
 
 # ─────────────────────────────────────────────────────────────

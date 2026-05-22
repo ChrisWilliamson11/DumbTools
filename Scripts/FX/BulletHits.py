@@ -151,7 +151,7 @@ def shift_material_image_offsets(obj, birth_frame, image_offset=0):
 
         # Find image nodes
         seq_nodes = [
-            n for n in nt.nodes 
+            n for n in nt.nodes
             if getattr(n, 'type', '') == 'TEX_IMAGE'
         ]
 
@@ -179,7 +179,7 @@ def shift_material_image_offsets(obj, birth_frame, image_offset=0):
         new_nt = new_mat.node_tree
 
         shifted_nodes = set()
-        
+
         if matching_fcs and new_nt.animation_data:
             slot_id = None
             if hasattr(new_nt.animation_data, 'action_slot') and new_nt.animation_data.action_slot:
@@ -203,7 +203,7 @@ def shift_material_image_offsets(obj, birth_frame, image_offset=0):
                     first_t = fc.keyframe_points[0].co[0]
                     if earliest is None or first_t < earliest:
                         earliest = first_t
-                        
+
                     match = re.search(r'nodes\["([^"]+)"\]', fc.data_path)
                     if match:
                         shifted_nodes.add(match.group(1))
@@ -220,10 +220,10 @@ def shift_material_image_offsets(obj, birth_frame, image_offset=0):
 
         # Set frame_start for unkeyed image nodes
         new_seq_nodes = [
-            n for n in new_nt.nodes 
+            n for n in new_nt.nodes
             if getattr(n, 'type', '') == 'TEX_IMAGE'
         ]
-        
+
         for node in new_seq_nodes:
             if node.name not in shifted_nodes:
                 if hasattr(node, 'image_user'):
@@ -614,19 +614,19 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
     image_offset: bpy.props.IntProperty(
         name="Image Sequence Offset",
         description="Offset in frames for material image sequences",
-        default=0,
+        default=-1,
     )
 
     alembic_offset: bpy.props.IntProperty(
         name="Alembic Offset",
         description="Offset in frames for Alembic cache timing",
-        default=0,
+        default=-2,
     )
 
     object_offset: bpy.props.IntProperty(
         name="Object Animation Offset",
         description="Offset in frames for object-level transform animations and snaps",
-        default=0,
+        default=-1,
     )
 
     hit_scale: bpy.props.FloatProperty(
@@ -636,9 +636,17 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
     )
 
     def invoke(self, context, event):
-        # Try to default to "BulletHits" if it exists
-        if "BulletHits" in bpy.data.collections:
+        scene = context.scene
+        # Restore persisted settings from the scene, falling back to defaults
+        if hasattr(scene, 'bh_source_collection') and scene.bh_source_collection in bpy.data.collections:
+            self.source_collection = scene.bh_source_collection
+        elif "BulletHits" in bpy.data.collections:
             self.source_collection = "BulletHits"
+        self.vdb_offset     = getattr(scene, 'bh_vdb_offset',     0)
+        self.image_offset   = getattr(scene, 'bh_image_offset',  -1)
+        self.alembic_offset = getattr(scene, 'bh_alembic_offset',-2)
+        self.object_offset  = getattr(scene, 'bh_object_offset', -1)
+        self.hit_scale      = getattr(scene, 'bh_hit_scale',     1.0)
         return context.window_manager.invoke_props_dialog(self, width=350)
 
     def draw(self, context):
@@ -698,6 +706,15 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
         # Restore original frame
         context.scene.frame_set(original_frame)
 
+        # Persist settings back into the scene so they survive between runs
+        scene = context.scene
+        scene.bh_source_collection = self.source_collection
+        scene.bh_vdb_offset        = self.vdb_offset
+        scene.bh_image_offset      = self.image_offset
+        scene.bh_alembic_offset    = self.alembic_offset
+        scene.bh_object_offset     = self.object_offset
+        scene.bh_hit_scale         = self.hit_scale
+
         self.report({'INFO'}, f"Spawned {len(bullet_hits)} bullet hits from '{self.source_collection}'.")
         return {'FINISHED'}
 
@@ -706,18 +723,42 @@ class DUMBTOOLS_OT_bullet_hits(bpy.types.Operator):
 #  Registration & auto-invoke
 # ─────────────────────────────────────────────────────────────
 
+# Scene-level storage for persisting UI settings between operator runs.
+# Stored on bpy.types.Scene so they live in the .blend file.
+_SCENE_PROPS = [
+    ('bh_source_collection', bpy.props.StringProperty(
+        name="BH Source Collection", default="")),
+    ('bh_vdb_offset', bpy.props.IntProperty(
+        name="BH VDB Offset", default=0)),
+    ('bh_image_offset', bpy.props.IntProperty(
+        name="BH Image Offset", default=-1)),
+    ('bh_alembic_offset', bpy.props.IntProperty(
+        name="BH Alembic Offset", default=-2)),
+    ('bh_object_offset', bpy.props.IntProperty(
+        name="BH Object Offset", default=-1)),
+    ('bh_hit_scale', bpy.props.FloatProperty(
+        name="BH Hit Scale", default=1.0)),
+]
+
+
 def register():
     try:
         bpy.utils.register_class(DUMBTOOLS_OT_bullet_hits)
     except ValueError:
         bpy.utils.unregister_class(DUMBTOOLS_OT_bullet_hits)
         bpy.utils.register_class(DUMBTOOLS_OT_bullet_hits)
+    for prop_name, prop_value in _SCENE_PROPS:
+        setattr(bpy.types.Scene, prop_name, prop_value)
+
 
 def unregister():
     try:
         bpy.utils.unregister_class(DUMBTOOLS_OT_bullet_hits)
     except RuntimeError:
         pass
+    for prop_name, _ in _SCENE_PROPS:
+        if hasattr(bpy.types.Scene, prop_name):
+            delattr(bpy.types.Scene, prop_name)
 
 register()
 bpy.ops.dumbtools.bullet_hits('INVOKE_DEFAULT')

@@ -1,8 +1,7 @@
 # Tooltip: Parent all selected objects to the closest vertex of the active object
 
 import bpy
-import bmesh
-from mathutils import Vector
+from mathutils import Matrix
 
 class OBJECT_OT_VertexParentSet(bpy.types.Operator):
     bl_idname = "object.vertex_parent_set_closest"
@@ -13,48 +12,62 @@ class OBJECT_OT_VertexParentSet(bpy.types.Operator):
         active_obj = context.active_object
         selected_objs = [obj for obj in context.selected_objects if obj != active_obj]
 
+        # Evaluated depsgraph gives us deformed/animated vertex positions
+        depsgraph = context.evaluated_depsgraph_get()
+
         for obj in selected_objs:
-            # Store original world matrix BEFORE parenting
+            # Store world matrix before touching anything
             orig_matrix_world = obj.matrix_world.copy()
 
-            closest_vert_index = self.find_closest_vertex(active_obj, obj)
-            if closest_vert_index is not None:
-                obj.parent = active_obj
-                obj.parent_type = 'VERTEX'
-                obj.parent_vertices = [closest_vert_index, 0, 0]
+            closest_vert_index, vertex_world_pos = self.find_closest_vertex(
+                active_obj, obj, depsgraph
+            )
+            if closest_vert_index is None:
+                continue
 
-                # Reset parent inverse so we have a clean base to restore from
-                obj.matrix_parent_inverse.identity()
+            obj.parent = active_obj
+            obj.parent_type = 'VERTEX'
+            obj.parent_vertices = [closest_vert_index, 0, 0]
 
-                # Let Blender evaluate the new parent chain before we restore position
-                context.view_layer.update()
+            # Blender source (BKE_object_get_parent_matrix, PARVERT1 branch):
+            #   unit_m4(r_parentmat)                              — starts from IDENTITY
+            #   mul_v3_m4v3(r_parentmat[3], par->obmat, vec)     — sets only translation
+            # So the effective parent matrix for a single-vertex parent is a PURE
+            # translation to the vertex world position — rotation/scale are NOT inherited.
+            # matrix_parent_inverse must cancel that out to keep the child in place.
+            obj.matrix_parent_inverse = Matrix.Translation(vertex_world_pos).inverted()
 
-                # Restore world position — Blender decomposes this into the correct
-                # local-space location/rotation/scale given the new vertex parent
-                obj.matrix_world = orig_matrix_world
+            # Let Blender re-evaluate the new parent chain, then restore world position.
+            # Blender decomposes matrix_world back into local loc/rot/scale automatically.
+            context.view_layer.update()
+            obj.matrix_world = orig_matrix_world
 
         return {'FINISHED'}
 
-    def find_closest_vertex(self, parent, child):
-        mesh = parent.data
-        bm = bmesh.new()
-        bm.from_mesh(mesh)
+    def find_closest_vertex(self, parent, child, depsgraph):
+        # evaluated_get() gives the mesh AFTER all modifiers/shape-keys/armatures,
+        # so we compare against actual visible vertex positions, not the rest pose.
+        eval_parent = parent.evaluated_get(depsgraph)
+        eval_mesh = eval_parent.to_mesh()
 
         closest_vert_index = None
         min_dist = float('inf')
+        child_world_pos = child.matrix_world.translation  # world pos even if child has a parent
 
-        # Use matrix_world.translation so this works even if child already has a parent
-        child_world_pos = child.matrix_world.translation
+        for i, vert in enumerate(eval_mesh.vertices):
+            vert_world_pos = eval_parent.matrix_world @ vert.co
+            dist = (vert_world_pos - child_world_pos).length
+            if dist < min_dist:
+                min_dist = dist
+                closest_vert_index = i
 
-        for vert in bm.verts:
-            vert_world_pos = parent.matrix_world @ vert.co
-            distance = (vert_world_pos - child_world_pos).length
-            if distance < min_dist:
-                min_dist = distance
-                closest_vert_index = vert.index
+        vertex_world_pos = None
+        if closest_vert_index is not None:
+            vertex_world_pos = (eval_parent.matrix_world @ eval_mesh.vertices[closest_vert_index].co).copy()
 
-        bm.free()
-        return closest_vert_index
+        eval_parent.to_mesh_clear()
+        return closest_vert_index, vertex_world_pos
+
 
 def menu_func(self, context):
     self.layout.operator(OBJECT_OT_VertexParentSet.bl_idname)

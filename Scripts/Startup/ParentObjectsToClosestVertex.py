@@ -28,6 +28,7 @@ class OBJECT_OT_VertexParentSet(bpy.types.Operator):
             obj.parent = active_obj
             obj.parent_type = 'VERTEX'
             obj.parent_vertices = [closest_vert_index, 0, 0]
+            obj.use_parent_final_indices = True
 
             # Blender source (BKE_object_get_parent_matrix, PARVERT1 branch):
             #   unit_m4(r_parentmat)                              — starts from IDENTITY

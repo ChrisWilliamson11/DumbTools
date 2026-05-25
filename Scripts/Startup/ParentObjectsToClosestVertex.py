@@ -16,8 +16,8 @@ class OBJECT_OT_VertexParentSet(bpy.types.Operator):
         depsgraph = context.evaluated_depsgraph_get()
 
         for obj in selected_objs:
-            # Store world matrix before touching anything
-            orig_matrix_world = obj.matrix_world.copy()
+            # Store original world translation before touching anything
+            orig_world_pos = obj.matrix_world.translation.copy()
 
             closest_vert_index, vertex_world_pos = self.find_closest_vertex(
                 active_obj, obj, depsgraph
@@ -29,16 +29,15 @@ class OBJECT_OT_VertexParentSet(bpy.types.Operator):
             obj.parent_type = 'VERTEX'
             obj.parent_vertices = [closest_vert_index, 0, 0]
             obj.use_parent_final_indices = True
-
-            # Reset to identity so Blender uses its own evaluated vertex position
-            # (rather than our manually computed one, which may differ with subdivision etc.)
             obj.matrix_parent_inverse.identity()
 
-            # Let Blender evaluate the real parent matrix, then restore world position.
-            # Setting matrix_world lets Blender decompose it into the correct local
-            # loc/rot/scale automatically — no manual offset math needed.
-            context.view_layer.update()
-            obj.matrix_world = orig_matrix_world
+            # PARVERT1 with identity matrix_parent_inverse:
+            #   child_world_translation = vertex_world_pos + obj.location
+            # So to keep the child exactly where it was:
+            #   obj.location = orig_world_pos - vertex_world_pos
+            # This is direct and avoids relying on view_layer.update() / matrix_world
+            # setter which can use a stale runtime parent matrix cache.
+            obj.location = orig_world_pos - vertex_world_pos
 
         return {'FINISHED'}
 

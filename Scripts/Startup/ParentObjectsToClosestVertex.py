@@ -30,16 +30,13 @@ class OBJECT_OT_VertexParentSet(bpy.types.Operator):
             obj.parent_vertices = [closest_vert_index, 0, 0]
             obj.use_parent_final_indices = True
 
-            # Blender source (BKE_object_get_parent_matrix, PARVERT1 branch):
-            #   unit_m4(r_parentmat)                              — starts from IDENTITY
-            #   mul_v3_m4v3(r_parentmat[3], par->obmat, vec)     — sets only translation
-            # So the effective parent matrix for a single-vertex parent is a PURE
-            # translation to the vertex world position — rotation/scale are NOT inherited.
-            # matrix_parent_inverse must cancel that out to keep the child in place.
-            obj.matrix_parent_inverse = Matrix.Translation(vertex_world_pos).inverted()
+            # Reset to identity so Blender uses its own evaluated vertex position
+            # (rather than our manually computed one, which may differ with subdivision etc.)
+            obj.matrix_parent_inverse.identity()
 
-            # Let Blender re-evaluate the new parent chain, then restore world position.
-            # Blender decomposes matrix_world back into local loc/rot/scale automatically.
+            # Let Blender evaluate the real parent matrix, then restore world position.
+            # Setting matrix_world lets Blender decompose it into the correct local
+            # loc/rot/scale automatically — no manual offset math needed.
             context.view_layer.update()
             obj.matrix_world = orig_matrix_world
 

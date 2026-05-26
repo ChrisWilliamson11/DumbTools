@@ -82,6 +82,7 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
         controller["max_opacity"] = self.max_opacity
         
         first_copy_materials = {}
+        all_first_copy_mats = set()
         missing_files = set()
         
         def get_or_append_material(mat_name, path):
@@ -211,7 +212,7 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
             if not fade_group:
                 return
                 
-            for mat in first_copy_materials.values():
+            for mat in all_first_copy_mats:
                 if not mat or not mat.use_nodes:
                     continue
                 
@@ -276,6 +277,31 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
             imported_objects = context.selected_objects
             
             process_materials(imported_objects, is_first_copy=(i == 0))
+            
+            if i == 0:
+                for obj in imported_objects:
+                    if getattr(obj, "data", None) and hasattr(obj.data, "materials"):
+                        for mat in obj.data.materials:
+                            if mat:
+                                all_first_copy_mats.add(mat)
+            else:
+                for obj in imported_objects:
+                    if getattr(obj, "data", None) and hasattr(obj.data, "materials"):
+                        for slot in obj.material_slots:
+                            if slot.material and slot.material not in all_first_copy_mats:
+                                mat_name = slot.material.name
+                                base_name = mat_name
+                                if len(mat_name) > 4 and mat_name[-4] == '.' and mat_name[-3:].isdigit():
+                                    base_name = mat_name[:-4]
+                                
+                                matched_mat = None
+                                for first_mat in all_first_copy_mats:
+                                    if first_mat.name == base_name or first_mat.name == mat_name:
+                                        matched_mat = first_mat
+                                        break
+                                
+                                if matched_mat:
+                                    slot.material = matched_mat
             
             post_caches = set(bpy.data.cache_files)
             new_caches = post_caches - pre_caches

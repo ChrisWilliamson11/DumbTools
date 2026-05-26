@@ -281,9 +281,9 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
             if i == 0:
                 for obj in imported_objects:
                     if getattr(obj, "data", None) and hasattr(obj.data, "materials"):
-                        for mat in obj.data.materials:
-                            if mat:
-                                all_first_copy_mats.add(mat)
+                        for slot in obj.material_slots:
+                            if slot.material:
+                                all_first_copy_mats.add(slot.material)
             else:
                 for obj in imported_objects:
                     if getattr(obj, "data", None) and hasattr(obj.data, "materials"):

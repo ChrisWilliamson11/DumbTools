@@ -341,6 +341,6 @@ def unregister():
     except Exception:
         pass
 
-if __name__ == "__main__":
-    register()
-    bpy.ops.dumbtools.usd_trail_import('INVOKE_DEFAULT')
+
+register()
+bpy.ops.dumbtools.usd_trail_import('INVOKE_DEFAULT')

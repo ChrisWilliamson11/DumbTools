@@ -285,20 +285,29 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
                             if slot.material:
                                 all_first_copy_mats.add(slot.material)
             else:
+                def get_base(name):
+                    if len(name) > 4 and name[-4] == '.' and name[-3:].isdigit():
+                        return name[:-4]
+                    return name
+                    
                 for obj in imported_objects:
                     if getattr(obj, "data", None) and hasattr(obj.data, "materials"):
                         for slot in obj.material_slots:
                             if slot.material and slot.material not in all_first_copy_mats:
                                 mat_name = slot.material.name
-                                base_name = mat_name
-                                if len(mat_name) > 4 and mat_name[-4] == '.' and mat_name[-3:].isdigit():
-                                    base_name = mat_name[:-4]
+                                base_name = get_base(mat_name)
                                 
                                 matched_mat = None
                                 for first_mat in all_first_copy_mats:
-                                    if first_mat.name == base_name or first_mat.name == mat_name:
+                                    if first_mat.name == mat_name:
                                         matched_mat = first_mat
                                         break
+                                        
+                                if not matched_mat:
+                                    for first_mat in all_first_copy_mats:
+                                        if get_base(first_mat.name) == base_name:
+                                            matched_mat = first_mat
+                                            break
                                 
                                 if matched_mat:
                                     slot.material = matched_mat

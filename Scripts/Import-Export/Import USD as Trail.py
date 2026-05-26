@@ -30,6 +30,14 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
         default=-0.1
     )
     
+    max_opacity: bpy.props.FloatProperty(
+        name="Max Opacity",
+        description="Maximum opacity for the head of the trail (1.0 = opaque, 0.0 = fully faded)",
+        default=1.0,
+        min=0.0,
+        max=1.0
+    )
+    
     search_path: bpy.props.StringProperty(
         name="Material Search Path",
         description="Path segment to replace in the original material file paths",
@@ -54,6 +62,7 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
         box.label(text="Trail Settings:")
         box.prop(self, "num_copies")
         box.prop(self, "time_offset")
+        box.prop(self, "max_opacity")
         
         layout.separator()
         box = layout.box()
@@ -70,6 +79,7 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
         controller = bpy.data.objects.new(f"Trail_Controller_{file_name}", None)
         root_col.objects.link(controller)
         controller["time_offset"] = self.time_offset
+        controller["max_opacity"] = self.max_opacity
         
         first_copy_materials = {}
         missing_files = set()
@@ -286,7 +296,7 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
                 
                 driver.expression = f"offset * {i}"
                 
-            fade_val = i / max(1.0, float(self.num_copies - 1))
+            ratio = i / max(1.0, float(self.num_copies - 1))
             
             for obj in imported_objects:
                 if obj.type not in {'MESH', 'CURVE'}:
@@ -298,7 +308,24 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
                     
                     input_id = self.find_node_group_input_identifier(geo_group, "Fade")
                     if input_id:
-                        mod[input_id] = fade_val
+                        data_path = f'modifiers["{mod.name}"]["{input_id}"]'
+                        try:
+                            fcurve = obj.driver_add(data_path)
+                            driver = fcurve.driver
+                            driver.type = 'SCRIPTED'
+                            
+                            var = driver.variables.new()
+                            var.name = "opacity"
+                            var.type = 'SINGLE_PROP'
+                            
+                            target = var.targets[0]
+                            target.id_type = 'OBJECT'
+                            target.id = controller
+                            target.data_path = '["max_opacity"]'
+                            
+                            driver.expression = f"(1.0 - opacity) + opacity * {ratio}"
+                        except Exception as e:
+                            print(f"Failed to add driver to {obj.name}: {e}")
         
         insert_fade_group_to_materials()
         

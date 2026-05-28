@@ -30,6 +30,12 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
         default=-0.1
     )
     
+    global_time_offset: bpy.props.FloatProperty(
+        name="Global Time Offset",
+        description="Global time offset applied to all copies in the trail",
+        default=0.0
+    )
+    
     max_opacity: bpy.props.FloatProperty(
         name="Max Opacity",
         description="Maximum opacity for the head of the trail (1.0 = opaque, 0.0 = fully faded)",
@@ -62,6 +68,7 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
         box.label(text="Trail Settings:")
         box.prop(self, "num_copies")
         box.prop(self, "time_offset")
+        box.prop(self, "global_time_offset")
         box.prop(self, "max_opacity")
         
         layout.separator()
@@ -79,6 +86,7 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
         controller = bpy.data.objects.new(f"Trail_Controller_{file_name}", None)
         root_col.objects.link(controller)
         controller["time_offset"] = self.time_offset
+        controller["global_time_offset"] = self.global_time_offset
         controller["max_opacity"] = self.max_opacity
         
         first_copy_materials = {}
@@ -329,7 +337,16 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
                 target.id = controller
                 target.data_path = '["time_offset"]'
                 
-                driver.expression = f"offset * {i}"
+                var_global = driver.variables.new()
+                var_global.name = "global_offset"
+                var_global.type = 'SINGLE_PROP'
+                
+                target_global = var_global.targets[0]
+                target_global.id_type = 'OBJECT'
+                target_global.id = controller
+                target_global.data_path = '["global_time_offset"]'
+                
+                driver.expression = f"global_offset + (offset * {i})"
                 
             ratio = i / max(1.0, float(self.num_copies - 1))
             

@@ -277,7 +277,13 @@ class DUMBTOOLS_OT_usd_trail_import(bpy.types.Operator, ImportHelper):
             pre_caches = set(bpy.data.cache_files)
             
             try:
-                bpy.ops.wm.usd_import(filepath=self.filepath)
+                try:
+                    bpy.ops.wm.usd_import(filepath=self.filepath, import_cameras=False, import_lights=False, import_environments=False)
+                except TypeError:
+                    try:
+                        bpy.ops.wm.usd_import(filepath=self.filepath, import_cameras=False, import_lights=False)
+                    except TypeError:
+                        bpy.ops.wm.usd_import(filepath=self.filepath)
             except Exception as e:
                 self.report({'ERROR'}, f"Failed to import USD on copy {i}: {e}")
                 continue

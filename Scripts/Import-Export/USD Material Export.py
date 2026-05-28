@@ -198,16 +198,22 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
                     export_animation=cls._deferred_animation,
                     export_armatures=cls._deferred_armatures,
                     export_shapekeys=cls._deferred_shapekeys,
-                    export_custom_properties=True
+                    export_custom_properties=True,
+                    export_cameras=False,
+                    export_lights=False,
+                    export_environments=False
                 )
-            except Exception:
+            except TypeError:
                 try:
                     bpy.ops.wm.usd_export(filepath=cls._deferred_filepath,
                         selected_objects_only=True,
                         export_animation=cls._deferred_animation,
-                        export_custom_properties=True
+                        export_custom_properties=True,
+                        export_cameras=False,
+                        export_lights=False,
+                        export_environments=False
                     )
-                except Exception:
+                except TypeError:
                     bpy.ops.wm.usd_export(filepath=cls._deferred_filepath, selected_objects_only=True)
                     
             print(f"[DumbTools] Smoothly exported {len(bpy.context.selected_objects)} objects to USD.")

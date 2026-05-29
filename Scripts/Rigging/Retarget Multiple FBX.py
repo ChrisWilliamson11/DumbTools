@@ -328,6 +328,24 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
         nla_was_active = False
         print(f"[RetargetFBX]   do_assign is OFF — using existing source rig state")
 
+    # ── STAGE 2.5: Auto Scale (Auto Rig Pro) ─────────────────────────────────
+    if getattr(props, 'do_auto_scale', False):
+        print("[RetargetFBX]   Running ARP Auto Scale...")
+        try:
+            # Ensure object mode just in case
+            if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            
+            # Select source rig (often required by operators)
+            bpy.ops.object.select_all(action='DESELECT')
+            source_rig.select_set(True)
+            context.view_layer.objects.active = source_rig
+            
+            bpy.ops.arp.auto_scale()
+            print("[RetargetFBX]   ✓ ARP Auto Scale completed")
+        except Exception as e:
+            print(f"[RetargetFBX]   ✗ ARP Auto Scale failed: {e}")
+
     # ── STAGE 3: Bake ─────────────────────────────────────────────────────────
     if not props.do_bake:
         print(f"[RetargetFBX]   do_bake is OFF — stopping after assign stage.")
@@ -643,6 +661,11 @@ class RetargetFBXProperties(PropertyGroup):
         description="Save a copy of the scene (with NLA tracks) alongside the FBX files",
         default=True,
     )
+    do_auto_scale: bpy.props.BoolProperty(
+        name="Run ARP Auto Scale",
+        description="Run Auto-Rig Pro's Auto Scale after assigning each action (fixes scaling issues if actions override rig scale)",
+        default=True,
+    )
     do_match_axes: bpy.props.BoolProperty(
         name="Match source rig bone axes to FBX",
         description=(
@@ -685,6 +708,7 @@ class RETARGET_PT_panel(Panel):
         col = layout.column(align=True)
         col.prop(props, "do_import")
         col.prop(props, "do_assign")
+        col.prop(props, "do_auto_scale")
         col.prop(props, "do_bake")
         col.prop(props, "do_nla_push")
         col.prop(props, "do_save")

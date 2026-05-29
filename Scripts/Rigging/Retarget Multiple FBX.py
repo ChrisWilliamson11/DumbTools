@@ -15,6 +15,21 @@ from bpy.types import OperatorFileListElement
 #  throughout the entire process.
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+def log_print(*args, **kwargs):
+    msg = " ".join(map(str, args))
+    # Standard console print
+    import builtins
+    builtins.print(msg, **kwargs)
+    try:
+        import bpy
+        props = bpy.context.scene.retarget_fbx_props
+        if props.do_write_log and props.log_filepath:
+            with open(props.log_filepath, "a", encoding="utf-8") as f:
+                f.write(msg + "\n")
+    except Exception:
+        pass
+
 def _is_retarget_constraint(c, source_rig):
     """Return True if this constraint targets the source rig (= a retarget constraint)."""
     return (hasattr(c, 'target') and c.target is not None
@@ -119,7 +134,7 @@ def restore_retarget_constraints(arm_obj, snapshot):
                         except Exception:
                             pass
             except Exception as e:
-                print(f"[RetargetFBX] Could not restore constraint "
+                log_print(f"[RetargetFBX] Could not restore constraint "
                       f"'{d.get('name')}' on '{bone_name}': {e}")
 
 
@@ -148,7 +163,7 @@ def match_source_axes_to_fbx(source_rig, fbx_arm, context):
     bpy.ops.object.mode_set(mode='OBJECT')
 
     if not fbx_rolls:
-        print("[RetargetFBX]   match_axes: no edit bones found in FBX arm — skipped")
+        log_print("[RetargetFBX]   match_axes: no edit bones found in FBX arm — skipped")
         return 0
 
     # ── Apply to source rig ──────────────────────────────────────────────────
@@ -168,10 +183,10 @@ def match_source_axes_to_fbx(source_rig, fbx_arm, context):
 
     bpy.ops.object.mode_set(mode='OBJECT')
 
-    print(f"[RetargetFBX]   match_axes: matched {matched} / "
+    log_print(f"[RetargetFBX]   match_axes: matched {matched} / "
           f"{len(source_rig.data.bones)} bones")
     if skipped:
-        print(f"[RetargetFBX]   match_axes: {len(skipped)} unmatched bones "
+        log_print(f"[RetargetFBX]   match_axes: {len(skipped)} unmatched bones "
               f"(no FBX counterpart): {skipped[:8]}{'...' if len(skipped) > 8 else ''}")
     return matched
 
@@ -199,7 +214,7 @@ def import_fbx_clean(fbx_path, delete_arm=True):
             use_anim=True,
         )
     except Exception as e:
-        print(f"[RetargetFBX] Import failed for {fbx_path}: {e}")
+        log_print(f"[RetargetFBX] Import failed for {fbx_path}: {e}")
         return None, None, None
 
     base_name = os.path.splitext(os.path.basename(fbx_path))[0]
@@ -245,7 +260,7 @@ def import_fbx_clean(fbx_path, delete_arm=True):
                 pass
 
     arm_in_scene = None if delete_arm else kept_arm
-    print(f"[RetargetFBX]   Imported '{base_name}' — "
+    log_print(f"[RetargetFBX]   Imported '{base_name}' — "
           f"{'armature deleted (action kept)' if delete_arm else 'armature kept in scene for inspection'}")
     return imported_action, base_name, arm_in_scene
 
@@ -276,10 +291,10 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
         delete_arm = props.do_assign
         imported_action, base_name, _ = import_fbx_clean(fbx_path, delete_arm=delete_arm)
         if imported_action is None and props.do_assign:
-            print(f"[RetargetFBX] No action found in {fbx_path} — skipping.")
+            log_print(f"[RetargetFBX] No action found in {fbx_path} — skipping.")
             return None
         if not props.do_assign:
-            print(f"[RetargetFBX]   Import-only mode: armature left in scene. "
+            log_print(f"[RetargetFBX]   Import-only mode: armature left in scene. "
                   f"Action found: {imported_action.name if imported_action else 'NONE'}")
             return None
     else:
@@ -288,7 +303,7 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
         imported_action = (source_rig.animation_data.action
                            if source_rig.animation_data else None)
         if imported_action is None:
-            print(f"[RetargetFBX] do_import is OFF but no action on source rig — skipping.")
+            log_print(f"[RetargetFBX] do_import is OFF but no action on source rig — skipping.")
             return None
 
     # ── STAGE 2: Assign to source rig ────────────────────────────────────────
@@ -300,7 +315,7 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
         if getattr(props, 'do_strip_scale', True):
             n_scale_keys = strip_scale_keyframes(imported_action)
             if n_scale_keys > 0:
-                print(f"[RetargetFBX]   Stripped {n_scale_keys} scale F-Curve(s) from action")
+                log_print(f"[RetargetFBX]   Stripped {n_scale_keys} scale F-Curve(s) from action")
 
         # Disable NLA so direct action assignment isn't overridden
         src_anim = source_rig.animation_data
@@ -320,35 +335,35 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
                 # Reuse the existing slot (it has all the F-Curves)
                 try:
                     src_anim.action_slot = slots[0]
-                    print(f"[RetargetFBX]   Slot assigned: '{slots[0].name}'")
+                    log_print(f"[RetargetFBX]   Slot assigned: '{slots[0].name}'")
                 except Exception as e:
-                    print(f"[RetargetFBX]   Slot assign failed: {e}")
+                    log_print(f"[RetargetFBX]   Slot assign failed: {e}")
             else:
-                print("[RetargetFBX]   Warning: action has no slots — "
+                log_print("[RetargetFBX]   Warning: action has no slots — "
                       "animation may not play on source rig")
 
         # Verify the assignment actually stuck
         actual = src_anim.action
         if actual and actual.name == imported_action.name:
-            print(f"[RetargetFBX]   ✓ Action confirmed on source rig: '{actual.name}'")
+            log_print(f"[RetargetFBX]   ✓ Action confirmed on source rig: '{actual.name}'")
         else:
-            print(f"[RetargetFBX]   ✗ Action mismatch after assign! "
+            log_print(f"[RetargetFBX]   ✗ Action mismatch after assign! "
                   f"Expected '{imported_action.name}', got '{actual}'")
 
         # Set timeline
         fr = imported_action.frame_range
         scn.frame_start = int(fr[0])
         scn.frame_end   = int(fr[1])
-        print(f"[RetargetFBX]   Frames {scn.frame_start}–{scn.frame_end}")
-        print(f"[RetargetFBX]   Source NLA was {'active' if nla_was_active else 'already off'} "
+        log_print(f"[RetargetFBX]   Frames {scn.frame_start}–{scn.frame_end}")
+        log_print(f"[RetargetFBX]   Source NLA was {'active' if nla_was_active else 'already off'} "
               f"— disabled for bake")
     else:
         nla_was_active = False
-        print(f"[RetargetFBX]   do_assign is OFF — using existing source rig state")
+        log_print(f"[RetargetFBX]   do_assign is OFF — using existing source rig state")
 
     # ── STAGE 2.5: Auto Scale (Auto Rig Pro) ─────────────────────────────────
     if getattr(props, 'do_auto_scale', False):
-        print("[RetargetFBX]   Running ARP Auto Scale...")
+        log_print("[RetargetFBX]   Running ARP Auto Scale...")
         try:
             # Ensure object mode just in case
             if bpy.context.object and bpy.context.object.mode != 'OBJECT':
@@ -360,13 +375,13 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
             context.view_layer.objects.active = source_rig
             
             bpy.ops.arp.auto_scale()
-            print("[RetargetFBX]   ✓ ARP Auto Scale completed")
+            log_print("[RetargetFBX]   ✓ ARP Auto Scale completed")
         except Exception as e:
-            print(f"[RetargetFBX]   ✗ ARP Auto Scale failed: {e}")
+            log_print(f"[RetargetFBX]   ✗ ARP Auto Scale failed: {e}")
 
     # ── STAGE 3: Bake ─────────────────────────────────────────────────────────
     if not props.do_bake:
-        print(f"[RetargetFBX]   do_bake is OFF — stopping after assign stage.")
+        log_print(f"[RetargetFBX]   do_bake is OFF — stopping after assign stage.")
         return None
 
     remap_name   = base_name + "_remap"
@@ -393,12 +408,12 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
     src_action   = (source_rig.animation_data.action.name
                     if source_rig.animation_data and source_rig.animation_data.action
                     else 'NONE')
-    print(f"[RetargetFBX]   PRE-BAKE CHECK:")
-    print(f"[RetargetFBX]     mode         = {current_mode}  (expected: POSE)")
-    print(f"[RetargetFBX]     target bones = {n_bones}")
-    print(f"[RetargetFBX]     src action   = {src_action}  (should not be NONE)")
-    print(f"[RetargetFBX]     frame range  = {scn.frame_start}–{scn.frame_end}")
-    print(f"[RetargetFBX]     current frame= {scn.frame_current}")
+    log_print(f"[RetargetFBX]   PRE-BAKE CHECK:")
+    log_print(f"[RetargetFBX]     mode         = {current_mode}  (expected: POSE)")
+    log_print(f"[RetargetFBX]     target bones = {n_bones}")
+    log_print(f"[RetargetFBX]     src action   = {src_action}  (should not be NONE)")
+    log_print(f"[RetargetFBX]     frame range  = {scn.frame_start}–{scn.frame_end}")
+    log_print(f"[RetargetFBX]     current frame= {scn.frame_current}")
 
     try:
         bpy.ops.nla.bake(
@@ -412,7 +427,7 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
             bake_types={'POSE'},
         )
     except Exception as e:
-        print(f"[RetargetFBX] Bake failed for '{base_name}': {e}")
+        log_print(f"[RetargetFBX] Bake failed for '{base_name}': {e}")
         bpy.ops.object.mode_set(mode='OBJECT')
         # Restore NLA state even on failure
         if props.do_assign and source_rig.animation_data:
@@ -430,9 +445,9 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
     if baked:
         baked.name = remap_name
         baked.use_fake_user = True
-        print(f"[RetargetFBX]   Baked → '{remap_name}'")
+        log_print(f"[RetargetFBX]   Baked → '{remap_name}'")
     else:
-        print(f"[RetargetFBX]   Warning: no action found on target after bake.")
+        log_print(f"[RetargetFBX]   Warning: no action found on target after bake.")
 
     return baked
 
@@ -459,7 +474,7 @@ def push_to_nla(target_rig, actions):
             strip.action_frame_start = action.frame_range[0]
             strip.action_frame_end   = action.frame_range[1]
         except Exception as e:
-            print(f"[RetargetFBX] NLA strip error for '{action.name}': {e}")
+            log_print(f"[RetargetFBX] NLA strip error for '{action.name}': {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -506,7 +521,7 @@ class RETARGET_OT_multiple_fbx(Operator):
 
         output_folder = self.directory
         total = len(fbx_files)
-        print(f"\n[RetargetFBX] ── Starting batch: {total} file(s) ──")
+        log_print(f"\n[RetargetFBX] ── Starting batch: {total} file(s) ──")
 
         # ── Snapshot retargeting constraints before anything touches them ──────
         constraint_snapshot = snapshot_retarget_constraints(target_rig, source_rig)
@@ -529,7 +544,7 @@ class RETARGET_OT_multiple_fbx(Operator):
         # the FBX action's rotation values produce the correct world-space pose.
         # NOTE: this permanently changes the source rig's edit-mode bone rolls.
         if props.do_match_axes:
-            print("[RetargetFBX] Matching source rig bone axes to FBX...")
+            log_print("[RetargetFBX] Matching source rig bone axes to FBX...")
             ref_fbx = fbx_files[0]
             _, _, ref_arm = import_fbx_clean(ref_fbx, delete_arm=False)
             if ref_arm:
@@ -541,14 +556,14 @@ class RETARGET_OT_multiple_fbx(Operator):
                     bpy.data.actions.remove(tmp_act)
                 bpy.data.objects.remove(ref_arm, do_unlink=True)
             else:
-                print("[RetargetFBX] match_axes: could not import reference FBX — skipped")
+                log_print("[RetargetFBX] match_axes: could not import reference FBX — skipped")
 
         wm = context.window_manager
         wm.progress_begin(0, total)
 
         for i, fbx_path in enumerate(fbx_files):
             fname = os.path.basename(fbx_path)
-            print(f"\n[RetargetFBX] [{i + 1}/{total}] {fname}")
+            log_print(f"\n[RetargetFBX] [{i + 1}/{total}] {fname}")
             wm.progress_update(i)
 
             baked = process_one_fbx(fbx_path, source_rig, target_rig, context, props)
@@ -560,7 +575,7 @@ class RETARGET_OT_multiple_fbx(Operator):
             # IK-FK switches) are untouched by both the bake and this removal.
             if props.do_bake and baked:
                 n_removed = remove_retarget_constraints(target_rig, source_rig)
-                print(f"[RetargetFBX] Removed {n_removed} retarget constraint(s), "
+                log_print(f"[RetargetFBX] Removed {n_removed} retarget constraint(s), "
                       f"internal rig constraints preserved.")
 
             # Between clips: re-add retargeting constraints so the next FBX
@@ -568,10 +583,10 @@ class RETARGET_OT_multiple_fbx(Operator):
             # After the last clip, leave them off for clean NLA playback.
             is_last_clip = (i == total - 1)
             if props.do_bake and not is_last_clip:
-                print("[RetargetFBX] Restoring retarget constraints (preparing for next clip)...")
+                log_print("[RetargetFBX] Restoring retarget constraints (preparing for next clip)...")
                 restore_retarget_constraints(target_rig, constraint_snapshot)
             elif props.do_bake and is_last_clip:
-                print("[RetargetFBX] Last clip done — retarget constraints left off for clean NLA playback.")
+                log_print("[RetargetFBX] Last clip done — retarget constraints left off for clean NLA playback.")
 
 
         wm.progress_update(total)
@@ -602,7 +617,7 @@ class RETARGET_OT_multiple_fbx(Operator):
                 "Enable Push to NLA to continue.")
             return {'FINISHED'}
 
-        print(f"[RetargetFBX] Pushing {len(baked_actions)} actions to NLA...")
+        log_print(f"[RetargetFBX] Pushing {len(baked_actions)} actions to NLA...")
         push_to_nla(target_rig, baked_actions)
 
 
@@ -623,7 +638,7 @@ class RETARGET_OT_multiple_fbx(Operator):
             combined_path = os.path.join(output_folder, blend_stem + ".blend")
             try:
                 bpy.ops.wm.save_as_mainfile(filepath=combined_path, copy=True)
-                print(f"[RetargetFBX] Combined file saved → {combined_path}")
+                log_print(f"[RetargetFBX] Combined file saved → {combined_path}")
             except Exception as e:
                 self.report({'WARNING'}, f"Could not save combined file: {e}")
             self.report(
@@ -689,6 +704,17 @@ class RetargetFBXProperties(PropertyGroup):
         description="Remove scale keyframes from imported actions so they don't overwrite rig scale during bake",
         default=True,
     )
+    do_write_log: bpy.props.BoolProperty(
+        name="Write Log to File",
+        description="Save output logs to the specified file",
+        default=False,
+    )
+    log_filepath: bpy.props.StringProperty(
+        name="Log File",
+        description="Path to save the log file",
+        subtype='FILE_PATH',
+        default=r"C:\retarget_fbx.log",
+    )
     do_match_axes: bpy.props.BoolProperty(
         name="Match source rig bone axes to FBX",
         description=(
@@ -744,6 +770,13 @@ class RETARGET_PT_panel(Panel):
         if props.do_match_axes:
             box.label(text="Uses first FBX as reference.", icon='INFO')
             box.label(text="Permanently changes source rig rolls.", icon='ERROR')
+
+        layout.separator()
+        log_box = layout.box()
+        log_box.label(text="Logging:", icon='TEXT')
+        log_box.prop(props, "do_write_log")
+        if props.do_write_log:
+            log_box.prop(props, "log_filepath", text="")
 
         layout.separator()
         ready = bool(props.source_rig and props.target_rig)

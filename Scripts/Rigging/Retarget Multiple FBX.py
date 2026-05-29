@@ -269,11 +269,43 @@ def strip_scale_keyframes(action):
     """Remove all scale F-Curves from the action so they don't override rig scale."""
     if not action:
         return 0
-    to_remove = [fc for fc in action.fcurves 
-                 if fc.data_path.endswith('.scale') or fc.data_path == 'scale']
-    removed_count = len(to_remove)
-    for fc in to_remove:
-        action.fcurves.remove(fc)
+    
+    removed_count = 0
+    
+    # Check legacy fcurves
+    if hasattr(action, "fcurves") and action.fcurves:
+        to_remove = [fc for fc in action.fcurves if fc.data_path.endswith('.scale') or fc.data_path == 'scale']
+        for fc in to_remove:
+            action.fcurves.remove(fc)
+        removed_count += len(to_remove)
+        
+    # Check Blender 5 layered animation
+    if hasattr(action, "layers"):
+        for layer in action.layers:
+            if hasattr(layer, "strips"):
+                for strip in layer.strips:
+                    if hasattr(strip, "channelbags"):
+                        for bag in strip.channelbags:
+                            if hasattr(bag, "fcurves"):
+                                to_remove = [fc for fc in bag.fcurves if fc.data_path.endswith('.scale') or fc.data_path == 'scale']
+                                for fc in to_remove:
+                                    bag.fcurves.remove(fc)
+                                removed_count += len(to_remove)
+                    
+                    if hasattr(strip, "fcurves"):
+                        to_remove = [fc for fc in strip.fcurves if fc.data_path.endswith('.scale') or fc.data_path == 'scale']
+                        for fc in to_remove:
+                            strip.fcurves.remove(fc)
+                        removed_count += len(to_remove)
+                    elif hasattr(strip, "channels"):
+                        to_remove = [fc for fc in strip.channels if getattr(fc, "data_path", "").endswith('.scale') or getattr(fc, "data_path", "") == 'scale']
+                        for fc in to_remove:
+                            try:
+                                strip.channels.remove(fc)
+                            except Exception:
+                                pass
+                        removed_count += len(to_remove)
+
     return removed_count
 
 

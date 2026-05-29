@@ -250,6 +250,18 @@ def import_fbx_clean(fbx_path, delete_arm=True):
     return imported_action, base_name, arm_in_scene
 
 
+def strip_scale_keyframes(action):
+    """Remove all scale F-Curves from the action so they don't override rig scale."""
+    if not action:
+        return 0
+    to_remove = [fc for fc in action.fcurves 
+                 if fc.data_path.endswith('.scale') or fc.data_path == 'scale']
+    removed_count = len(to_remove)
+    for fc in to_remove:
+        action.fcurves.remove(fc)
+    return removed_count
+
+
 def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
     """
     Full pipeline for a single FBX clip, gated by stage flags on props.
@@ -283,6 +295,12 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
     if props.do_assign:
         if not source_rig.animation_data:
             source_rig.animation_data_create()
+
+        # Strip scale keys before assigning so Auto-Scale isn't overridden
+        if getattr(props, 'do_strip_scale', True):
+            n_scale_keys = strip_scale_keyframes(imported_action)
+            if n_scale_keys > 0:
+                print(f"[RetargetFBX]   Stripped {n_scale_keys} scale F-Curve(s) from action")
 
         # Disable NLA so direct action assignment isn't overridden
         src_anim = source_rig.animation_data
@@ -666,6 +684,11 @@ class RetargetFBXProperties(PropertyGroup):
         description="Run Auto-Rig Pro's Auto Scale after assigning each action (fixes scaling issues if actions override rig scale)",
         default=True,
     )
+    do_strip_scale: bpy.props.BoolProperty(
+        name="Strip Scale Keyframes",
+        description="Remove scale keyframes from imported actions so they don't overwrite rig scale during bake",
+        default=True,
+    )
     do_match_axes: bpy.props.BoolProperty(
         name="Match source rig bone axes to FBX",
         description=(
@@ -707,6 +730,7 @@ class RETARGET_PT_panel(Panel):
         layout.label(text="Stages:", icon='SETTINGS')
         col = layout.column(align=True)
         col.prop(props, "do_import")
+        col.prop(props, "do_strip_scale")
         col.prop(props, "do_assign")
         col.prop(props, "do_auto_scale")
         col.prop(props, "do_bake")

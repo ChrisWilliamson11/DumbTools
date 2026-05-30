@@ -2925,6 +2925,9 @@ class BATCH_RENDER_OT_preview_queue(bpy.types.Operator):
         preview_scene.render.resolution_x = context.scene.render.resolution_x
         preview_scene.render.resolution_y = context.scene.render.resolution_y
         
+        if not preview_scene.sequence_editor:
+            preview_scene.sequence_editor_create()
+            
         context.window.scene = preview_scene
         
         # Find or create a VSE area
@@ -3076,8 +3079,7 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
             settings.use_override_samples,
             settings.use_override_persistent_data,
             settings.use_override_simplify,
-            settings.use_override_volumetrics,
-            settings.use_chunking
+            settings.use_override_volumetrics
         ])
 
         row = layout.row(align=True)

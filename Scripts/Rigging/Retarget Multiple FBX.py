@@ -407,8 +407,8 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
             # ARP relies on its own scene properties to know what to scale.
             # We must explicitly tell it which rigs to use, otherwise it fails or does nothing.
             try:
-                context.scene.arp_src_rig = source_rig
-                context.scene.arp_trg_rig = target_rig
+                context.scene.source_rig = source_rig.name
+                context.scene.target_rig = target_rig.name
             except Exception as e:
                 log_print(f"[RetargetFBX]   Warning: Could not set ARP properties: {e}")
 

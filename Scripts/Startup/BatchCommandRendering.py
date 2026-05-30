@@ -2807,6 +2807,96 @@ class BATCH_RENDER_OT_generate_and_run(bpy.types.Operator):
 
 
 
+class BATCH_RENDER_OT_preview_queue(bpy.types.Operator):
+    bl_idname = "batch_render.preview_queue"
+    bl_label = "Preview Queue"
+    bl_description = "Creates a new scene and loads all rendered job outputs into the Video Sequence Editor as strips"
+
+    def execute(self, context):
+        settings = context.scene.batch_render_settings
+        queue = context.scene.batch_render_jobs
+        
+        blend_path = bpy.data.filepath
+        if not blend_path:
+            self.report({'WARNING'}, "Please save the blend file first.")
+            return {'CANCELLED'}
+            
+        jobs_with_files = []
+        
+        for job in queue:
+            if not job.enabled: continue
+            
+            directory = resolve_job_output_path(job, settings, blend_path)
+            prefix = get_job_output_prefix(job, settings, blend_path)
+            
+            if not directory or not os.path.exists(directory):
+                continue
+                
+            try:
+                all_files = os.listdir(directory)
+                valid_exts = ('.png', '.jpg', '.jpeg', '.exr', '.bmp', '.tif', '.tiff')
+                
+                files = []
+                for f in all_files:
+                    if prefix and not f.startswith(prefix):
+                        continue
+                    if f.lower().endswith(valid_exts):
+                        files.append(f)
+                        
+                import re
+                def get_frame_num(filename):
+                    match = re.search(r'(\d+)\.[a-zA-Z0-9]+$', filename)
+                    if match:
+                        return int(match.group(1))
+                    return 0
+                    
+                files = sorted(files, key=get_frame_num)
+                
+                if files:
+                    jobs_with_files.append((job.scene_name, directory, files))
+            except Exception as e:
+                print(f"BatchRender: Error reading directory {directory}: {e}")
+                
+        if not jobs_with_files:
+            self.report({'WARNING'}, "No rendered frames found for enabled jobs.")
+            return {'CANCELLED'}
+            
+        preview_scene = bpy.data.scenes.new(name="Batch Preview")
+        preview_scene.render.fps = context.scene.render.fps
+        preview_scene.render.fps_base = context.scene.render.fps_base
+        preview_scene.render.resolution_x = context.scene.render.resolution_x
+        preview_scene.render.resolution_y = context.scene.render.resolution_y
+        
+        if not preview_scene.sequence_editor:
+            preview_scene.sequence_editor_create()
+            
+        current_frame = 1
+        
+        for scene_name, directory, files in jobs_with_files:
+            filepath = os.path.join(directory, files[0])
+            
+            strip = preview_scene.sequence_editor.sequences.new_image(
+                name=scene_name,
+                filepath=filepath,
+                channel=1,
+                frame_start=current_frame
+            )
+            
+            for f in files[1:]:
+                strip.elements.append(f)
+                
+            current_frame += len(files)
+            
+        preview_scene.frame_start = 1
+        preview_scene.frame_end = current_frame - 1
+        
+        context.window.scene = preview_scene
+        
+        self.report({'INFO'}, f"Created Preview Scene with {len(jobs_with_files)} sequences.")
+        return {'FINISHED'}
+
+
+
 class BATCH_RENDER_OT_reload_queue(bpy.types.Operator):
     bl_idname = "batch_render.reload_queue"
     bl_label = "Reload Queue"
@@ -2862,6 +2952,9 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
         save_sub.alert = has_unsaved
         save_sub.operator("batch_render.save_batch", icon='FILE_TICK', text="Save Batch")
         save_row.operator("batch_render.generate_and_run", icon='PLAY', text="Save & Run")
+        
+        layout.operator("batch_render.preview_queue", icon='RENDER_ANIMATION', text="Preview Output Queue")
+        
         # --- Global Options (Collapsible, under Refresh) ---
         row = layout.row()
 
@@ -2894,8 +2987,31 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
                 row.prop(settings, "chunk_timeout")
 
         # --- Queue Overrides ---
-        row = layout.row()
-        row.prop(settings, "show_queue_overrides", icon="TRIA_DOWN" if settings.show_queue_overrides else "TRIA_RIGHT", emboss=False, text="Queue Overrides")
+        queue_overrides_active = any([
+            settings.use_override_frames,
+            settings.use_specific_frame,
+            settings.use_frame_jump,
+            settings.use_override_output,
+            settings.use_extension,
+            settings.use_override_placeholders,
+            settings.use_override_engine,
+            settings.use_override_format,
+            settings.use_override_samples,
+            settings.use_override_persistent_data,
+            settings.use_override_simplify,
+            settings.use_override_volumetrics,
+            settings.use_chunking
+        ])
+
+        row = layout.row(align=True)
+        sub = row.row(align=True)
+        sub.prop(settings, "show_queue_overrides", icon="TRIA_DOWN" if settings.show_queue_overrides else "TRIA_RIGHT", emboss=False, text="Queue Overrides")
+        if queue_overrides_active:
+            sub_icon = row.row(align=True)
+            sub_icon.alignment = 'RIGHT'
+            sub_icon.alert = True
+            sub_icon.label(icon='ERROR')
+
 
         if settings.show_queue_overrides:
             ov_box = layout.box()
@@ -3079,8 +3195,15 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
 
                 # Make it look like a child panel (indented box?)
                 # Actually just standard prop with sub-box
-                row = layout.row()
-                row.prop(settings, "show_selected_job", icon="TRIA_DOWN" if settings.show_selected_job else "TRIA_RIGHT", emboss=False, text=f"Selected Job: {job.scene_name}")
+                row = layout.row(align=True)
+                sub = row.row(align=True)
+                sub.prop(settings, "show_selected_job", icon="TRIA_DOWN" if settings.show_selected_job else "TRIA_RIGHT", emboss=False, text=f"Selected Job: {job.scene_name}")
+                if job.use_overrides:
+                    sub_icon = row.row(align=True)
+                    sub_icon.alignment = 'RIGHT'
+                    sub_icon.alert = True
+                    sub_icon.label(icon='MODIFIER_ON')
+
 
                 if settings.show_selected_job:
                     box = layout.box()
@@ -3180,6 +3303,7 @@ classes = (
     BATCH_RENDER_OT_delete_frames,
     BATCH_RENDER_OT_remove_placeholders,
     BATCH_RENDER_OT_preview_output,
+    BATCH_RENDER_OT_preview_queue,
     BATCH_RENDER_OT_open_job_file,
     BATCH_RENDER_OT_replace_blend,
     BATCH_RENDER_OT_open_output_folder,

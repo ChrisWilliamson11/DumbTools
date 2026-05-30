@@ -459,16 +459,27 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
     log_print(f"[RetargetFBX]     current frame= {scn.frame_current}")
 
     try:
-        bpy.ops.nla.bake(
-            frame_start=scn.frame_start,
-            frame_end=scn.frame_end,
-            only_selected=True,
-            visual_keying=True,
-            clear_constraints=False,  # preserve IK, drivers, IK-FK switches
-            clear_parents=False,
-            use_current_action=True,
-            bake_types={'POSE'},
-        )
+        if getattr(props, 'use_arp_bake', True):
+            log_print(f"[RetargetFBX]   Baking via Auto-Rig Pro retarget...")
+            # ARP retarget often expects to be in OBJECT mode
+            if context.object and context.object.mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.ops.arp.retarget(
+                frame_start=scn.frame_start,
+                frame_end=scn.frame_end
+            )
+        else:
+            log_print(f"[RetargetFBX]   Baking via NLA constraints...")
+            bpy.ops.nla.bake(
+                frame_start=scn.frame_start,
+                frame_end=scn.frame_end,
+                only_selected=True,
+                visual_keying=True,
+                clear_constraints=False,  # preserve IK, drivers, IK-FK switches
+                clear_parents=False,
+                use_current_action=True,
+                bake_types={'POSE'},
+            )
     except Exception as e:
         log_print(f"[RetargetFBX] Bake failed for '{base_name}': {e}")
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -727,6 +738,11 @@ class RetargetFBXProperties(PropertyGroup):
         description="Enter pose mode on target, select all visible bones, bake with visual keying",
         default=True,
     )
+    use_arp_bake: bpy.props.BoolProperty(
+        name="Use ARP Retarget (Bake)",
+        description="Use Auto-Rig Pro's native retarget/bake operator instead of standard NLA baking",
+        default=True,
+    )
     do_nla_push: bpy.props.BoolProperty(
         name="Push to NLA",
         description="Push all baked actions as stacked NLA tracks on the target rig",
@@ -802,7 +818,11 @@ class RETARGET_PT_panel(Panel):
         col.prop(props, "do_strip_scale")
         col.prop(props, "do_assign")
         col.prop(props, "do_auto_scale")
-        col.prop(props, "do_bake")
+        
+        row = col.row(align=True)
+        row.prop(props, "do_bake", text="Bake to target rig")
+        row.prop(props, "use_arp_bake", text="via ARP", toggle=True)
+        
         col.prop(props, "do_nla_push")
         col.prop(props, "do_save")
 

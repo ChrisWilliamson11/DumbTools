@@ -25,8 +25,11 @@ def log_print(*args, **kwargs):
         import bpy
         props = bpy.context.scene.retarget_fbx_props
         if props.do_write_log and props.log_filepath:
-            with open(props.log_filepath, "a", encoding="utf-8") as f:
-                f.write(msg + "\n")
+            try:
+                with open(props.log_filepath, "a", encoding="utf-8") as f:
+                    f.write(msg + "\n")
+            except Exception as e:
+                builtins.print(f"[RetargetFBX] ERROR: Could not write to log file {props.log_filepath}: {e}")
     except Exception:
         pass
 
@@ -401,6 +404,14 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
             if bpy.context.object and bpy.context.object.mode != 'OBJECT':
                 bpy.ops.object.mode_set(mode='OBJECT')
             
+            # ARP relies on its own scene properties to know what to scale.
+            # We must explicitly tell it which rigs to use, otherwise it fails or does nothing.
+            try:
+                context.scene.arp_src_rig = source_rig
+                context.scene.arp_trg_rig = target_rig
+            except Exception as e:
+                log_print(f"[RetargetFBX]   Warning: Could not set ARP properties: {e}")
+
             # Select source rig (often required by operators)
             bpy.ops.object.select_all(action='DESELECT')
             source_rig.select_set(True)
@@ -745,7 +756,7 @@ class RetargetFBXProperties(PropertyGroup):
         name="Log File",
         description="Path to save the log file",
         subtype='FILE_PATH',
-        default=r"C:\retarget_fbx.log",
+        default=os.path.expanduser(r"~\Desktop\retarget_fbx.log"),
     )
     do_match_axes: bpy.props.BoolProperty(
         name="Match source rig bone axes to FBX",

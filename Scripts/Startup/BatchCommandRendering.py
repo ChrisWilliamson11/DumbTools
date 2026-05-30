@@ -693,6 +693,31 @@ def write_batch_file(context):
                     hf.write("smart_render_wrapper()\n")
             except:
                 print("Failed to write handler script")
+                
+            # Generate verify_chunk.py
+            verify_script_path = os.path.join(base_dir, "verify_chunk.py")
+            try:
+                with open(verify_script_path, 'w') as vf:
+                    vf.write("import sys, os\n")
+                    vf.write("args = sys.argv\n")
+                    vf.write("if '--' in args: args = args[args.index('--') + 1:]\n")
+                    vf.write("if len(args) < 4: sys.exit(0)\n")
+                    vf.write("prog_dir = args[0]\n")
+                    vf.write("job_id = args[1]\n")
+                    vf.write("start = int(args[2])\n")
+                    vf.write("end = int(args[3])\n")
+                    vf.write("missing = 0\n")
+                    vf.write("for f in range(start, end + 1):\n")
+                    vf.write("    if not os.path.exists(os.path.join(prog_dir, f'{job_id}_{f}.done')):\n")
+                    vf.write("        missing += 1\n")
+                    vf.write("if missing > 0:\n")
+                    vf.write("    print(f'BatchRender Verification Failed: {missing} frames missing.')\n")
+                    vf.write("    sys.exit(1)\n")
+                    vf.write("print('BatchRender Verification Passed.')\n")
+                    vf.write("sys.exit(0)\n")
+            except:
+                print("Failed to write verify script")
+                
         else:
             lines.append("#!/bin/sh")
 
@@ -993,13 +1018,22 @@ def write_batch_file(context):
 
                      lines.append(" ".join(chunk_cmd))
 
+                     # Verify rendered frames
+                     if is_windows:
+                         lines.append(f"if %errorlevel% equ 0 (")
+                         lines.append(f"    \"{blender_bin}\" -b -P \"%~dp0verify_chunk.py\" -- \"%FLIP_BATCH_PROGRESS_DIR%\" \"{job.uuid}\" %FLIP_BATCH_CHUNK_START% %FLIP_BATCH_CHUNK_END%")
+                         lines.append(f"    if errorlevel 1 (")
+                         lines.append(f"        cmd /c exit 1")
+                         lines.append(f"    )")
+                         lines.append(f")")
+
                      # On Success: Create Done, Remove Lock
                      lines.append(f"if %errorlevel% neq 0 (")
                      if is_windows:
                          lines.append(f"    timeout /t 2 /nobreak >nul")
                          lines.append(f"    rmdir /s /q \"{lock_name}.lock\"")
                          lines.append(f"    echo Render failed for chunk {chunk_id} (Exit Code: %errorlevel%)")
-                         lines.append(f"    echo FAILED (Exit Code: %errorlevel%) > \"{lock_name}.error\"")
+                         lines.append(f"    echo BLOCK:%COMPUTERNAME% > \"{lock_name}.error\"")
                      else:
                          lines.append(f"    sleep 1")
                          lines.append(f"    rm -rf \"{lock_name}.lock\"")
@@ -1232,6 +1266,9 @@ def refresh_job_chunks(job, settings, batch_path):
         start = settings.frame_start
         end = settings.frame_end
 
+    # Preserve UI selection state across refreshes
+    selected_starts = {c.start for c in job.chunks if c.selected}
+
     job.chunks.clear()
 
     current = start
@@ -1243,6 +1280,9 @@ def refresh_job_chunks(job, settings, batch_path):
         item.start = current
         item.end = c_end
         item.owner = ""
+        
+        if current in selected_starts:
+            item.selected = True
 
         lock_file, done_file = resolve_chunk_paths(batch_path, job, current, c_end)
 
@@ -1255,6 +1295,21 @@ def refresh_job_chunks(job, settings, batch_path):
         elif os.path.exists(error_file):
              item.status = "Failed"
              item.icon = "ERROR"
+             try:
+                 with open(error_file, 'r') as f:
+                     content = f.read().strip()
+                     if content.startswith("BLOCK:"):
+                         pc_name = content.split("BLOCK:")[1].strip()
+                         if pc_name:
+                             blocks = [x.strip() for x in job.blocked_computers.split(',')] if job.blocked_computers else []
+                             if pc_name not in blocks:
+                                 blocks.append(pc_name)
+                                 job.blocked_computers = ",".join(blocks)
+                                 job.use_custom_block_list = True
+                                 job.use_overrides = True
+                                 job.is_saved = False
+                                 print(f"BatchRender: Auto-blocked computer {pc_name} due to chunk failure.")
+             except: pass
         elif os.path.exists(lock_file):
             item.status = "Rendering"
             item.icon = "TIME"
@@ -1456,7 +1511,7 @@ class BatchRenderJob(bpy.types.PropertyGroup):
     cached_chunk_progress: FloatProperty(name="Chunk Progress", default=0.0)
 
     # Overrides
-    use_overrides: BoolProperty(name="Override Global Settings", default=False, update=mark_job_unsaved)
+    use_overrides: BoolProperty(name="Job Overrides", default=False, update=mark_job_unsaved)
 
     use_custom_frames: BoolProperty(name="Override Frame Range", default=False, update=mark_job_unsaved)
     frame_start: IntProperty(name="Start", default=1, update=mark_job_unsaved)
@@ -2930,13 +2985,9 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
         row = box.row()
         row.prop(settings, "batch_file_path")
 
-        # Show resolved absolute path
+        # Show error if batch path is invalid
         abs_path, _ = get_batch_file_path(context)
-        if abs_path:
-             box.label(text=f"Resolved: {abs_path}", icon='FILE_TICK')
-             if settings.last_known_mtime > 0:
-                 box.label(text="Synced: Ready for Multi-User", icon='LINK_BLEND')
-        else:
+        if not abs_path:
              box.label(text="Resolved: (Invalid)", icon='ERROR')
 
         row = box.row()
@@ -3146,8 +3197,8 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
 
             # Row 2: Job Status
             row = col.row(align=True)
-            row.operator("batch_render.set_job_pending", icon='FILE_REFRESH', text="Pending")
-            row.operator("batch_render.set_job_done", icon='CHECKBOX_HLT', text="Done")
+            row.operator("batch_render.set_job_done", icon='CHECKBOX_HLT', text="Set Done")
+            row.operator("batch_render.set_job_pending", icon='CHECKBOX_DEHLT', text="Set Pending")
             row = col.row(align=True)
             row.operator("batch_render.archive_frames", icon='FILE_ARCHIVE', text="Archive")
             row.operator("batch_render.delete_frames", icon='X', text="Delete Frames")

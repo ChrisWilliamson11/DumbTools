@@ -2930,49 +2930,28 @@ class BATCH_RENDER_OT_preview_queue(bpy.types.Operator):
             
         context.window.scene = preview_scene
         
-        # Find or create a VSE area
-        vse_area = None
-        original_type = None
-        for area in context.screen.areas:
-            if area.type == 'SEQUENCE_EDITOR':
-                vse_area = area
-                break
-                
-        if not vse_area:
-            # Temporarily change current area to VSE
-            vse_area = context.area
-            original_type = vse_area.type
-            vse_area.type = 'SEQUENCE_EDITOR'
-            
-        region = next((r for r in vse_area.regions if r.type == 'WINDOW'), None)
-        ctx_override = context.temp_override(window=context.window, area=vse_area, region=region, scene=preview_scene)
-        
-        # Blender 5.0+ Workspace/Sequencer Scene compatibility
-        try:
-            if hasattr(context.workspace, "sequencer_scene"):
-                context.workspace.sequencer_scene = preview_scene
-            if hasattr(vse_area.spaces[0], "scene"):
-                vse_area.spaces[0].scene = preview_scene
-        except: pass
-        
+        # Use low-level data API to avoid interactive UI operators (which trigger translate mode)
         current_frame = 1
-        with ctx_override:
-            for scene_name, directory, files in jobs_with_files:
-                files_dict = [{"name": f} for f in files]
-                try:
-                    bpy.ops.sequencer.image_strip_add(
-                        'EXEC_DEFAULT',
-                        directory=directory,
-                        files=files_dict,
-                        frame_start=current_frame,
-                        channel=1
-                    )
-                except Exception as e:
-                    print(f"BatchRender: Failed to add sequence {scene_name}: {e}")
-                current_frame += len(files)
+        
+        # Blender 5.0 renamed .sequences to .strips
+        seq_collection = getattr(preview_scene.sequence_editor, "strips", None)
+        if seq_collection is None:
+            seq_collection = preview_scene.sequence_editor.sequences
+            
+        for scene_name, directory, files in jobs_with_files:
+            filepath = os.path.join(directory, files[0])
+            
+            strip = seq_collection.new_image(
+                name=scene_name,
+                filepath=filepath,
+                channel=1,
+                frame_start=current_frame
+            )
+            
+            for f in files[1:]:
+                strip.elements.append(f)
                 
-        if original_type:
-            vse_area.type = original_type
+            current_frame += len(files)
             
         preview_scene.frame_start = 1
         preview_scene.frame_end = max(1, current_frame - 1)

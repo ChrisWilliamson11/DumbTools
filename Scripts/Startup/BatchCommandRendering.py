@@ -2925,30 +2925,54 @@ class BATCH_RENDER_OT_preview_queue(bpy.types.Operator):
         preview_scene.render.resolution_x = context.scene.render.resolution_x
         preview_scene.render.resolution_y = context.scene.render.resolution_y
         
-        if not preview_scene.sequence_editor:
-            preview_scene.sequence_editor_create()
-            
-        current_frame = 1
+        context.window.scene = preview_scene
         
-        for scene_name, directory, files in jobs_with_files:
-            filepath = os.path.join(directory, files[0])
-            
-            strip = preview_scene.sequence_editor.sequences.new_image(
-                name=scene_name,
-                filepath=filepath,
-                channel=1,
-                frame_start=current_frame
-            )
-            
-            for f in files[1:]:
-                strip.elements.append(f)
+        # Find or create a VSE area
+        vse_area = None
+        original_type = None
+        for area in context.screen.areas:
+            if area.type == 'SEQUENCE_EDITOR':
+                vse_area = area
+                break
                 
-            current_frame += len(files)
+        if not vse_area:
+            # Temporarily change current area to VSE
+            vse_area = context.area
+            original_type = vse_area.type
+            vse_area.type = 'SEQUENCE_EDITOR'
+            
+        region = next((r for r in vse_area.regions if r.type == 'WINDOW'), None)
+        ctx_override = context.temp_override(window=context.window, area=vse_area, region=region, scene=preview_scene)
+        
+        # Blender 5.0+ Workspace/Sequencer Scene compatibility
+        try:
+            if hasattr(context.workspace, "sequencer_scene"):
+                context.workspace.sequencer_scene = preview_scene
+            if hasattr(vse_area.spaces[0], "scene"):
+                vse_area.spaces[0].scene = preview_scene
+        except: pass
+        
+        current_frame = 1
+        with ctx_override:
+            for scene_name, directory, files in jobs_with_files:
+                files_dict = [{"name": f} for f in files]
+                try:
+                    bpy.ops.sequencer.image_strip_add(
+                        'EXEC_DEFAULT',
+                        directory=directory,
+                        files=files_dict,
+                        frame_start=current_frame,
+                        channel=1
+                    )
+                except Exception as e:
+                    print(f"BatchRender: Failed to add sequence {scene_name}: {e}")
+                current_frame += len(files)
+                
+        if original_type:
+            vse_area.type = original_type
             
         preview_scene.frame_start = 1
-        preview_scene.frame_end = current_frame - 1
-        
-        context.window.scene = preview_scene
+        preview_scene.frame_end = max(1, current_frame - 1)
         
         self.report({'INFO'}, f"Created Preview Scene with {len(jobs_with_files)} sequences.")
         return {'FINISHED'}
@@ -3237,7 +3261,7 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
                     else:
                         # Compact Progress View
                         row = box.row()
-                        row.prop(active_job, "cached_chunk_progress", text="Progress", slider=True, emboss=False)
+                        row.prop(active_job, "cached_chunk_progress", text="Progress", slider=True)
                         row.enabled = False # Read-only look
 
             # --- Selected Job Overrides (Nested in Queue) ---

@@ -2873,7 +2873,10 @@ class BATCH_RENDER_OT_preview_queue(bpy.types.Operator):
         
         blend_path = bpy.data.filepath
         if not blend_path:
-            self.report({'WARNING'}, "Please save the blend file first.")
+            blend_path, _ = get_batch_file_path(context)
+            
+        if not blend_path:
+            self.report({'WARNING'}, "Please save the blend file or set a valid Batch File path first.")
             return {'CANCELLED'}
             
         jobs_with_files = []
@@ -3043,7 +3046,6 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
             settings.use_specific_frame,
             settings.use_frame_jump,
             settings.use_override_output,
-            settings.use_extension,
             settings.use_override_placeholders,
             settings.use_override_engine,
             settings.use_override_format,

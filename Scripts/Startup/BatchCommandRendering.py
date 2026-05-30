@@ -2894,13 +2894,6 @@ class BATCH_RENDER_OT_preview_queue(bpy.types.Operator):
                 all_files = os.listdir(directory)
                 valid_exts = ('.png', '.jpg', '.jpeg', '.exr', '.bmp', '.tif', '.tiff')
                 
-                files = []
-                for f in all_files:
-                    if prefix and not f.startswith(prefix):
-                        continue
-                    if f.lower().endswith(valid_exts):
-                        files.append(f)
-                        
                 import re
                 def get_frame_num(filename):
                     match = re.search(r'(\d+)\.[a-zA-Z0-9]+$', filename)
@@ -2908,10 +2901,29 @@ class BATCH_RENDER_OT_preview_queue(bpy.types.Operator):
                         return int(match.group(1))
                     return 0
                     
-                files = sorted(files, key=get_frame_num)
-                
-                if files:
-                    jobs_with_files.append((job.scene_name, directory, files))
+                def get_base_name(filename):
+                    match = re.search(r'^(.*?)(\d+)\.[a-zA-Z0-9]+$', filename)
+                    if match:
+                        return match.group(1)
+                    return filename
+                    
+                sequence_groups = {}
+                for f in all_files:
+                    if prefix and not f.startswith(prefix):
+                        continue
+                    if f.lower().endswith(valid_exts):
+                        base = get_base_name(f)
+                        if base not in sequence_groups:
+                            sequence_groups[base] = []
+                        sequence_groups[base].append(f)
+                        
+                for base_name, grp_files in sequence_groups.items():
+                    grp_files = sorted(grp_files, key=get_frame_num)
+                    if grp_files:
+                        strip_name = job.scene_name
+                        if base_name: 
+                            strip_name = f"{job.scene_name} ({base_name.strip(' _-')})"
+                        jobs_with_files.append((strip_name, directory, grp_files))
             except Exception as e:
                 print(f"BatchRender: Error reading directory {directory}: {e}")
                 

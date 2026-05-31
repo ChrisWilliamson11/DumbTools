@@ -1351,15 +1351,16 @@ def refresh_job_chunks(job, settings, batch_path):
 
         current += chunk_size
 
-    # Calculate Chunk Progress
-    total_chunks = len(job.chunks)
-    done_chunks = 0
-    for c in job.chunks:
-        if c.status == 'Done':
-            done_chunks += 1
-
-    if total_chunks > 0:
-        job.cached_chunk_progress = (done_chunks / total_chunks) * 100.0
+    # Calculate Precise Progress using per-frame receipts
+    total_frames = end - start + 1
+    if total_frames > 0:
+        try:
+            finished_frames = get_job_progress_frames(job, batch_path)
+            valid_finished = [f for f in finished_frames if start <= f <= end]
+            job.cached_chunk_progress = (len(valid_finished) / total_frames) * 100.0
+        except Exception as e:
+            job.cached_chunk_progress = 0.0
+            print(f"BatchRender: Error calculating progress: {e}")
     else:
         job.cached_chunk_progress = 0.0
 
@@ -1508,7 +1509,7 @@ class BatchRenderJob(bpy.types.PropertyGroup):
     sc_filepath: StringProperty(name="Scene Output Path", default="")
 
     # Runtime cache for chunk progress
-    cached_chunk_progress: FloatProperty(name="Chunk Progress", default=0.0)
+    cached_chunk_progress: FloatProperty(name="Chunk Progress", min=0.0, max=100.0, subtype='PERCENTAGE', default=0.0)
 
     # Overrides
     use_overrides: BoolProperty(name="Job Overrides", default=False, update=mark_job_unsaved)
@@ -1815,20 +1816,21 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
         sub.label(text="", icon=icon_status)
 
         # Split remaining
-        data_row = sub.split(factor=0.5)
+        data_row = sub.split(factor=0.45)
 
         # Col 1: File
         file_part = data_row
         fname = os.path.basename(item.filepath)
         file_part.label(text=fname, icon='FILE_BLEND')
 
-        scene_row = data_row.split(factor=0.37)
+        scene_row = data_row.split(factor=0.55)
 
         # Col 2: Scene
         scene_part = scene_row
-        scene_part.label(text=item.scene_name, icon='SCENE_DATA')
+        scene_icon = 'MODIFIER_ON' if item.use_overrides else 'SCENE_DATA'
+        scene_part.label(text=item.scene_name, icon=scene_icon)
 
-        range_row = scene_row.split(factor=0.24)
+        range_row = scene_row.split(factor=0.65)
 
         # Col 3: Range
         range_part = range_row
@@ -1851,10 +1853,8 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
             range_txt = f"{calc_start}-{calc_end}"
         range_part.label(text=range_txt)
 
-        percent_row = range_row.split(factor=0.5)
-
         # Col 4: Percent
-        pct_part = percent_row
+        pct_part = range_row
         pct_part.label(text=f"{chunk_pct:.0f}%")
 
         # if not item.enabled:

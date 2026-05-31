@@ -2907,10 +2907,20 @@ class BATCH_RENDER_OT_preview_queue(bpy.types.Operator):
                         return match.group(1)
                     return filename
                     
+                blend_name = os.path.splitext(os.path.basename(job.filepath))[0]
+                
                 sequence_groups = {}
                 for f in all_files:
-                    if prefix and not f.startswith(prefix):
-                        continue
+                    if prefix:
+                        if not f.startswith(prefix):
+                            continue
+                    else:
+                        # Heuristic: If no prefix, filter out passes from unrelated jobs
+                        base = get_base_name(f)
+                        if base: # If it's not just '0001.png'
+                            if blend_name.lower() not in base.lower() and job.scene_name.lower() not in base.lower():
+                                continue
+                                
                     if f.lower().endswith(valid_exts):
                         base = get_base_name(f)
                         if base not in sequence_groups:

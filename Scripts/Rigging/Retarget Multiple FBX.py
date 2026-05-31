@@ -198,6 +198,20 @@ def match_source_axes_to_fbx(source_rig, fbx_arm, context):
 #  Per-FBX processing helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def duplicate_rig(rig_obj, suffix="_temp"):
+    """Duplicate an armature object and its data without operators."""
+    new_data = rig_obj.data.copy()
+    new_obj = rig_obj.copy()
+    new_obj.data = new_data
+    new_obj.name = rig_obj.name + suffix
+    bpy.context.collection.objects.link(new_obj)
+    
+    # Clear any active action so it starts fresh
+    if new_obj.animation_data:
+        new_obj.animation_data.action = None
+        
+    return new_obj
+
 def import_fbx_clean(fbx_path, delete_arm=True):
     """
     Import one FBX. Returns (imported_action, base_name, arm_obj).
@@ -312,7 +326,7 @@ def strip_scale_keyframes(action):
     return removed_count
 
 
-def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
+def _process_one_fbx_internal(fbx_path, source_rig, target_rig, context, props):
     """
     Full pipeline for a single FBX clip, gated by stage flags on props.
     Returns the baked *_remap action or None on failure / bake disabled.
@@ -506,6 +520,35 @@ def process_one_fbx(fbx_path, source_rig, target_rig, context, props):
     return baked
 
 
+def process_one_fbx(fbx_path, orig_source_rig, orig_target_rig, context, props):
+    """
+    Wrapper that isolates the bake by duplicating the rigs.
+    This prevents auto_scale from compounding and avoids pose contamination.
+    """
+    if not props.do_bake:
+        # If we aren't baking, we operate directly on the original rig so the user can inspect it
+        return _process_one_fbx_internal(fbx_path, orig_source_rig, orig_target_rig, context, props)
+        
+    # Create isolated temp rigs
+    source_rig = duplicate_rig(orig_source_rig, "_temp_source")
+    target_rig = duplicate_rig(orig_target_rig, "_temp_target")
+    
+    # Update constraints on temp_target to point to temp_source
+    for pbone in target_rig.pose.bones:
+        for c in pbone.constraints:
+            if hasattr(c, 'target') and c.target == orig_source_rig:
+                c.target = source_rig
+                
+    try:
+        baked = _process_one_fbx_internal(fbx_path, source_rig, target_rig, context, props)
+        return baked
+    finally:
+        # Guarantee cleanup of temp rigs regardless of success/failure
+        if source_rig in bpy.data.objects:
+            bpy.data.objects.remove(source_rig, do_unlink=True)
+        if target_rig in bpy.data.objects:
+            bpy.data.objects.remove(target_rig, do_unlink=True)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  NLA push — stacked tracks, all starting at frame 1
@@ -577,20 +620,6 @@ class RETARGET_OT_multiple_fbx(Operator):
         total = len(fbx_files)
         log_print(f"\n[RetargetFBX] ── Starting batch: {total} file(s) ──")
 
-        # ── Snapshot retargeting constraints before anything touches them ──────
-        constraint_snapshot = snapshot_retarget_constraints(target_rig, source_rig)
-        if not any(constraint_snapshot.values()):
-            self.report({'WARNING'},
-                "No retargeting constraints found on target rig bones. "
-                "Make sure the target rig is constrained to the source rig.")
-
-        # Remember original source action so we can restore it at the end
-        original_source_action = (
-            source_rig.animation_data.action
-            if source_rig.animation_data else None
-        )
-        original_source_scale = source_rig.scale.copy()
-
         baked_actions = []
 
         # ── PRE-LOOP: optionally match source rig bone axes to FBX ───────────
@@ -621,47 +650,19 @@ class RETARGET_OT_multiple_fbx(Operator):
             log_print(f"\n[RetargetFBX] [{i + 1}/{total}] {fname}")
             wm.progress_update(i)
 
-            # ── RESTORE SCENE STATE BEFORE NEXT CLIP ─────────────────────────
-            # 1. Restore source rig scale to prevent ARP auto_scale compounding
-            source_rig.scale = original_source_scale
-            
-            # 2. Clear target rig pose safely using built-in operators
-            if context.object and context.object.mode != 'OBJECT':
-                bpy.ops.object.mode_set(mode='OBJECT')
-            
-            bpy.ops.object.select_all(action='DESELECT')
-            target_rig.select_set(True)
-            context.view_layer.objects.active = target_rig
-            bpy.ops.object.mode_set(mode='POSE')
-            bpy.ops.pose.select_all(action='SELECT')
-            bpy.ops.pose.transforms_clear()
-            bpy.ops.object.mode_set(mode='OBJECT')
-
             baked = process_one_fbx(fbx_path, source_rig, target_rig, context, props)
             if baked:
                 baked_actions.append(baked)
 
-            # After bake: remove only the retargeting constraints (the ones
-            # targeting the source rig). Internal constraints (IK, drivers,
-            # IK-FK switches) are untouched by both the bake and this removal.
-            if props.do_bake and baked:
-                n_removed = remove_retarget_constraints(target_rig, source_rig)
-                log_print(f"[RetargetFBX] Removed {n_removed} retarget constraint(s), "
-                      f"internal rig constraints preserved.")
-
-            # Between clips: re-add retargeting constraints so the next FBX
-            # import can drive the target rig through constraints again.
-            # After the last clip, leave them off for clean NLA playback.
-            is_last_clip = (i == total - 1)
-            if props.do_bake and not is_last_clip:
-                log_print("[RetargetFBX] Restoring retarget constraints (preparing for next clip)...")
-                restore_retarget_constraints(target_rig, constraint_snapshot)
-            elif props.do_bake and is_last_clip:
-                log_print("[RetargetFBX] Last clip done — retarget constraints left off for clean NLA playback.")
-
-
         wm.progress_update(total)
         wm.progress_end()
+        
+        # After all clips are baked, remove retarget constraints from the original target rig
+        # so they don't interfere with NLA playback
+        if props.do_bake:
+            n_removed = remove_retarget_constraints(target_rig, source_rig)
+            if n_removed > 0:
+                log_print(f"[RetargetFBX] Removed {n_removed} retarget constraint(s) from original target rig for clean NLA playback.")
 
         # ── Short-circuit at the last enabled stage ───────────────────────────
         # Each block below returns early so nothing after a disabled stage runs.
@@ -673,9 +674,6 @@ class RETARGET_OT_multiple_fbx(Operator):
                 f"Stage complete: imported & assigned {total} clip(s). "
                 "Inspect source rig then enable Bake to continue.")
             return {'FINISHED'}
-
-        if props.do_bake and source_rig.animation_data:
-            source_rig.animation_data.action = original_source_action
 
         if not baked_actions:
             self.report({'ERROR'}, "No clips were successfully baked.")

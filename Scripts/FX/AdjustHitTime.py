@@ -112,93 +112,120 @@ class DUMBTOOLS_OT_adjust_hit_time(bpy.types.Operator):
         
         total_adjusted = 0
         
-        for root in selected_roots:
-            objs = [root] + get_descendants(root)
-            start_frame = get_start_frame(objs)
+        log_path = r"g:\DumbTools_Public\DumbTools\Scripts\FX\AdjustHitTime.log"
+        with open(log_path, "w") as f:
+            f.write(f"--- Adjust Hit Time Log ---\n")
+            f.write(f"Selected roots: {[o.name for o in selected_roots]}\n")
             
-            if start_frame is None:
-                continue
+            for root in selected_roots:
+                objs = [root] + get_descendants(root)
+                f.write(f"\nProcessing Root: {root.name}\n")
+                f.write(f"Hierarchy contains {len(objs)} objects: {[o.name for o in objs]}\n")
                 
-            delta = target_frame - start_frame
-            delta_int = int(round(delta))
-            
-            if delta == 0:
-                continue
+                start_frame = get_start_frame(objs)
+                f.write(f"Calculated start_frame: {start_frame}\n")
                 
-            # Shift everything by delta
-            shifted_actions = set()
-            shifted_materials = set()
-            shifted_caches = set()
-            
-            for obj in objs:
-                # Volume
-                if obj.type == 'VOLUME' and obj.data:
-                    try: obj.data.frame_start += delta_int
-                    except: pass
+                if start_frame is None:
+                    f.write("No start_frame found. Skipping.\n")
+                    continue
                     
-                # Alembic
-                if obj.type in ('MESH', 'POINTCLOUD'):
-                    abc_mod = next((m for m in obj.modifiers if m.type == 'MESH_SEQUENCE_CACHE'), None)
-                    if abc_mod and abc_mod.cache_file:
-                        cache = abc_mod.cache_file
-                        if cache not in shifted_caches:
-                            shifted_caches.add(cache)
-                            shifted = False
-                            if cache.animation_data and cache.animation_data.action:
-                                act = cache.animation_data.action
+                delta = target_frame - start_frame
+                delta_int = int(round(delta))
+                f.write(f"Target frame: {target_frame} -> Delta: {delta_int}\n")
+                
+                if delta == 0:
+                    f.write("Delta is 0. Skipping.\n")
+                    continue
+                    
+                # Shift everything by delta
+                shifted_actions = set()
+                shifted_materials = set()
+                shifted_caches = set()
+                
+                for obj in objs:
+                    f.write(f"  Checking obj: {obj.name} (type: {obj.type})\n")
+                    # Volume
+                    if obj.type == 'VOLUME' and obj.data:
+                        try:
+                            old_fs = obj.data.frame_start
+                            obj.data.frame_start += delta_int
+                            f.write(f"    Shifted VDB frame_start: {old_fs} -> {obj.data.frame_start}\n")
+                        except Exception as e:
+                            f.write(f"    VDB shift failed: {e}\n")
+                        
+                    # Alembic
+                    if obj.type in ('MESH', 'POINTCLOUD'):
+                        abc_mod = next((m for m in obj.modifiers if m.type == 'MESH_SEQUENCE_CACHE'), None)
+                        if abc_mod and abc_mod.cache_file:
+                            cache = abc_mod.cache_file
+                            if cache not in shifted_caches:
+                                shifted_caches.add(cache)
+                                shifted = False
+                                if cache.animation_data and cache.animation_data.action:
+                                    act = cache.animation_data.action
+                                    if act not in shifted_actions:
+                                        shifted_actions.add(act)
+                                        for fc in iter_fcurves(act):
+                                            if fc.data_path == "frame" or fc.data_path.endswith(".frame"):
+                                                if fc.keyframe_points:
+                                                    for kp in fc.keyframe_points:
+                                                        kp.co[0] += delta
+                                                    fc.update()
+                                                    shifted = True
+                                        if shifted:
+                                            f.write(f"    Shifted Alembic cache action: {act.name}\n")
+                                if not shifted:
+                                    try:
+                                        old_fo = cache.frame_offset
+                                        cache.frame_offset += delta_int
+                                        f.write(f"    Shifted Alembic frame_offset: {old_fo} -> {cache.frame_offset}\n")
+                                    except Exception as e:
+                                        f.write(f"    Alembic offset shift failed: {e}\n")
+
+                    # Object Actions
+                    if obj.animation_data and obj.animation_data.action:
+                        act = obj.animation_data.action
+                        if act not in shifted_actions:
+                            shifted_actions.add(act)
+                            shift_action(act, delta)
+                            f.write(f"    Shifted Object Action: {act.name}\n")
+                            
+                    if obj.data and getattr(obj.data, 'animation_data', None) and obj.data.animation_data.action:
+                        act = obj.data.animation_data.action
+                        if act not in shifted_actions:
+                            shifted_actions.add(act)
+                            shift_action(act, delta)
+                            f.write(f"    Shifted Object Data Action: {act.name}\n")
+                            
+                    # Materials
+                    if hasattr(obj, 'material_slots'):
+                        for slot in obj.material_slots:
+                            mat = slot.material
+                            if not mat or not mat.node_tree: continue
+                            
+                            if mat in shifted_materials:
+                                continue
+                            shifted_materials.add(mat)
+                            
+                            nt = mat.node_tree
+                            if nt.animation_data and nt.animation_data.action:
+                                act = nt.animation_data.action
                                 if act not in shifted_actions:
                                     shifted_actions.add(act)
-                                    for fc in iter_fcurves(act):
-                                        if fc.data_path == "frame" or fc.data_path.endswith(".frame"):
-                                            if fc.keyframe_points:
-                                                for kp in fc.keyframe_points:
-                                                    kp.co[0] += delta
-                                                fc.update()
-                                                shifted = True
-                            if not shifted:
-                                try: cache.frame_offset += delta_int
-                                except: pass
-
-                # Object Actions
-                if obj.animation_data and obj.animation_data.action:
-                    act = obj.animation_data.action
-                    if act not in shifted_actions:
-                        shifted_actions.add(act)
-                        shift_action(act, delta)
-                        
-                if obj.data and getattr(obj.data, 'animation_data', None) and obj.data.animation_data.action:
-                    act = obj.data.animation_data.action
-                    if act not in shifted_actions:
-                        shifted_actions.add(act)
-                        shift_action(act, delta)
-                        
-                # Materials
-                if hasattr(obj, 'material_slots'):
-                    for slot in obj.material_slots:
-                        mat = slot.material
-                        if not mat or not mat.node_tree: continue
-                        
-                        if mat in shifted_materials:
-                            continue
-                        shifted_materials.add(mat)
-                        
-                        nt = mat.node_tree
-                        if nt.animation_data and nt.animation_data.action:
-                            act = nt.animation_data.action
-                            if act not in shifted_actions:
-                                shifted_actions.add(act)
-                                shift_action(act, delta)
-                        
-                        for node in nt.nodes:
-                            # Shift all texture nodes in case they were shifted by BulletHits
-                            if getattr(node, 'type', '') == 'TEX_IMAGE' and hasattr(node, 'image_user'):
-                                if getattr(node.image_user, 'frame_start', None) is not None:
-                                    try:
-                                        node.image_user.frame_start += delta_int
-                                    except Exception:
-                                        pass
-                                        
-            total_adjusted += 1
+                                    shift_action(act, delta)
+                                    f.write(f"    Shifted Material Action: {act.name}\n")
+                            
+                            for node in nt.nodes:
+                                if getattr(node, 'type', '') == 'TEX_IMAGE' and hasattr(node, 'image_user'):
+                                    if getattr(node.image_user, 'frame_start', None) is not None:
+                                        try:
+                                            old_fs = node.image_user.frame_start
+                                            node.image_user.frame_start += delta_int
+                                            f.write(f"    Shifted Image Node '{node.name}' frame_start: {old_fs} -> {node.image_user.frame_start}\n")
+                                        except Exception as e:
+                                            pass
+                                            
+                total_adjusted += 1
             
         if total_adjusted == 0:
             self.report({'WARNING'}, "No animatable time properties found in selection.")

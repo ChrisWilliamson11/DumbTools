@@ -47,3 +47,4 @@ def unregister():
         pass
 
 register()
+bpy.ops.rigging.remove_arp_constraints()

@@ -1826,9 +1826,14 @@ class BATCH_RENDER_UL_jobs(bpy.types.UIList):
         scene_row = data_row.split(factor=0.55)
 
         # Col 2: Scene
-        scene_part = scene_row
-        scene_icon = 'MODIFIER_ON' if item.use_overrides else 'SCENE_DATA'
-        scene_part.label(text=item.scene_name, icon=scene_icon)
+        scene_part = scene_row.row(align=True)
+        if item.use_overrides:
+            icon_part = scene_part.row(align=True)
+            icon_part.alert = True
+            icon_part.label(text="", icon='MODIFIER_ON')
+            scene_part.label(text=item.scene_name)
+        else:
+            scene_part.label(text=item.scene_name, icon='SCENE_DATA')
 
         range_row = scene_row.split(factor=0.65)
 

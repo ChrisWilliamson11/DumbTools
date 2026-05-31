@@ -222,3 +222,4 @@ def unregister():
         pass
 
 register()
+bpy.ops.dumbtools.adjust_hit_time('INVOKE_DEFAULT')

@@ -589,6 +589,18 @@ class RETARGET_OT_multiple_fbx(Operator):
             source_rig.animation_data.action
             if source_rig.animation_data else None
         )
+        original_source_scale = source_rig.scale.copy()
+        
+        # Snapshot target rig pose and custom properties to restore between bakes
+        target_pose_snapshot = {}
+        for pb in target_rig.pose.bones:
+            target_pose_snapshot[pb.name] = {
+                'location': pb.location.copy(),
+                'rotation_quaternion': pb.rotation_quaternion.copy(),
+                'rotation_euler': pb.rotation_euler.copy(),
+                'scale': pb.scale.copy(),
+                'custom_props': {k: v for k, v in pb.items() if not k.startswith('_')}
+            }
 
         baked_actions = []
 
@@ -619,6 +631,22 @@ class RETARGET_OT_multiple_fbx(Operator):
             fname = os.path.basename(fbx_path)
             log_print(f"\n[RetargetFBX] [{i + 1}/{total}] {fname}")
             wm.progress_update(i)
+
+            # ── RESTORE SCENE STATE BEFORE NEXT CLIP ─────────────────────────
+            # 1. Restore source rig scale to prevent ARP auto_scale compounding
+            source_rig.scale = original_source_scale
+            
+            # 2. Restore target rig pose and custom properties (e.g. IK/FK state)
+            for pb in target_rig.pose.bones:
+                if pb.name in target_pose_snapshot:
+                    snap = target_pose_snapshot[pb.name]
+                    pb.location = snap['location']
+                    pb.rotation_quaternion = snap['rotation_quaternion']
+                    pb.rotation_euler = snap['rotation_euler']
+                    pb.scale = snap['scale']
+                    for k, v in snap['custom_props'].items():
+                        pb[k] = v
+            context.view_layer.update()
 
             baked = process_one_fbx(fbx_path, source_rig, target_rig, context, props)
             if baked:

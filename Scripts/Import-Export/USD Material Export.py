@@ -192,29 +192,29 @@ class DUMBTOOLS_OT_usd_material_export(bpy.types.Operator, ExportHelper):
     @classmethod
     def deferred_export(cls):
         try:
-            try:
-                bpy.ops.wm.usd_export(filepath=cls._deferred_filepath,
-                    selected_objects_only=True,
-                    export_animation=cls._deferred_animation,
-                    export_armatures=cls._deferred_armatures,
-                    export_shapekeys=cls._deferred_shapekeys,
-                    export_custom_properties=True,
-                    export_cameras=False,
-                    export_lights=False,
-                    export_environments=False
-                )
-            except TypeError:
-                try:
-                    bpy.ops.wm.usd_export(filepath=cls._deferred_filepath,
-                        selected_objects_only=True,
-                        export_animation=cls._deferred_animation,
-                        export_custom_properties=True,
-                        export_cameras=False,
-                        export_lights=False,
-                        export_environments=False
-                    )
-                except TypeError:
-                    bpy.ops.wm.usd_export(filepath=cls._deferred_filepath, selected_objects_only=True)
+            kwargs = {
+                'filepath': cls._deferred_filepath,
+                'selected_objects_only': True,
+            }
+            
+            rna_props = bpy.ops.wm.usd_export.get_rna_type().properties
+            
+            if 'export_animation' in rna_props:
+                kwargs['export_animation'] = cls._deferred_animation
+            if 'export_custom_properties' in rna_props:
+                kwargs['export_custom_properties'] = True
+            if 'export_cameras' in rna_props:
+                kwargs['export_cameras'] = False
+            if 'export_lights' in rna_props:
+                kwargs['export_lights'] = False
+            if 'export_armatures' in rna_props:
+                kwargs['export_armatures'] = cls._deferred_armatures
+            if 'export_shapekeys' in rna_props:
+                kwargs['export_shapekeys'] = cls._deferred_shapekeys
+            if 'export_environments' in rna_props:
+                kwargs['export_environments'] = False
+                
+            bpy.ops.wm.usd_export(**kwargs)
                     
             print(f"[DumbTools] Smoothly exported {len(bpy.context.selected_objects)} objects to USD.")
         except Exception as e:

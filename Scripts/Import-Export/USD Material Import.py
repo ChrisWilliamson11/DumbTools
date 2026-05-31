@@ -229,8 +229,12 @@ class DUMBTOOLS_OT_usd_material_import_filepicker(bpy.types.Operator, ImportHelp
 
     def execute(self, context):
         try:
-            # We enforce import of custom properties so the tags survive.
-            bpy.ops.wm.usd_import(filepath=self.filepath)
+            kwargs = {'filepath': self.filepath}
+            rna_props = bpy.ops.wm.usd_import.get_rna_type().properties
+            if 'set_frame_range' in rna_props:
+                kwargs['set_frame_range'] = False
+                
+            bpy.ops.wm.usd_import(**kwargs)
         except Exception as e:
             self.report({'ERROR'}, f"Failed to import USD: {e}")
             return {'CANCELLED'}

@@ -221,5 +221,4 @@ def unregister():
     except RuntimeError:
         pass
 
-if __name__ == "__main__":
-    register()
+register()

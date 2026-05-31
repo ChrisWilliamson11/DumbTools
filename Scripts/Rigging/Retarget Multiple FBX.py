@@ -624,6 +624,22 @@ class RETARGET_OT_multiple_fbx(Operator):
         total = len(fbx_files)
         log_print(f"\n[RetargetFBX] ── Starting batch: {total} file(s) ──")
 
+        # ── PRE-LOOP: Validate ARP Bone Mappings ─────────────────────────────
+        if props.do_bake and getattr(props, 'use_arp_bake', True):
+            missing_bones = []
+            for pbone in target_rig.pose.bones:
+                for k in pbone.keys():
+                    if "arp_bone" in k:
+                        v = pbone[k]
+                        if isinstance(v, str) and v and v != "None":
+                            if v not in source_rig.data.bones:
+                                missing_bones.append(f"{pbone.name}→'{v}'")
+            if missing_bones:
+                msg = f"ARP Mapping Error! Target bones mapped to missing source bones: {', '.join(missing_bones)}"
+                log_print(f"[RetargetFBX] ERROR: {msg}")
+                self.report({'ERROR'}, msg)
+                return {'CANCELLED'}
+
         baked_actions = []
 
         # ── PRE-LOOP: optionally match source rig bone axes to FBX ───────────

@@ -544,10 +544,14 @@ def process_one_fbx(fbx_path, orig_source_rig, orig_target_rig, context, props):
         return baked
     finally:
         # Guarantee cleanup of temp rigs regardless of success/failure
-        if source_rig in bpy.data.objects:
+        try:
             bpy.data.objects.remove(source_rig, do_unlink=True)
-        if target_rig in bpy.data.objects:
+        except Exception:
+            pass
+        try:
             bpy.data.objects.remove(target_rig, do_unlink=True)
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────

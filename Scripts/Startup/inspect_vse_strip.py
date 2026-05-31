@@ -48,5 +48,4 @@ def inspect_strip():
              print(f"  strip.image.metadata: {list(strip.image.metadata.keys())}")
 
 
-if __name__ == "__main__":
-    inspect_strip()
+inspect_strip()

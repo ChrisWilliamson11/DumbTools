@@ -232,7 +232,7 @@ def apply_state_to_ui(context, state):
 
         # Apply Globals
         # Skip UI-only properties that should remain local-controlled during session
-        ui_props = {'show_job_queue', 'show_selected_job', 'show_chunk_details', 'show_chunk_status', 'show_file_config', 'show_global_options', 'show_queue_overrides'}
+        ui_props = {'show_job_queue', 'show_selected_job', 'show_chunk_details', 'show_chunk_status', 'show_file_config', 'show_global_options', 'show_queue_overrides', 'show_advanced_overrides'}
 
         for k, v in state.get('globals', {}).items():
             if k in ui_props: continue
@@ -1718,6 +1718,7 @@ class BatchRenderSettings(bpy.types.PropertyGroup):
     show_chunk_details: BoolProperty(name="Show Details", default=False)
     show_global_options: BoolProperty(default=False)
     show_queue_overrides: BoolProperty(default=False)
+    show_advanced_overrides: BoolProperty(default=False)
 
     # Advanced / Loop
     use_queue_loop: BoolProperty(
@@ -3050,28 +3051,23 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
         if settings.show_global_options:
             root_box = layout.box()
 
-            # --- Command Line Options ---
-            col = root_box.column(align=True)
-            col.label(text="Command Line Options", icon='CONSOLE')
-
-            row = col.row()
-            row.prop(settings, "use_background")
-            row = col.row()
-            row.prop(settings, "use_pause_at_end", text="Pause at End")
-
-            row = col.row()
-            row.prop(settings, "use_queue_loop")
-
-            row = col.row()
-            row.prop(settings, "use_auto_refresh")
+            split = root_box.split()
+            
+            # Left Column: General Settings
+            col1 = split.column()
+            col1.prop(settings, "use_background")
+            col1.prop(settings, "use_pause_at_end", text="Pause at End")
+            col1.prop(settings, "use_queue_loop")
+            col1.prop(settings, "use_auto_refresh")
             if settings.use_auto_refresh:
-                row.prop(settings, "auto_refresh_interval", text="Interval")
-
-            row = col.row()
-            row.prop(settings, "use_chunking", text="Enable Chunking")
+                col1.prop(settings, "auto_refresh_interval", text="Interval")
+                
+            # Right Column: Chunking Settings
+            col2 = split.column()
+            col2.prop(settings, "use_chunking", text="Enable Chunking")
             if settings.use_chunking:
-                row.prop(settings, "chunk_size")
-                row.prop(settings, "chunk_timeout")
+                col2.prop(settings, "chunk_size")
+                col2.prop(settings, "chunk_timeout", text="Timeout (min)")
 
         # --- Queue Overrides ---
         queue_overrides_active = any([
@@ -3102,109 +3098,111 @@ class BATCH_RENDER_PT_main(bpy.types.Panel):
             ov_box = layout.box()
             ov_box.label(text="Queue Overrides", icon='SETTINGS')
 
-            # Frame Range
-            row = ov_box.row()
+            split = ov_box.split()
+            col1 = split.column()
+            col2 = split.column()
+
+            # --- Top Tier Overrides ---
+            # Col 1: Frames, Samples, Denoising
+            row = col1.row()
             row.prop(settings, "use_override_frames", text="Override Range")
             if settings.use_override_frames:
                 row.prop(settings, "frame_start")
                 row.prop(settings, "frame_end")
 
-            row = ov_box.row()
-            row.prop(settings, "use_specific_frame", text="Render Single Frame")
-            if settings.use_specific_frame:
-                row.prop(settings, "specific_frame")
-
-            row = ov_box.row()
-            row.prop(settings, "use_frame_jump")
-            if settings.use_frame_jump:
-                row.prop(settings, "frame_jump")
-
-            ov_box.separator()
-
-            # Output
-            row = ov_box.row()
-            row.prop(settings, "use_override_output", text="Override Path")
-            if settings.use_override_output:
-                row.prop(settings, "output_path", text="")
-
-            row = ov_box.row()
-            row.prop(settings, "use_extension", text="Add Extension (-x)")
-
-            row = ov_box.row()
-            row.prop(settings, "use_override_placeholders")
-            if settings.use_override_placeholders:
-                row.prop(settings, "use_placeholders")
-
-            ov_box.separator()
-
-            # Engine
-            row = ov_box.row()
-            row.prop(settings, "use_override_engine")
-            if settings.use_override_engine:
-                row.prop(settings, "engine_type", text="")
-
-            row = ov_box.row()
-            row.prop(settings, "use_override_format")
-            if settings.use_override_format:
-                row.prop(settings, "render_format", text="")
-
-            ov_box.separator()
-
-            # Performance / Device
-            row = ov_box.row()
-            row.prop(settings, "use_threads")
-            if settings.use_threads:
-                row.prop(settings, "threads")
-
-            row = ov_box.row()
-            row.prop(settings, "use_cycles_device")
-            if settings.use_cycles_device:
-                row.prop(settings, "cycles_device", text="")
-
-            ov_box.separator()
-
-            # --- Python Overrides ---
-            ov_box.label(text="Scene Overrides (Python)")
-
-            row = ov_box.row()
+            row = col1.row()
             row.prop(settings, "use_override_samples")
             if settings.use_override_samples:
                 row.prop(settings, "samples")
 
-            row = ov_box.row()
+            row = col1.row()
             row.prop(settings, "use_override_denoising")
             if settings.use_override_denoising:
                 row.prop(settings, "denoising_state", text="Enabled")
                 if settings.denoising_state:
                     row.prop(settings, "denoiser_type", text="")
 
-            row = ov_box.row()
-            row.prop(settings, "use_override_color_mode")
-            if settings.use_override_color_mode:
-                row.prop(settings, "color_mode", text="")
-
-            row = ov_box.row()
+            # Col 2: Overwrite, Simplify, Volumetrics
+            row = col2.row()
             row.prop(settings, "use_override_overwrite")
             if settings.use_override_overwrite:
                 row.prop(settings, "use_overwrite")
 
-            row = ov_box.row()
-            row.prop(settings, "use_override_persistent_data")
-            if settings.use_override_persistent_data:
-                row.prop(settings, "persistent_data")
-
-            row = ov_box.row()
+            row = col2.row()
             row.prop(settings, "use_override_simplify")
             if settings.use_override_simplify:
                 row.prop(settings, "simplify_use", text="Enable")
                 row.prop(settings, "simplify_subdivision_render", text="Subdiv")
                 row.prop(settings, "simplify_image_limit", text="")
 
-            row = ov_box.row()
+            row = col2.row()
             row.prop(settings, "use_override_volumetrics")
             if settings.use_override_volumetrics:
                 row.prop(settings, "volume_biased", text="Biased")
                 row.prop(settings, "volume_step_rate", text="Step Rate")
+
+            # --- Advanced Overrides ---
+            ov_box.separator()
+            row = ov_box.row()
+            row.prop(settings, "show_advanced_overrides", icon="TRIA_DOWN" if settings.show_advanced_overrides else "TRIA_RIGHT", emboss=False, text="Advanced Overrides")
+
+            if settings.show_advanced_overrides:
+                adv_box = ov_box.box()
+                adv_split = adv_box.split()
+                adv_col1 = adv_split.column()
+                adv_col2 = adv_split.column()
+
+                # Left Advanced: Output & Format
+                row = adv_col1.row()
+                row.prop(settings, "use_override_output", text="Override Path")
+                if settings.use_override_output:
+                    row.prop(settings, "output_path", text="")
+
+                row = adv_col1.row()
+                row.prop(settings, "use_override_placeholders")
+                if settings.use_override_placeholders:
+                    row.prop(settings, "use_placeholders")
+
+                row = adv_col1.row()
+                row.prop(settings, "use_override_format")
+                if settings.use_override_format:
+                    row.prop(settings, "render_format", text="")
+
+                row = adv_col1.row()
+                row.prop(settings, "use_override_color_mode")
+                if settings.use_override_color_mode:
+                    row.prop(settings, "color_mode", text="")
+                    
+                row = adv_col1.row()
+                row.prop(settings, "use_override_persistent_data")
+                if settings.use_override_persistent_data:
+                    row.prop(settings, "persistent_data")
+
+                # Right Advanced: Engine, Device, Frames
+                row = adv_col2.row()
+                row.prop(settings, "use_override_engine")
+                if settings.use_override_engine:
+                    row.prop(settings, "engine_type", text="")
+
+                row = adv_col2.row()
+                row.prop(settings, "use_threads")
+                if settings.use_threads:
+                    row.prop(settings, "threads")
+
+                row = adv_col2.row()
+                row.prop(settings, "use_cycles_device")
+                if settings.use_cycles_device:
+                    row.prop(settings, "cycles_device", text="")
+
+                row = adv_col2.row()
+                row.prop(settings, "use_specific_frame", text="Render Single Frame")
+                if settings.use_specific_frame:
+                    row.prop(settings, "specific_frame")
+
+                row = adv_col2.row()
+                row.prop(settings, "use_frame_jump")
+                if settings.use_frame_jump:
+                    row.prop(settings, "frame_jump")
 
 
         # --- Job Queue ---

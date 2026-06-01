@@ -360,10 +360,10 @@ def _process_one_fbx_internal(fbx_path, source_rig, target_rig, context, props):
         if not source_rig.animation_data:
             source_rig.animation_data_create()
 
-        # Strip scale keys before assigning so Auto-Scale isn't overridden
+        # Strip scale keys before assigning so Auto-Scale or manual scale isn't overridden
         if getattr(props, 'do_strip_scale', True):
-            if getattr(props, 'do_auto_scale', False):
-                n_stripped = strip_scale_keyframes(imported_action)
+            n_stripped = strip_scale_keyframes(imported_action)
+            if n_stripped > 0:
                 log_print(f"[RetargetFBX]   Stripped {n_stripped} scale F-Curve(s) from action")
 
         # Disable NLA so direct action assignment isn't overridden
@@ -411,6 +411,13 @@ def _process_one_fbx_internal(fbx_path, source_rig, target_rig, context, props):
         log_print(f"[RetargetFBX]   do_assign is OFF — using existing source rig state")
 
     # ── STAGE 2.5: Auto Scale (Auto Rig Pro) ─────────────────────────────────
+    # We must explicitly tell ARP which rigs to use, otherwise it fails or bakes empty.
+    try:
+        context.scene.source_rig = source_rig.name
+        context.scene.target_rig = target_rig.name
+    except Exception as e:
+        log_print(f"[RetargetFBX]   Warning: Could not set ARP properties: {e}")
+
     if getattr(props, 'do_auto_scale', False):
         log_print("[RetargetFBX]   Running ARP Auto Scale...")
         try:
@@ -418,14 +425,6 @@ def _process_one_fbx_internal(fbx_path, source_rig, target_rig, context, props):
             if bpy.context.object and bpy.context.object.mode != 'OBJECT':
                 bpy.ops.object.mode_set(mode='OBJECT')
             
-            # ARP relies on its own scene properties to know what to scale.
-            # We must explicitly tell it which rigs to use, otherwise it fails or does nothing.
-            try:
-                context.scene.source_rig = source_rig.name
-                context.scene.target_rig = target_rig.name
-            except Exception as e:
-                log_print(f"[RetargetFBX]   Warning: Could not set ARP properties: {e}")
-
             # Select source rig (often required by operators)
             bpy.ops.object.select_all(action='DESELECT')
             source_rig.select_set(True)

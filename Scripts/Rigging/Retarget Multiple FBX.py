@@ -362,9 +362,9 @@ def _process_one_fbx_internal(fbx_path, source_rig, target_rig, context, props):
 
         # Strip scale keys before assigning so Auto-Scale isn't overridden
         if getattr(props, 'do_strip_scale', True):
-            n_scale_keys = strip_scale_keyframes(imported_action)
-            if n_scale_keys > 0:
-                log_print(f"[RetargetFBX]   Stripped {n_scale_keys} scale F-Curve(s) from action")
+            if getattr(props, 'do_auto_scale', False):
+                n_stripped = strip_scale_keyframes(imported_action)
+                log_print(f"[RetargetFBX]   Stripped {n_stripped} scale F-Curve(s) from action")
 
         # Disable NLA so direct action assignment isn't overridden
         src_anim = source_rig.animation_data

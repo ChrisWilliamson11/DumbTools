@@ -96,55 +96,6 @@ def load_global_config_handler(dummy):
 # Helper Functions
 # -------------------------------------------------------------------
 
-_LAST_SCENE_NAME = None
-_IS_SYNCING_ALL = False
-
-def sync_scene_state(prev_scene_name, current_scene_name):
-    """Synchronizes the UI state from the previous scene to the new scene to make settings file-wide."""
-    global _IS_SYNCING_ALL
-    if _IS_SYNCING_ALL: return
-    if _IS_LOADING_CONFIG: return
-    
-    if prev_scene_name not in bpy.data.scenes: return
-    if current_scene_name not in bpy.data.scenes: return
-    
-    prev_scene = bpy.data.scenes[prev_scene_name]
-    curr_scene = bpy.data.scenes[current_scene_name]
-    
-    _IS_SYNCING_ALL = True
-    try:
-        class DummyContext: pass
-        
-        ctx_prev = DummyContext()
-        ctx_prev.scene = prev_scene
-        state = capture_local_state(ctx_prev)
-        
-        ctx_curr = DummyContext()
-        ctx_curr.scene = curr_scene
-        apply_state_to_ui(ctx_curr, state)
-    except Exception as e:
-        print(f"BatchRender Sync Error: {e}")
-    finally:
-        _IS_SYNCING_ALL = False
-
-@persistent
-def _scene_change_depsgraph_handler(scene, depsgraph):
-    """Detects scene changes and triggers synchronization."""
-    global _LAST_SCENE_NAME
-    current_scene_name = scene.name
-    
-    if _LAST_SCENE_NAME and _LAST_SCENE_NAME != current_scene_name:
-        sync_scene_state(_LAST_SCENE_NAME, current_scene_name)
-        
-    _LAST_SCENE_NAME = current_scene_name
-
-@persistent
-def _clear_last_scene_handler(dummy):
-    """Resets tracking when a new file is loaded to prevent cross-file syncing."""
-    global _LAST_SCENE_NAME
-    _LAST_SCENE_NAME = None
-
-
 def get_batch_file_path(context):
     """Calculates the full absolute path to the batch file based on settings."""
     settings = context.scene.batch_render_settings
@@ -2966,21 +2917,24 @@ class BATCH_RENDER_OT_preview_queue(bpy.types.Operator):
                 
                 sequence_groups = {}
                 for f in all_files:
+                    if not f.lower().endswith(valid_exts):
+                        continue
+                        
+                    base = get_base_name(f)
+                    
                     if prefix:
-                        if not f.startswith(prefix):
+                        # Strict match: ignore other passes (e.g. 'Prefix_Depth_')
+                        if base != prefix:
                             continue
                     else:
                         # Heuristic: If no prefix, filter out passes from unrelated jobs
-                        base = get_base_name(f)
                         if base: # If it's not just '0001.png'
                             if blend_name.lower() not in base.lower() and job.scene_name.lower() not in base.lower():
                                 continue
                                 
-                    if f.lower().endswith(valid_exts):
-                        base = get_base_name(f)
-                        if base not in sequence_groups:
-                            sequence_groups[base] = []
-                        sequence_groups[base].append(f)
+                    if base not in sequence_groups:
+                        sequence_groups[base] = []
+                    sequence_groups[base].append(f)
                         
                 for base_name, grp_files in sequence_groups.items():
                     grp_files = sorted(grp_files, key=get_frame_num)
@@ -3457,10 +3411,6 @@ def register():
     bpy.types.Scene.batch_render_import_active_index = IntProperty()
 
     bpy.app.handlers.load_post.append(load_global_config_handler)
-    bpy.app.handlers.load_pre.append(_clear_last_scene_handler)
-    
-    if hasattr(bpy.app.handlers, 'depsgraph_update_post'):
-        bpy.app.handlers.depsgraph_update_post.append(_scene_change_depsgraph_handler)
 
     # Force load immediately for manual script execution
     apply_global_config()
@@ -3471,12 +3421,6 @@ def unregister():
 
     if load_global_config_handler in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(load_global_config_handler)
-    if _clear_last_scene_handler in bpy.app.handlers.load_pre:
-        bpy.app.handlers.load_pre.remove(_clear_last_scene_handler)
-    
-    if hasattr(bpy.app.handlers, 'depsgraph_update_post'):
-        if _scene_change_depsgraph_handler in bpy.app.handlers.depsgraph_update_post:
-            bpy.app.handlers.depsgraph_update_post.remove(_scene_change_depsgraph_handler)
 
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

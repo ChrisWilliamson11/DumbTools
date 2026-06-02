@@ -528,25 +528,14 @@ def process_one_fbx(fbx_path, orig_source_rig, orig_target_rig, context, props):
         # If we aren't baking, we operate directly on the original rig so the user can inspect it
         return _process_one_fbx_internal(fbx_path, orig_source_rig, orig_target_rig, context, props)
         
-    # Create isolated temp rigs
-    source_rig = duplicate_rig(orig_source_rig, "_temp_source")
+    # Create isolated temp target rig only (source stays original so client constraints don't break)
     target_rig = duplicate_rig(orig_target_rig, "_temp_target")
     
-    # Update constraints on temp_target to point to temp_source
-    for pbone in target_rig.pose.bones:
-        for c in pbone.constraints:
-            if hasattr(c, 'target') and c.target == orig_source_rig:
-                c.target = source_rig
-                
     try:
-        baked = _process_one_fbx_internal(fbx_path, source_rig, target_rig, context, props)
+        baked = _process_one_fbx_internal(fbx_path, orig_source_rig, target_rig, context, props)
         return baked
     finally:
-        # Guarantee cleanup of temp rigs regardless of success/failure
-        try:
-            bpy.data.objects.remove(source_rig, do_unlink=True)
-        except Exception:
-            pass
+        # Guarantee cleanup of temp target
         try:
             bpy.data.objects.remove(target_rig, do_unlink=True)
         except Exception:
@@ -651,6 +640,9 @@ class RETARGET_OT_multiple_fbx(Operator):
                 return {'CANCELLED'}
 
         baked_actions = []
+        
+        # Remember original source scale so we can prevent auto_scale compounding
+        original_source_scale = source_rig.scale.copy()
 
         # ── PRE-LOOP: optionally match source rig bone axes to FBX ───────────
         # Done once using the first FBX file as the reference.
@@ -679,6 +671,9 @@ class RETARGET_OT_multiple_fbx(Operator):
             fname = os.path.basename(fbx_path)
             log_print(f"\n[RetargetFBX] [{i + 1}/{total}] {fname}")
             wm.progress_update(i)
+            
+            # Restore source rig scale to prevent ARP auto_scale compounding across the batch
+            source_rig.scale = original_source_scale
 
             baked = process_one_fbx(fbx_path, source_rig, target_rig, context, props)
             if baked:

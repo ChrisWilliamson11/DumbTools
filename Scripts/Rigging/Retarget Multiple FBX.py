@@ -626,6 +626,16 @@ class RETARGET_OT_multiple_fbx(Operator):
         # ── PRE-LOOP: Validate ARP Bone Mappings ─────────────────────────────
         if props.do_bake and getattr(props, 'use_arp_bake', True):
             missing_bones = []
+            
+            # ARP stores mappings in a scene-level collection
+            if hasattr(context.scene, 'remap_target_nodes'):
+                for node in context.scene.remap_target_nodes:
+                    tgt = node.name
+                    src = getattr(node, 'source_name', "")
+                    if src and src != "None" and src not in source_rig.data.bones:
+                        missing_bones.append(f"{tgt}→'{src}'")
+                        
+            # Fallback: check custom properties just in case
             for pbone in target_rig.pose.bones:
                 for k in pbone.keys():
                     if "arp_bone" in k:
@@ -633,6 +643,7 @@ class RETARGET_OT_multiple_fbx(Operator):
                         if isinstance(v, str) and v and v != "None":
                             if v not in source_rig.data.bones:
                                 missing_bones.append(f"{pbone.name}→'{v}'")
+                                
             if missing_bones:
                 msg = f"ARP Mapping Error! Target bones mapped to missing source bones: {', '.join(missing_bones)}"
                 log_print(f"[RetargetFBX] ERROR: {msg}")

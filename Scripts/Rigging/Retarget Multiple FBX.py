@@ -2,7 +2,7 @@
 
 import bpy
 import os
-from bpy.props import StringProperty, PointerProperty, CollectionProperty
+from bpy.props import StringProperty, PointerProperty, CollectionProperty, BoolProperty
 from bpy.types import Operator, Panel, PropertyGroup
 from bpy.types import OperatorFileListElement
 from bpy_extras.io_utils import ImportHelper

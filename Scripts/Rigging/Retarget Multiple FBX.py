@@ -806,7 +806,87 @@ class RETARGET_OT_select_actions_to_append(Operator):
         with bpy.data.libraries.load(self.filepath, link=False) as (data_from, data_to):
             data_to.actions = [name for name in data_from.actions if name in selected_action_names]
 
-        appended_actions = data_to.actions
+        action_names = [a.name for a in data_to.actions if a]
+        if not action_names:
+            return {"CANCELLED"}
+            
+        action_names_str = ",".join(action_names)
+        
+        # Defer execution to allow the dialog to close visually
+        def run_later():
+            # Find a 3D View context to override
+            override = None
+            if bpy.app.version >= (3, 2, 0):
+                for window in bpy.context.window_manager.windows:
+                    for area in window.screen.areas:
+                        if area.type == 'VIEW_3D':
+                            for region in area.regions:
+                                if region.type == 'WINDOW':
+                                    override = {"window": window, "screen": window.screen, "area": area, "region": region}
+                                    break
+                            if override: break
+                    if override: break
+            
+            if override:
+                with bpy.context.temp_override(**override):
+                    bpy.ops.retarget.process_appended_actions(action_names=action_names_str, filepath=self.filepath)
+            else:
+                bpy.ops.retarget.process_appended_actions(action_names=action_names_str, filepath=self.filepath)
+            return None
+            
+        bpy.app.timers.register(run_later, first_interval=0.1)
+        return {"FINISHED"}
+
+    def invoke(self, context, event):
+        self.actions.clear()
+        try:
+            with bpy.data.libraries.load(self.filepath) as (data_from, data_to):
+                for action_name in data_from.actions:
+                    item = self.actions.add()
+                    item.name = action_name
+                    item.selected = False
+        except Exception as e:
+            self.report({"ERROR"}, f"Failed to read file: {e}")
+            return {"CANCELLED"}
+
+        if not self.actions:
+            self.report({"WARNING"}, "No actions found in the selected file")
+            return {"CANCELLED"}
+
+        return context.window_manager.invoke_props_dialog(self, width=450)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="Select Actions to Append & Retarget:")
+        layout.label(text=f"Found {len(self.actions)} action(s)")
+        layout.separator()
+        box = layout.box()
+        col = box.column(align=True)
+        for item in self.actions:
+            row = col.row()
+            row.prop(item, "selected", text="")
+            row.label(text=item.name)
+
+
+class RETARGET_OT_process_appended_actions(Operator):
+    """Hidden operator to process appended actions after the dialog closes"""
+    bl_idname = "retarget.process_appended_actions"
+    bl_label = "Process Appended Actions"
+    bl_options = {"REGISTER", "UNDO"}
+
+    action_names: StringProperty()
+    filepath: StringProperty()
+
+    def execute(self, context):
+        props = context.scene.retarget_fbx_props
+        source_rig = props.source_rig
+        target_rig = props.target_rig
+
+        if not source_rig or not target_rig:
+            return {'CANCELLED'}
+
+        names = self.action_names.split(",")
+        appended_actions = [bpy.data.actions.get(n) for n in names if bpy.data.actions.get(n)]
 
         total = len(appended_actions)
         log_print(f"\n[RetargetFBX] ── Starting batch: {total} appended action(s) ──")
@@ -839,7 +919,6 @@ class RETARGET_OT_select_actions_to_append(Operator):
         wm.progress_begin(0, total)
 
         for i, action in enumerate(appended_actions):
-            if not action: continue
             log_print(f"\n[RetargetFBX] [{i + 1}/{total}] Action: {action.name}")
             wm.progress_update(i)
             
@@ -872,7 +951,7 @@ class RETARGET_OT_select_actions_to_append(Operator):
         log_print(f"[RetargetFBX] Pushing {len(baked_actions)} actions to NLA...")
         push_to_nla(target_rig, baked_actions)
 
-        if props.do_save:
+        if props.do_save and self.filepath:
             blend_stem = os.path.splitext(os.path.basename(self.filepath))[0]
             output_folder = os.path.dirname(self.filepath)
             combined_path = os.path.join(output_folder, blend_stem + "_retarget.blend")
@@ -886,36 +965,6 @@ class RETARGET_OT_select_actions_to_append(Operator):
             self.report({'INFO'}, f"Done! Baked {len(baked_actions)} action(s). (Save skipped)")
             
         return {"FINISHED"}
-
-    def invoke(self, context, event):
-        self.actions.clear()
-        try:
-            with bpy.data.libraries.load(self.filepath) as (data_from, data_to):
-                for action_name in data_from.actions:
-                    item = self.actions.add()
-                    item.name = action_name
-                    item.selected = False
-        except Exception as e:
-            self.report({"ERROR"}, f"Failed to read file: {e}")
-            return {"CANCELLED"}
-
-        if not self.actions:
-            self.report({"WARNING"}, "No actions found in the selected file")
-            return {"CANCELLED"}
-
-        return context.window_manager.invoke_props_dialog(self, width=450)
-
-    def draw(self, context):
-        layout = self.layout
-        layout.label(text="Select Actions to Append & Retarget:")
-        layout.label(text=f"Found {len(self.actions)} action(s)")
-        layout.separator()
-        box = layout.box()
-        col = box.column(align=True)
-        for item in self.actions:
-            row = col.row()
-            row.prop(item, "selected", text="")
-            row.label(text=item.name)
 
 
 class RETARGET_OT_append_actions_and_retarget(Operator, ImportHelper):
@@ -1133,6 +1182,7 @@ _classes = (
     RetargetFBXProperties,
     RETARGET_OT_multiple_fbx,
     RETARGET_OT_select_actions_to_append,
+    RETARGET_OT_process_appended_actions,
     RETARGET_OT_append_actions_and_retarget,
     RETARGET_OT_pick_rigs,
     RETARGET_PT_panel,

@@ -5,6 +5,7 @@ import os
 from bpy.props import StringProperty, PointerProperty, CollectionProperty
 from bpy.types import Operator, Panel, PropertyGroup
 from bpy.types import OperatorFileListElement
+from bpy_extras.io_utils import ImportHelper
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -355,6 +356,15 @@ def _process_one_fbx_internal(fbx_path, source_rig, target_rig, context, props):
             log_print(f"[RetargetFBX] do_import is OFF but no action on source rig — skipping.")
             return None
 
+    return _process_one_action_internal(imported_action, base_name, source_rig, target_rig, context, props)
+
+
+def _process_one_action_internal(imported_action, base_name, source_rig, target_rig, context, props):
+    """
+    Core pipeline to assign an action to the source rig, scale, and bake to target.
+    """
+    scn = context.scene
+
     # ── STAGE 2: Assign to source rig ────────────────────────────────────────
     if props.do_assign:
         if not source_rig.animation_data:
@@ -536,6 +546,26 @@ def process_one_fbx(fbx_path, orig_source_rig, orig_target_rig, context, props):
         return baked
     finally:
         # Guarantee cleanup of temp target
+        try:
+            bpy.data.objects.remove(target_rig, do_unlink=True)
+        except Exception:
+            pass
+
+
+def process_one_appended_action(imported_action, orig_source_rig, orig_target_rig, context, props):
+    """
+    Wrapper for appended actions that isolates the bake by duplicating the target rig.
+    """
+    if not props.do_bake:
+        return _process_one_action_internal(imported_action, imported_action.name, orig_source_rig, orig_target_rig, context, props)
+        
+    # Create isolated temp target rig only
+    target_rig = duplicate_rig(orig_target_rig, "_temp_target")
+    
+    try:
+        baked = _process_one_action_internal(imported_action, imported_action.name, orig_source_rig, target_rig, context, props)
+        return baked
+    finally:
         try:
             bpy.data.objects.remove(target_rig, do_unlink=True)
         except Exception:
@@ -744,6 +774,170 @@ class RETARGET_OT_multiple_fbx(Operator):
         return {'FINISHED'}
 
 
+class RetargetActionItem(PropertyGroup):
+    name: StringProperty(name="Action Name", default="")
+    selected: BoolProperty(name="Select", default=False, description="Include this action")
+
+
+class RETARGET_OT_select_actions_to_append(Operator):
+    """Select which actions to append from the blend file and retarget"""
+    bl_idname = "retarget.select_actions_to_append"
+    bl_label = "Select Actions to Append & Retarget"
+    bl_options = {"REGISTER", "UNDO"}
+
+    filepath: StringProperty()
+    actions: CollectionProperty(type=RetargetActionItem)
+
+    def execute(self, context):
+        props = context.scene.retarget_fbx_props
+        source_rig = props.source_rig
+        target_rig = props.target_rig
+
+        if not source_rig or not target_rig:
+            self.report({'ERROR'}, "Set Source and Target rigs in the panel first.")
+            return {'CANCELLED'}
+
+        selected_action_names = [item.name for item in self.actions if item.selected]
+        if not selected_action_names:
+            self.report({"WARNING"}, "No actions selected")
+            return {"CANCELLED"}
+
+        # Append only the selected actions
+        with bpy.data.libraries.load(self.filepath, link=False) as (data_from, data_to):
+            data_to.actions = [name for name in data_from.actions if name in selected_action_names]
+
+        appended_actions = data_to.actions
+
+        total = len(appended_actions)
+        log_print(f"\n[RetargetFBX] ── Starting batch: {total} appended action(s) ──")
+
+        if props.do_bake and getattr(props, 'use_arp_bake', True):
+            missing_bones = []
+            if hasattr(context.scene, 'remap_target_nodes'):
+                for node in context.scene.remap_target_nodes:
+                    tgt = node.name
+                    src = getattr(node, 'source_name', "")
+                    if src and src != "None" and src not in source_rig.data.bones:
+                        missing_bones.append(f"{tgt}→'{src}'")
+            for pbone in target_rig.pose.bones:
+                for k in pbone.keys():
+                    if "arp_bone" in k:
+                        v = pbone[k]
+                        if isinstance(v, str) and v and v != "None":
+                            if v not in source_rig.data.bones:
+                                missing_bones.append(f"{pbone.name}→'{v}'")
+            if missing_bones:
+                msg = f"ARP Mapping Error! Target bones mapped to missing source bones: {', '.join(missing_bones)}"
+                log_print(f"[RetargetFBX] ERROR: {msg}")
+                self.report({'ERROR'}, msg)
+                return {'CANCELLED'}
+
+        baked_actions = []
+        original_source_scale = source_rig.scale.copy()
+
+        wm = context.window_manager
+        wm.progress_begin(0, total)
+
+        for i, action in enumerate(appended_actions):
+            if not action: continue
+            log_print(f"\n[RetargetFBX] [{i + 1}/{total}] Action: {action.name}")
+            wm.progress_update(i)
+            
+            source_rig.scale = original_source_scale
+
+            baked = process_one_appended_action(action, source_rig, target_rig, context, props)
+            if baked:
+                baked_actions.append(baked)
+
+        wm.progress_update(total)
+        wm.progress_end()
+        
+        if props.do_bake:
+            n_removed = remove_retarget_constraints(target_rig, source_rig)
+            if n_removed > 0:
+                log_print(f"[RetargetFBX] Removed {n_removed} retarget constraint(s) from original target rig for clean NLA playback.")
+
+        if not props.do_bake:
+            self.report({'INFO'}, f"Stage complete: appended & assigned {total} action(s).")
+            return {'FINISHED'}
+
+        if not baked_actions:
+            self.report({'ERROR'}, "No actions were successfully baked.")
+            return {'CANCELLED'}
+
+        if not props.do_nla_push:
+            self.report({'INFO'}, f"Stage complete: baked {len(baked_actions)} action(s).")
+            return {'FINISHED'}
+
+        log_print(f"[RetargetFBX] Pushing {len(baked_actions)} actions to NLA...")
+        push_to_nla(target_rig, baked_actions)
+
+        if props.do_save:
+            blend_stem = os.path.splitext(os.path.basename(self.filepath))[0]
+            output_folder = os.path.dirname(self.filepath)
+            combined_path = os.path.join(output_folder, blend_stem + "_retarget.blend")
+            try:
+                bpy.ops.wm.save_as_mainfile(filepath=combined_path, copy=True)
+                log_print(f"[RetargetFBX] Combined file saved → {combined_path}")
+            except Exception as e:
+                self.report({'WARNING'}, f"Could not save combined file: {e}")
+            self.report({'INFO'}, f"Done! Baked {len(baked_actions)} action(s). Combined: {combined_path}")
+        else:
+            self.report({'INFO'}, f"Done! Baked {len(baked_actions)} action(s). (Save skipped)")
+            
+        return {"FINISHED"}
+
+    def invoke(self, context, event):
+        self.actions.clear()
+        try:
+            with bpy.data.libraries.load(self.filepath) as (data_from, data_to):
+                for action_name in data_from.actions:
+                    item = self.actions.add()
+                    item.name = action_name
+                    item.selected = False
+        except Exception as e:
+            self.report({"ERROR"}, f"Failed to read file: {e}")
+            return {"CANCELLED"}
+
+        if not self.actions:
+            self.report({"WARNING"}, "No actions found in the selected file")
+            return {"CANCELLED"}
+
+        return context.window_manager.invoke_props_dialog(self, width=450)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="Select Actions to Append & Retarget:")
+        layout.label(text=f"Found {len(self.actions)} action(s)")
+        layout.separator()
+        box = layout.box()
+        col = box.column(align=True)
+        for item in self.actions:
+            row = col.row()
+            row.prop(item, "selected", text="")
+            row.label(text=item.name)
+
+
+class RETARGET_OT_append_actions_and_retarget(Operator, ImportHelper):
+    """Open file browser to select a blend file to append actions from"""
+    bl_idname = "retarget.append_actions_and_retarget"
+    bl_label = "Append Actions & Retarget"
+    bl_options = {"REGISTER", "UNDO"}
+
+    filter_glob: StringProperty(default="*.blend", options={"HIDDEN"})
+
+    @classmethod
+    def poll(cls, context):
+        p = context.scene.retarget_fbx_props
+        return bool(p.source_rig and p.target_rig)
+
+    def execute(self, context):
+        if not self.filepath:
+            self.report({"ERROR"}, "No file selected")
+            return {"CANCELLED"}
+        bpy.ops.retarget.select_actions_to_append("INVOKE_DEFAULT", filepath=self.filepath)
+        return {"FINISHED"}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Properties
@@ -887,6 +1081,8 @@ class RETARGET_PT_panel(Panel):
         col2.enabled = ready
         col2.operator("retarget.multiple_fbx", text="Select FBX Files & Retarget",
                       icon='IMPORT')
+        col2.operator("retarget.append_actions_and_retarget", text="Append Actions & Retarget",
+                      icon='APPEND_BLEND')
         if not ready:
             layout.label(text="Set both rigs above first.", icon='ERROR')
 
@@ -933,8 +1129,11 @@ Select source rig first, then Shift-click target rig (active object)."""
 # ─────────────────────────────────────────────────────────────────────────────
 
 _classes = (
+    RetargetActionItem,
     RetargetFBXProperties,
     RETARGET_OT_multiple_fbx,
+    RETARGET_OT_select_actions_to_append,
+    RETARGET_OT_append_actions_and_retarget,
     RETARGET_OT_pick_rigs,
     RETARGET_PT_panel,
 )

@@ -15,20 +15,17 @@ def unsubdivide_multires():
 
     for idx, obj in enumerate(selected_meshes):
         print(f"\n[{idx+1}/{total_meshes}] Processing '{obj.name}'...")
+        # Check if it already has a MULTIRES modifier
+        has_multires = any(m.type == 'MULTIRES' for m in obj.modifiers)
+        if has_multires:
+            print("  -> Skipped: Already has a MULTIRES modifier (resuming).")
+            continue
+
         bpy.context.view_layer.objects.active = obj
         
-        # Look for a multiresolution modifier
-        mod = None
-        for m in obj.modifiers:
-            if m.type == 'MULTIRES':
-                mod = m
-                break
-        
-        created_mod = False
-        if not mod:
-            # Add one if it doesn't exist
-            mod = obj.modifiers.new(name="Multires", type='MULTIRES')
-            created_mod = True
+        # Add the modifier
+        mod = obj.modifiers.new(name="Multires", type='MULTIRES')
+        created_mod = True
             
         unsubdivided_times = 0
         
@@ -64,6 +61,14 @@ def unsubdivide_multires():
             print(f"  -> Skipped (could not be unsubdivided).")
         else:
             print(f"  -> Finished: Unsubdivided {unsubdivided_times} times.")
+            
+        # Save after processing each object
+        if bpy.data.filepath:
+            try:
+                bpy.ops.wm.save_mainfile()
+                print("  -> Saved .blend file.")
+            except Exception as e:
+                print(f"  -> Failed to save file: {e}")
             
     # Restore the originally active object
     if original_active:

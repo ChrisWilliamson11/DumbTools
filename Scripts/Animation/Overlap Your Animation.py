@@ -80,15 +80,34 @@ class OffsetAnimationOperator(bpy.types.Operator):
         layout.prop(self, "selected_only")
 
     def execute(self, context):
-        # Include objects that have any animation data (Action and/or NLA)
-        objs = [o for o in context.selected_objects if getattr(o, "animation_data", None)]
-        # print(f"Number of animated objects: {len(objs)}")  # silenced
+        entities = []
+        if context.mode == 'POSE' and context.selected_pose_bones:
+            for bone in context.selected_pose_bones:
+                obj = bone.id_data
+                if getattr(obj, "animation_data", None):
+                    entities.append({'type': 'BONE', 'bone': bone, 'object': obj})
+        else:
+            for o in context.selected_objects:
+                if getattr(o, "animation_data", None):
+                    entities.append({'type': 'OBJECT', 'object': o})
 
-        if not objs:
-            self.report({'INFO'}, "No animated objects found to offset.")
+        if not entities:
+            self.report({'INFO'}, "No animated objects or bones found to offset.")
             return {'CANCELLED'}
 
-        def get_anim_range(obj, selected_only=False):
+        def fcurve_belongs_to_entity(fc, entity):
+            if entity['type'] == 'OBJECT':
+                return True
+            elif entity['type'] == 'BONE':
+                dp = getattr(fc, "data_path", "")
+                bone_name = entity['bone'].name
+                prefix1 = f'pose.bones["{bone_name}"]'
+                prefix2 = f"pose.bones['{bone_name}']"
+                return dp.startswith(prefix1) or dp.startswith(prefix2)
+            return False
+
+        def get_anim_range(entity, selected_only=False):
+            obj = entity['object']
             ad = getattr(obj, "animation_data", None)
             if not ad:
                 return None
@@ -107,15 +126,7 @@ class OffsetAnimationOperator(bpy.types.Operator):
                 nonlocal start, end, found
                 if not act:
                     return
-                if selected_only:
-                    for fcu in iter_fcurves(act):
-                        for kp in getattr(fcu, "keyframe_points", []) or []:
-                            if _key_selected(kp):
-                                found = True
-                                f = float(kp.co[0])
-                                start = min(start, f)
-                                end = max(end, f)
-                else:
+                if entity['type'] == 'OBJECT' and not selected_only:
                     try:
                         s = float(act.frame_range[0])
                         e = float(act.frame_range[1])
@@ -124,9 +135,22 @@ class OffsetAnimationOperator(bpy.types.Operator):
                         found = True
                     except Exception:
                         pass
+                else:
+                    for fcu in iter_fcurves(act):
+                        if not fcurve_belongs_to_entity(fcu, entity):
+                            continue
+                        for kp in getattr(fcu, "keyframe_points", []) or []:
+                            if selected_only and not _key_selected(kp):
+                                continue
+                            found = True
+                            f = float(kp.co[0])
+                            start = min(start, f)
+                            end = max(end, f)
 
             def _update_from_nla(ad):
                 nonlocal start, end, found
+                if entity['type'] == 'BONE':
+                    return
                 for tr in getattr(ad, "nla_tracks", []) or []:
                     for st in getattr(tr, "strips", []) or []:
                         fc_list = getattr(st, "fcurves", None)
@@ -152,10 +176,12 @@ class OffsetAnimationOperator(bpy.types.Operator):
                 return None
             return start, end
 
-        def shift_action_keys(act, delta, selected_only=False):
+        def shift_action_keys(entity, act, delta, selected_only=False):
             if not act:
                 return
             for fcu in iter_fcurves(act):
+                if not fcurve_belongs_to_entity(fcu, entity):
+                    continue
                 for k in fcu.keyframe_points:
                     if selected_only:
                         if not (
@@ -168,7 +194,10 @@ class OffsetAnimationOperator(bpy.types.Operator):
                     k.handle_left[0] += delta
                     k.handle_right[0] += delta
 
-        def shift_nla_influence_keys(obj, delta, selected_only=False):
+        def shift_nla_influence_keys(entity, delta, selected_only=False):
+            if entity['type'] == 'BONE':
+                return
+            obj = entity['object']
             ad = getattr(obj, "animation_data", None)
             if not ad:
                 return
@@ -198,39 +227,32 @@ class OffsetAnimationOperator(bpy.types.Operator):
 
         prev_end = 0.0
 
-        for i, o in enumerate(objs):
-            ad = getattr(o, "animation_data", None)
+        for i, entity in enumerate(entities):
+            obj = entity['object']
+            ad = getattr(obj, "animation_data", None)
             act = getattr(ad, "action", None) if ad else None
-            rng = get_anim_range(o, self.selected_only)
+            rng = get_anim_range(entity, self.selected_only)
             if rng is None:
-                # If selected_only, skip objects with no selected keys
-                # If not selected_only but no range found, skip as well
                 continue
             start, end = rng
 
-            # Apply noise for each object
+            # Apply noise for each object/bone
             current_noise = random.uniform(-self.noise, self.noise)
 
-            # If 'Remove Offset' is checked, align keys to frame 0 (uses selected range if enabled)
+            # If 'Remove Offset' is checked, align keys to frame 0
             if self.reset:
                 delta = -start
             elif self.use_overlap:
                 if i == 0:
-                    # First object is only affected by noise
                     delta = current_noise
                 else:
-                    # Start current object's anim 'overlap' frames before previous end
                     delta = prev_end - start - self.offset + current_noise
-                # Update the end frame for the next iteration (remove noise so it doesn't accumulate)
                 prev_end = end + delta - current_noise
             else:
-                # Original offset logic with noise added for each object
                 delta = self.offset * i + current_noise
 
-            # Shift Action keys (if any)
-            shift_action_keys(act, delta, self.selected_only)
-            # Also shift NLA Influence keys (if any)
-            shift_nla_influence_keys(o, delta, self.selected_only)
+            shift_action_keys(entity, act, delta, self.selected_only)
+            shift_nla_influence_keys(entity, delta, self.selected_only)
 
         return {'FINISHED'}
 

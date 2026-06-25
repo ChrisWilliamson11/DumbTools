@@ -88,7 +88,8 @@ PATCHES = [
         "description": "Fix INSERTKEY_XYZ_TO_RGB error in get_keying_flags",
         "find_regex": r"if prefs\.edit\.use_insertkey_xyz_to_rgb:\s*flags\.add\('INSERTKEY_XYZ_TO_RGB'\)",
         "replace_str": r"if hasattr(prefs.edit, 'use_insertkey_xyz_to_rgb') and bpy.app.version < (4, 1):\n        flags.add('INSERTKEY_XYZ_TO_RGB')",
-        "check_already_applied": r"hasattr\(prefs\.edit, 'use_insertkey_xyz_to_rgb'\) and bpy\.app\.version < \(4, 1\)"
+        "check_already_applied": r"hasattr\(prefs\.edit, 'use_insertkey_xyz_to_rgb'\) and bpy\.app\.version < \(4, 1\)",
+        "optional": True
     }
 ]
 
@@ -108,16 +109,17 @@ def apply_patches(text_block):
     results = []
 
     for patch in PATCHES:
+        is_optional = patch.get("optional", False)
         if re.search(patch["check_already_applied"], content):
-            results.append((patch["description"], "already_applied"))
+            results.append((patch["description"], "already_applied", is_optional))
             continue
             
         new_content, count = re.subn(patch["find_regex"], patch["replace_str"], content)
         if count > 0:
             content = new_content
-            results.append((patch["description"], True))
+            results.append((patch["description"], True, is_optional))
         else:
-            results.append((patch["description"], False))
+            results.append((patch["description"], False, is_optional))
 
     text_block.clear()
     text_block.write(content)
@@ -142,17 +144,25 @@ def main():
     for text_block in text_blocks:
         print(f"\n[Fix Rigify UI] Processing text block: '{text_block.name}'")
         
+        # If the text block is linked from another file, we must make it local to edit it
+        if getattr(text_block, "library", None) is not None:
+            print("  Making linked text block local so it can be edited...")
+            text_block.make_local()
+        
         results = apply_patches(text_block)
         
         block_ok = True
-        for desc, success in results:
+        for desc, success, is_optional in results:
             if success is True:
                 print(f"  OK: {desc}")
             elif success == "already_applied":
                 print(f"  SKIP: {desc} (already applied)")
             else:
-                print(f"  FAIL: {desc}")
-                block_ok = False
+                if is_optional:
+                    print(f"  SKIP: {desc} (pattern missing, but optional)")
+                else:
+                    print(f"  FAIL: {desc}")
+                    block_ok = False
                 
         if block_ok:
             patched_count += 1

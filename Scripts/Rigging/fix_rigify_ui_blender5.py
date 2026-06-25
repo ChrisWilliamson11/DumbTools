@@ -166,6 +166,11 @@ def main():
                 
         if block_ok:
             patched_count += 1
+            # Run the script so changes take effect immediately
+            override = bpy.context.copy()
+            override['edit_text'] = text_block
+            with bpy.context.temp_override(**override):
+                bpy.ops.text.run_script()
         else:
             failed_count += 1
 

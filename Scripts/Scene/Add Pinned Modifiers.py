@@ -26,16 +26,46 @@ class DUMBTOOLS_OT_add_pinned_modifiers(bpy.types.Operator):
                 
             context.view_layer.objects.active = obj
             
-            # 1. Add Smooth by Angle
+            # 1. Add Weighted Normal
+            try:
+                mod_wn = obj.modifiers.new(name="Weighted Normal", type='WEIGHTED_NORMAL')
+                mod_wn.keep_sharp = True
+                
+                # Pin it (Blender 4.2+)
+                if hasattr(mod_wn, "use_pin_to_last"):
+                    mod_wn.use_pin_to_last = True
+            except Exception as e:
+                print(f"Failed to add Weighted Normal to {obj.name}: {e}")
+                self.report({'WARNING'}, f"Failed to add Weighted Normal to {obj.name}")
+
+            # 2. Add Smooth by Angle
             try:
                 mod_smooth = None
                 if not smooth_node_group:
-                    # Running this inside an operator context allows Blender to properly resolve the asset path
-                    bpy.ops.object.modifier_add_node_group(
-                        asset_library_type='ESSENTIALS',
-                        asset_library_identifier="",
-                        relative_asset_identifier="geometry_nodes\\smooth_by_angle.blend\\NodeTree\\Smooth by Angle"
-                    )
+                    # In different Blender versions, the internal path for Essentials changed.
+                    known_paths = [
+                        "nodes\\geometry_nodes_essentials.blend\\NodeTree\\Smooth by Angle", # Blender 4.3, 5.0+
+                        "geometry_nodes\\smooth_by_angle.blend\\NodeTree\\Smooth by Angle"   # Blender 4.1, 4.2
+                    ]
+                    
+                    success = False
+                    for path in known_paths:
+                        try:
+                            bpy.ops.object.modifier_add_node_group(
+                                asset_library_type='ESSENTIALS',
+                                asset_library_identifier="",
+                                relative_asset_identifier=path
+                            )
+                            success = True
+                            break
+                        except Exception:
+                            pass
+                            
+                    if not success:
+                        self.report({'WARNING'}, f"Could not find 'Smooth by Angle' asset for {obj.name}")
+                        print(f"Failed to find Smooth by Angle in known asset paths.")
+                        continue
+                        
                     if obj.modifiers:
                         mod_smooth = obj.modifiers[-1]
                         if mod_smooth.type == 'NODES':
@@ -51,18 +81,6 @@ class DUMBTOOLS_OT_add_pinned_modifiers(bpy.types.Operator):
             except Exception as e:
                 print(f"Failed to add Smooth by Angle to {obj.name}: {e}")
                 self.report({'WARNING'}, f"Failed to add Smooth by Angle to {obj.name}: {e}")
-                
-            # 2. Add Weighted Normal
-            try:
-                mod_wn = obj.modifiers.new(name="Weighted Normal", type='WEIGHTED_NORMAL')
-                mod_wn.keep_sharp = True
-                
-                # Pin it (Blender 4.2+)
-                if hasattr(mod_wn, "use_pin_to_last"):
-                    mod_wn.use_pin_to_last = True
-            except Exception as e:
-                print(f"Failed to add Weighted Normal to {obj.name}: {e}")
-                self.report({'WARNING'}, f"Failed to add Weighted Normal to {obj.name}")
 
         # Restore active object
         if original_active and original_active.name in context.view_layer.objects:

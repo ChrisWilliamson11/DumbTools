@@ -48,21 +48,21 @@ def get_selected_entities_fcurves(context):
                         prefix1 = f'pose.bones["{bone_name}"]'
                         prefix2 = f"pose.bones['{bone_name}']"
                         if dp.startswith(prefix1) or dp.startswith(prefix2):
-                            fcurves.append(fc)
+                            fcurves.append((obj, fc))
                             break
     else:
         for obj in context.selected_objects:
             if obj.animation_data and obj.animation_data.action:
                 act = obj.animation_data.action
                 for fc in iter_fcurves(act):
-                    fcurves.append(fc)
+                    fcurves.append((obj, fc))
                     
     return fcurves
 
 class ANIM_OT_add_up_keys(bpy.types.Operator):
     bl_idname = "animation.add_up_keys"
     bl_label = "Add Up Keys"
-    bl_description = "Add a halfway position key between selected keys, raising Z by 0.5"
+    bl_description = "Add a halfway position key between selected keys, raising Z by 0.5 (ignores holds)"
     bl_options = {'REGISTER', 'UNDO'}
 
     z_offset: bpy.props.FloatProperty(
@@ -87,48 +87,63 @@ class ANIM_OT_add_up_keys(bpy.types.Operator):
             return {'CANCELLED'}
             
         keys_added = 0
+        from collections import defaultdict
+        import math
         
-        # We only want location fcurves
-        for fc in fcurves:
+        grouped_fcurves = defaultdict(dict)
+        
+        for obj, fc in fcurves:
             dp = getattr(fc, "data_path", "")
             if not dp.endswith("location"):
                 continue
-                
-            # Find selected keys
-            selected_keys = []
-            for k in fc.keyframe_points:
-                if getattr(k, "select_control_point", getattr(k, "select", False)):
-                    selected_keys.append(k)
-                    
-            if len(selected_keys) < 2:
+            grouped_fcurves[(obj, dp)][fc.array_index] = fc
+            
+        for (obj, dp), fc_dict in grouped_fcurves.items():
+            selected_frames = set()
+            for fc in fc_dict.values():
+                for k in fc.keyframe_points:
+                    if getattr(k, "select_control_point", getattr(k, "select", False)):
+                        selected_frames.add(k.co[0])
+                        
+            if len(selected_frames) < 2:
                 continue
                 
-            # Sort by frame just in case
-            selected_keys.sort(key=lambda k: k.co[0])
+            sorted_frames = sorted(list(selected_frames))
             
-            # Find midpoints to insert
             insertions = []
-            for i in range(len(selected_keys) - 1):
-                k1 = selected_keys[i]
-                k2 = selected_keys[i + 1]
-                mid_frame = (k1.co[0] + k2.co[0]) / 2.0
-                mid_val = fc.evaluate(mid_frame)
+            for i in range(len(sorted_frames) - 1):
+                f1 = sorted_frames[i]
+                f2 = sorted_frames[i + 1]
                 
-                if fc.array_index == 2: # Z axis
-                    mid_val += self.z_offset
+                pos1 = [0.0, 0.0, 0.0]
+                pos2 = [0.0, 0.0, 0.0]
+                for idx in (0, 1, 2):
+                    if idx in fc_dict:
+                        pos1[idx] = fc_dict[idx].evaluate(f1)
+                        pos2[idx] = fc_dict[idx].evaluate(f2)
+                        
+                dist = math.sqrt(sum((a - b)**2 for a, b in zip(pos1, pos2)))
+                if dist < 0.0001:
+                    continue # It's a hold, skip
                     
-                insertions.append((mid_frame, mid_val))
+                mid_frame = (f1 + f2) / 2.0
                 
-            for frame, val in insertions:
+                for idx, fc in fc_dict.items():
+                    mid_val = fc.evaluate(mid_frame)
+                    if idx == 2: # Z axis
+                        mid_val += self.z_offset
+                    insertions.append((fc, mid_frame, mid_val))
+                    
+            for fc, frame, val in insertions:
                 new_k = fc.keyframe_points.insert(frame, val, options={'FAST'})
                 new_k.select_control_point = True
                 keys_added += 1
                 
-        for fc in fcurves:
+        for obj, fc in fcurves:
             fc.update()
             
         if keys_added == 0:
-            self.report({'INFO'}, "No keys added. Make sure you have multiple selected location keys.")
+            self.report({'INFO'}, "No keys added. (Holds are ignored)")
         else:
             self.report({'INFO'}, f"Added {keys_added} halfway keys.")
             

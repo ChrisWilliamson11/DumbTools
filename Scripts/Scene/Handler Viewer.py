@@ -2,7 +2,7 @@
 
 import bpy
 from bpy.types import Panel, Operator, PropertyGroup
-from bpy.props import StringProperty, IntProperty, BoolProperty, CollectionProperty
+from bpy.props import StringProperty, IntProperty, BoolProperty
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -58,6 +58,11 @@ HANDLER_CATEGORIES = [
     ]),
 ]
 
+# Module-level state for category expand/collapse.
+# Using a plain dict avoids writing to Scene data inside draw(), which Blender
+# forbids (the cause of the "Writing to ID classes in this context" error).
+_category_expanded = {cat_label: True for cat_label, _ in HANDLER_CATEGORIES}
+
 
 def _get_handler_list(handler_attr):
     """Safely get a handler list by attribute name. Returns None if it doesn't exist."""
@@ -77,32 +82,15 @@ def _is_persistent(handler_func):
 
 
 # ---------------------------------------------------------------------------
-# Properties – stored per-scene so each scene can have its own expand state
+# Properties – only the persistent-filter toggle needs to live on the Scene
 # ---------------------------------------------------------------------------
 
-class HandlerViewerCategoryState(PropertyGroup):
-    """Tracks the expanded/collapsed state for one handler category."""
-    name: StringProperty()
-    expanded: BoolProperty(default=True)
-
-
 class HandlerViewerProps(PropertyGroup):
-    category_states: CollectionProperty(type=HandlerViewerCategoryState)
     show_persistent_only: BoolProperty(
         name="Persistent Only",
         description="Show only handlers marked @persistent",
         default=False,
     )
-
-
-def _ensure_category_states(props):
-    """Make sure every category has a state entry."""
-    existing = {item.name for item in props.category_states}
-    for cat_label, _ in HANDLER_CATEGORIES:
-        if cat_label not in existing:
-            item = props.category_states.add()
-            item.name = cat_label
-            item.expanded = True
 
 
 # ---------------------------------------------------------------------------
@@ -118,12 +106,7 @@ class HANDLERVIEWER_OT_toggle_category(Operator):
     category: StringProperty()
 
     def execute(self, context):
-        props = context.scene.handler_viewer_props
-        _ensure_category_states(props)
-        for item in props.category_states:
-            if item.name == self.category:
-                item.expanded = not item.expanded
-                break
+        _category_expanded[self.category] = not _category_expanded.get(self.category, True)
         return {'FINISHED'}
 
 
@@ -176,10 +159,8 @@ class HANDLERVIEWER_OT_expand_all(Operator):
     bl_options = {'INTERNAL'}
 
     def execute(self, context):
-        props = context.scene.handler_viewer_props
-        _ensure_category_states(props)
-        for item in props.category_states:
-            item.expanded = True
+        for key in _category_expanded:
+            _category_expanded[key] = True
         return {'FINISHED'}
 
 
@@ -190,10 +171,8 @@ class HANDLERVIEWER_OT_collapse_all(Operator):
     bl_options = {'INTERNAL'}
 
     def execute(self, context):
-        props = context.scene.handler_viewer_props
-        _ensure_category_states(props)
-        for item in props.category_states:
-            item.expanded = False
+        for key in _category_expanded:
+            _category_expanded[key] = False
         return {'FINISHED'}
 
 
@@ -213,7 +192,6 @@ class VIEW3D_PT_handler_viewer(Panel):
     def draw(self, context):
         layout = self.layout
         props = context.scene.handler_viewer_props
-        _ensure_category_states(props)
 
         # Toolbar row
         toolbar = layout.row(align=True)
@@ -226,7 +204,6 @@ class VIEW3D_PT_handler_viewer(Panel):
         layout.separator(factor=0.5)
 
         total_handlers = 0
-        total_shown = 0
 
         for cat_label, handler_entries in HANDLER_CATEGORIES:
             # Gather handlers for this category
@@ -245,12 +222,8 @@ class VIEW3D_PT_handler_viewer(Panel):
             if cat_count == 0:
                 continue  # Skip empty categories entirely
 
-            # Find the expand state
-            expanded = True
-            for item in props.category_states:
-                if item.name == cat_label:
-                    expanded = item.expanded
-                    break
+            # Read expand state from module-level dict (safe in draw)
+            expanded = _category_expanded.get(cat_label, True)
 
             # Category header
             header = layout.row(align=True)
@@ -283,8 +256,6 @@ class VIEW3D_PT_handler_viewer(Panel):
 
                     if props.show_persistent_only and not is_persistent:
                         continue
-
-                    total_shown += 1
 
                     row = cat_box.row(align=True)
                     row.alignment = 'EXPAND'
@@ -324,7 +295,6 @@ class VIEW3D_PT_handler_viewer(Panel):
 # ---------------------------------------------------------------------------
 
 classes = [
-    HandlerViewerCategoryState,
     HandlerViewerProps,
     HANDLERVIEWER_OT_toggle_category,
     HANDLERVIEWER_OT_remove_handler,

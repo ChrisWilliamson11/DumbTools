@@ -22,7 +22,7 @@ def kill_blender_processes():
 def run_blender_script():
     """Run Blender in headless mode with our script"""
     blender_path = r"C:\Program Files (x86)\Steam\steamapps\common\Blender\blender.exe"
-    script_path = r"J:\DumbTools\DumbTools\Texturing\CreateMegascansLibrary.py"
+    script_path = r"C:\Path\To\Your\DumbTools\Texturing\CreateMegascansLibrary.py"
     
     # Command to run Blender in background mode with our script
     cmd = [

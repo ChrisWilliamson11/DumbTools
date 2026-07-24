@@ -3,7 +3,7 @@ import os
 from typing import List, Optional, Tuple
 
 # Root folder to scan (update as needed)
-ROOT_FOLDER = r"H:\000_Projects\Goliath\00_Assets\Game"
+ROOT_FOLDER = r"C:\Path\To\Your\Assets"
 
 # Files that trigger special naming behavior
 # Progress log settings

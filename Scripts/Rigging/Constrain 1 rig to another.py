@@ -2,12 +2,6 @@
 import bpy
 
 def copy_transform_constraints(source_armature, target_armature):
-    # Ensure both armatures have the same bone hierarchy
-    if len(source_armature.pose.bones) != len(target_armature.pose.bones):
-        print("Armatures do not have the same number of bones")
-        return
-    
-    # Iterate through each bone in the source armature
     for bone in source_armature.pose.bones:
         # Find the corresponding bone in the target armature
         if bone.name in target_armature.pose.bones:

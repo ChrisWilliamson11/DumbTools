@@ -35,9 +35,9 @@ def copy_transform_constraints_by_position(source_armature, target_armature, mar
             constraint.target = target_armature
             constraint.subtarget = best_match.name
             
-            # Set the space for both the target and owner to local space
-            constraint.target_space = 'LOCAL'
-            constraint.owner_space = 'LOCAL'
+            # Set the space for both the target and owner to world space
+            constraint.target_space = 'WORLD'
+            constraint.owner_space = 'WORLD'
             print(f"Constrained '{bone.name}' to '{best_match.name}' (error: {best_dist:.4f}m)")
         else:
             print(f"No positional match found for '{bone.name}'")

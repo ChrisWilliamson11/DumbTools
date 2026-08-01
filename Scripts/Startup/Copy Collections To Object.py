@@ -78,31 +78,60 @@ def get_outliner_collections(context):
     with context.temp_override(area=outliner, region=window_region):
         return [item for item in context.selected_ids if isinstance(item, bpy.types.Collection)]
 
-def add_geometry_input_modifier(context, obj, view3d_area, max_retries=3):
-    """Add one Geometry Input modifier, retrying up to max_retries times if the asset isn't ready."""
-    for attempt in range(max_retries):
-        mod_count_before = len(obj.modifiers)
-        try:
-            with context.temp_override(area=view3d_area, active_object=obj, object=obj, selected_objects=[obj]):
-                bpy.ops.object.modifier_add_node_group(
-                    asset_library_type='ESSENTIALS',
-                    asset_library_identifier="",
-                    relative_asset_identifier="nodes\\geometry_nodes_essentials.blend\\NodeTree\\Geometry Input"
-                )
-        except Exception as e:
-            print(f"  [!] modifier_add_node_group exception (attempt {attempt+1}): {e}")
-        if len(obj.modifiers) > mod_count_before:
-            mod = obj.modifiers[-1]
-            # Force depsgraph evaluation so sockets are fully initialised
-            bpy.context.view_layer.update()
-            return mod
-        print(f"  [!] Modifier not added (attempt {attempt+1}/{max_retries}) — asset may still be loading.")
-    return None
+def _ensure_geometry_input_node_group():
+    """Return the 'Geometry Input' node group, appending it from essentials if needed."""
+    ng = bpy.data.node_groups.get("Geometry Input")
+    if ng is not None:
+        return ng
+
+    import os
+    # Build path to the essentials .blend bundled with the Blender installation
+    blend_dir = os.path.dirname(bpy.app.binary_path)
+    ver = f"{bpy.app.version[0]}.{bpy.app.version[1]}"
+    essentials_path = os.path.join(
+        blend_dir, ver, "datafiles", "assets", "nodes",
+        "geometry_nodes_essentials.blend",
+    )
+    if not os.path.isfile(essentials_path):
+        print(f"  [!] Essentials file not found: {essentials_path}")
+        return None
+
+    with bpy.data.libraries.load(essentials_path, link=False) as (data_from, data_to):
+        if "Geometry Input" in data_from.node_groups:
+            data_to.node_groups = ["Geometry Input"]
+        else:
+            print(f"  [!] 'Geometry Input' not found in essentials. Available: {data_from.node_groups}")
+            return None
+
+    ng = bpy.data.node_groups.get("Geometry Input")
+    if ng:
+        print("  → Appended 'Geometry Input' node group from essentials.")
+    return ng
+
+def add_geometry_input_modifier(context, obj, view3d_area=None, max_retries=3):
+    """Add one Geometry Input modifier by directly appending the node group.
+
+    *view3d_area* is accepted for backwards compatibility but is no longer used.
+    """
+    ng = _ensure_geometry_input_node_group()
+    if ng is None:
+        print("  [!] Could not obtain 'Geometry Input' node group.")
+        return None
+
+    mod = obj.modifiers.new(name="Geometry Input", type='NODES')
+    mod.node_group = ng
+    # Force depsgraph evaluation so sockets are fully initialised
+    bpy.context.view_layer.update()
+    return mod
 
 def apply_socket_settings(mod, input_type_int, reference, relative_space, as_instance, replace_original):
-    # Socket_6 (Input Type) is a Menu socket — cannot be set via ID properties
-    # in Blender 5.x.  The modifier auto-detects mode from whichever reference
-    # socket is populated.
+    """Set the Geometry Input modifier's socket values.
+
+    Socket identifiers (Socket_1 … Socket_5) are the stable identifiers
+    from the essentials node group interface.  Socket_6 (Input Type) is a
+    Menu socket and cannot be set via ID properties; the modifier
+    auto-detects mode from whichever reference socket is populated.
+    """
     if input_type_int == 1:
         mod["Socket_3"] = reference      # Collection
     else:

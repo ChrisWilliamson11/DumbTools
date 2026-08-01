@@ -92,19 +92,24 @@ def add_geometry_input_modifier(context, obj, view3d_area, max_retries=3):
         except Exception as e:
             print(f"  [!] modifier_add_node_group exception (attempt {attempt+1}): {e}")
         if len(obj.modifiers) > mod_count_before:
-            return obj.modifiers[-1]
+            mod = obj.modifiers[-1]
+            # Force depsgraph evaluation so sockets are fully initialised
+            bpy.context.view_layer.update()
+            return mod
         print(f"  [!] Modifier not added (attempt {attempt+1}/{max_retries}) — asset may still be loading.")
     return None
 
 def apply_socket_settings(mod, input_type_int, reference, relative_space, as_instance, replace_original):
-    mod["Socket_6"] = input_type_int
+    # Socket_6 (Input Type) is a Menu socket — cannot be set via ID properties
+    # in Blender 5.x.  The modifier auto-detects mode from whichever reference
+    # socket is populated.
     if input_type_int == 1:
-        mod["Socket_3"] = reference
+        mod["Socket_3"] = reference      # Collection
     else:
-        mod["Socket_2"] = reference  # Socket_2 assumed for object — report if wrong
-    mod["Socket_4"] = relative_space
-    mod["Socket_5"] = as_instance
-    mod["Socket_1"] = replace_original
+        mod["Socket_2"] = reference      # Object
+    mod["Socket_4"] = relative_space     # Bool — Relative Space
+    mod["Socket_5"] = as_instance        # Bool — As Instance
+    mod["Socket_1"] = replace_original   # Bool — Replace Original
 
 
 # ---------------------------------------------------------------------------
@@ -128,11 +133,23 @@ def collect_materials_from_objects(objects):
                 materials.add(slot.material)
     return materials
 
+def _iter_all_nodes(node_tree, visited=None):
+    """Yield (node, node_tree) for every node, recursing into groups."""
+    if visited is None:
+        visited = set()
+    if node_tree is None or id(node_tree) in visited:
+        return
+    visited.add(id(node_tree))
+    for node in node_tree.nodes:
+        yield node, node_tree
+        if node.type == 'GROUP' and node.node_tree:
+            yield from _iter_all_nodes(node.node_tree, visited)
+
 def material_has_emission(mat):
     try:
         if not mat.use_nodes or not mat.node_tree:
             return False
-        for node in mat.node_tree.nodes:
+        for node, _nt in _iter_all_nodes(mat.node_tree):
             if node.type == 'BSDF_PRINCIPLED':
                 s = node.inputs.get('Emission Strength')
                 if s and (s.is_linked or s.default_value > 0.0):
@@ -146,6 +163,38 @@ def material_has_emission(mat):
         print(f"  [!] Error checking emission on '{getattr(mat, 'name', '?')}': {e}")
         return False
 
+def _disable_emission_recursive(node_tree, visited=None):
+    """Zero out emission in this tree and all nested groups (copies shared groups)."""
+    if visited is None:
+        visited = set()
+    if node_tree is None or id(node_tree) in visited:
+        return
+    visited.add(id(node_tree))
+    links = node_tree.links
+    for node in node_tree.nodes:
+        try:
+            if node.type == 'BSDF_PRINCIPLED':
+                for sname in ('Emission Strength', 'Emission Color'):
+                    sock = node.inputs.get(sname)
+                    if sock:
+                        for lnk in [l for l in links if l.to_socket == sock]:
+                            links.remove(lnk)
+                s = node.inputs.get('Emission Strength')
+                if s:
+                    s.default_value = 0.0
+            elif node.type == 'EMISSION':
+                s = node.inputs.get('Strength')
+                if s:
+                    for lnk in [l for l in links if l.to_socket == s]:
+                        links.remove(lnk)
+                    s.default_value = 0.0
+            elif node.type == 'GROUP' and node.node_tree:
+                # Copy-on-write: duplicate the group so originals are untouched
+                node.node_tree = node.node_tree.copy()
+                _disable_emission_recursive(node.node_tree, visited)
+        except Exception as node_err:
+            print(f"  [!] Skipping node '{node.name}': {node_err}")
+
 def get_or_create_no_emit_material(mat):
     try:
         no_emit_name = mat.name + ".no_emit"
@@ -154,27 +203,7 @@ def get_or_create_no_emit_material(mat):
             return existing
         no_emit = mat.copy()
         no_emit.name = no_emit_name
-        if no_emit.node_tree:
-            links = no_emit.node_tree.links
-            for node in no_emit.node_tree.nodes:
-                try:
-                    if node.type == 'BSDF_PRINCIPLED':
-                        for sname in ('Emission Strength', 'Emission Color'):
-                            sock = node.inputs.get(sname)
-                            if sock:
-                                for lnk in [l for l in links if l.to_socket == sock]:
-                                    links.remove(lnk)
-                        s = node.inputs.get('Emission Strength')
-                        if s:
-                            s.default_value = 0.0
-                    elif node.type == 'EMISSION':
-                        s = node.inputs.get('Strength')
-                        if s:
-                            for lnk in [l for l in links if l.to_socket == s]:
-                                links.remove(lnk)
-                            s.default_value = 0.0
-                except Exception as node_err:
-                    print(f"  [!] Skipping node '{node.name}' in '{mat.name}': {node_err}")
+        _disable_emission_recursive(no_emit.node_tree)
         print(f"  → Created no-emit material: '{no_emit_name}'")
         return no_emit
     except Exception as e:

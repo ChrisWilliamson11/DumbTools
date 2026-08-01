@@ -127,18 +127,28 @@ def add_geometry_input_modifier(context, obj, view3d_area=None, max_retries=3):
 def apply_socket_settings(mod, input_type_int, reference, relative_space, as_instance, replace_original):
     """Set the Geometry Input modifier's socket values.
 
-    Socket identifiers (Socket_1 … Socket_5) are the stable identifiers
-    from the essentials node group interface.  Socket_6 (Input Type) is a
-    Menu socket and cannot be set via ID properties; the modifier
-    auto-detects mode from whichever reference socket is populated.
+    Blender 5.2+ uses ``mod.properties.inputs["id"].value`` (RNA properties).
+    Older versions used ``mod["id"] = value`` (ID / custom properties).
+    Socket_6 (Input Type) is a Menu socket and is left at its default;
+    the modifier auto-detects mode from whichever reference socket is populated.
     """
+    def _set(identifier, value):
+        # Blender 5.2+ RNA-based property API
+        if hasattr(mod, "properties") and hasattr(mod.properties, "inputs"):
+            inp = mod.properties.inputs.get(identifier)
+            if inp is not None:
+                inp.value = value
+                return
+        # Fallback for older Blender versions (< 5.2)
+        mod[identifier] = value
+
     if input_type_int == 1:
-        mod["Socket_3"] = reference      # Collection
+        _set("Socket_3", reference)      # Collection
     else:
-        mod["Socket_2"] = reference      # Object
-    mod["Socket_4"] = relative_space     # Bool — Relative Space
-    mod["Socket_5"] = as_instance        # Bool — As Instance
-    mod["Socket_1"] = replace_original   # Bool — Replace Original
+        _set("Socket_2", reference)      # Object
+    _set("Socket_4", relative_space)     # Bool — Relative Space
+    _set("Socket_5", as_instance)        # Bool — As Instance
+    _set("Socket_1", replace_original)   # Bool — Replace Original
 
 
 # ---------------------------------------------------------------------------

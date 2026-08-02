@@ -127,19 +127,19 @@ def add_geometry_input_modifier(context, obj, view3d_area=None, max_retries=3):
 def apply_socket_settings(mod, input_type_int, reference, relative_space, as_instance, replace_original):
     """Set the Geometry Input modifier's socket values.
 
-    Blender 5.2+ uses ``mod.properties.inputs["id"].value`` (RNA properties).
-    Older versions used ``mod["id"] = value`` (ID / custom properties).
+    Blender 5.0+ uses ``mod.properties.inputs.Socket_N.value`` (RNA properties).
+    Older versions used ``mod["Socket_N"] = value`` (ID / custom properties).
     Socket_6 (Input Type) is a Menu socket and is left at its default;
     the modifier auto-detects mode from whichever reference socket is populated.
     """
     def _set(identifier, value):
-        # Blender 5.2+ RNA-based property API
+        # Blender 5.0+ RNA-based property API (attribute access, not dict)
         if hasattr(mod, "properties") and hasattr(mod.properties, "inputs"):
-            inp = mod.properties.inputs.get(identifier)
-            if inp is not None:
+            inp = getattr(mod.properties.inputs, identifier, None)
+            if inp is not None and hasattr(inp, "value"):
                 inp.value = value
                 return
-        # Fallback for older Blender versions (< 5.2)
+        # Fallback for older Blender versions (< 5.0)
         mod[identifier] = value
 
     if input_type_int == 1:

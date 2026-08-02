@@ -1,4 +1,4 @@
-# Tooltip: Optimise the vertex groups of the active object by removing any vertex groups that have zero effect.
+# Tooltip: Optimise the vertex groups of selected mesh objects by removing any vertex groups that have zero effect.
 import bpy
 
 def survey(obj):
@@ -14,14 +14,17 @@ def survey(obj):
                 maxWeight[gn] = w
     return maxWeight
 
-obj = bpy.context.active_object
-maxWeight = survey(obj)
-# fix bug pointed out by user2859
-ka = []
-ka.extend(maxWeight.keys())
-ka.sort(key=lambda gn: -gn)
-print (ka)
-for gn in ka:
-    if maxWeight[gn]<=0:
-        print ("delete %d"%gn)
-        obj.vertex_groups.remove(obj.vertex_groups[gn]) # actually remove the group
+for obj in bpy.context.selected_objects:
+    if obj.type != 'MESH':
+        continue
+
+    maxWeight = survey(obj)
+    # fix bug pointed out by user2859
+    ka = []
+    ka.extend(maxWeight.keys())
+    ka.sort(key=lambda gn: -gn)
+    print(f"Processing {obj.name}: {ka}")
+    for gn in ka:
+        if maxWeight[gn]<=0:
+            print("delete %d"%gn)
+            obj.vertex_groups.remove(obj.vertex_groups[gn]) # actually remove the group

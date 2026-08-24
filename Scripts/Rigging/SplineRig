@@ -1,0 +1,111 @@
+import bpy
+
+def setup_spline_offset_rig():
+    # 1. Validation checks
+    active_obj = bpy.context.active_object
+    selected_objs = bpy.context.selected_objects
+    
+    if len(selected_objs) < 2:
+        print("Error: Select the Curve first, then the Armature.")
+        return
+
+    # Identify armature and curve from selection
+    armature_obj = None
+    curve_obj = None
+    for obj in selected_objs:
+        if obj.type == 'ARMATURE' and obj == active_obj:
+            armature_obj = obj
+        elif obj.type == 'CURVE':
+            curve_obj = obj
+
+    if not armature_obj or not curve_obj:
+        print("Error: Active object must be the Armature, and selection must include a Curve.")
+        return
+
+    # 2. Add custom property to the Armature Object for global control
+    if "Path_Offset" not in armature_obj:
+        armature_obj["Path_Offset"] = 0.0
+    
+    # Configure custom property limits
+    id_props = armature_obj.id_properties_ensure()
+    prop_manager = id_props.keys()
+    if "Path_Offset" in prop_manager:
+        armature_obj.property_overridable_library_set('["Path_Offset"]', True)
+        # UI configuration for the slider
+        ui_data = armature_obj._rna_ui.get("Path_Offset", {})
+        ui_data["min"] = 0.0
+        ui_data["max"] = 1.0
+        ui_data["description"] = "Slides the bone chain along the spline"
+
+    # Get the bone list from edit mode to know how many we are dealing with
+    bpy.context.view_layer.objects.active = armature_obj
+    bpy.ops.object.mode_set(mode='EDIT')
+    bone_names = [b.name for b in armature_obj.data.edit_bones if not b.name.startswith("TARGET_")]
+    num_bones = len(bone_names)
+    
+    if num_bones == 0:
+        print("Error: No bones found in the armature.")
+        bpy.ops.object.mode_set(mode='OBJECT')
+        return
+
+    # 3. Create the Target Bones inside the same Armature
+    target_names = []
+    for i, bone_name in enumerate(bone_names):
+        orig_bone = armature_obj.data.edit_bones[bone_name]
+        
+        # Create a disconnected target helper bone at the same position
+        t_bone = armature_obj.data.edit_bones.new(name=f"TARGET_{bone_name}")
+        t_bone.head = orig_bone.head
+        t_bone.tail = orig_bone.tail
+        t_bone.use_connect = False
+        t_bone.parent = None  # Floating targets
+        target_names.append(t_bone.name)
+
+    # 4. Switch to Pose Mode to configure drivers and constraints
+    bpy.ops.object.mode_set(mode='POSE')
+
+    # Calculate proportional spacing down the curve
+    spacing = 1.0 / max(1, num_bones - 1)
+
+    for i, (bone_name, target_name) in enumerate(zip(bone_names, target_names)):
+        p_bone = armature_obj.pose.bones[bone_name]
+        t_bone = armature_obj.pose.bones[target_name]
+
+        # --- Configure the Target Bone's Follow Path Constraint ---
+        fp_const = t_bone.constraints.new(type='FOLLOW_PATH')
+        fp_const.target = curve_obj
+        fp_const.use_fixed_location = True
+        
+        # Add driver to the offset factor
+        driver_target = fp_const.driver_add("offset_factor")
+        drv = driver_target.driver
+        drv.type = 'SCRIPTED'
+        
+        # Variable linking to the Armature's custom property
+        var = drv.variables.new()
+        var.name = "offset"
+        var.type = 'SINGLE_PROP'
+        var.targets[0].id = armature_obj
+        var.targets[0].data_path = '["Path_Offset"]'
+        
+        # The math formula: distributes each bone evenly, wrapping at the loop ends
+        bone_offset = i * spacing
+        drv.expression = f"(offset + {bone_offset}) % 1.0"
+
+        # --- Track the main bones to their respective floating targets ---
+        # Clear existing tracking constraints if running multiple times
+        for c in p_bone.constraints:
+            if c.type in ['TRACK_TO', 'IK']:
+                p_bone.constraints.remove(c)
+                
+        # Track To directs the bone length toward the target
+        track_const = p_bone.constraints.new(type='TRACK_TO')
+        track_const.target = armature_obj
+        track_const.subtarget = target_name
+        track_const.track_axis = 'TRACK_Y'  # Standard Blender bone length axis
+        track_const.up_axis = 'UP_Z'
+
+    print("Rigging configuration complete! Use the 'Path_Offset' property on your Armature to slide.")
+
+# Execute the script
+setup_spline_offset_rig()

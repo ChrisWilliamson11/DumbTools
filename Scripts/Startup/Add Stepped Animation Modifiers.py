@@ -74,7 +74,7 @@ class AddSteppedModifierOperator(Operator):
             # Or just add a new one? The user asked to "add a stepped interpolation modifier"
             # We'll just add it.
             mod = fcurve.modifiers.new(type='STEPPED')
-            mod.step_size = self.step_size
+            mod.frame_step = self.step_size
             added_count += 1
 
         # Update the scene

@@ -79,6 +79,6 @@ def unregister():
     bpy.utils.unregister_class(AddSteppedModifierOperator)
 
 
-if __name__ == "__main__":
-    register()
-    bpy.ops.anim.add_stepped_modifiers('INVOKE_DEFAULT')
+
+register()
+bpy.ops.anim.add_stepped_modifiers('INVOKE_DEFAULT')

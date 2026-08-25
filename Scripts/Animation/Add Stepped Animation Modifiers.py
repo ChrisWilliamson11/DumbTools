@@ -23,22 +23,42 @@ class AddSteppedModifierOperator(Operator):
 
     def get_selected_fcurves(self, context):
         """Get selected f-curves"""
+        # Try context first (works in Graph Editor and Dopesheet)
+        if hasattr(context, "selected_editable_fcurves") and context.selected_editable_fcurves:
+            return list(context.selected_editable_fcurves)
+            
+        if hasattr(context, "selected_visible_fcurves") and context.selected_visible_fcurves:
+            return [fc for fc in context.selected_visible_fcurves if fc.select]
+            
+        # Fallback to finding them manually from objects
         fcurves = []
-
-        # Get f-curves from all selected objects with animation data
         objs = [o for o in context.selected_objects if o.animation_data and o.animation_data.action]
-
-        # If no selected objects have animation, try the active object
         if not objs and context.active_object and context.active_object.animation_data and context.active_object.animation_data.action:
             objs = [context.active_object]
 
         for obj in objs:
-            action = obj.animation_data.action
-            for fcurve in action.fcurves:
-                # Check if the channel is selected
-                if fcurve.select:
-                    fcurves.append(fcurve)
-
+            anim_data = obj.animation_data
+            action = anim_data.action
+            
+            # Legacy Blender (< 4.3)
+            if hasattr(action, "fcurves"):
+                for fcurve in action.fcurves:
+                    if fcurve.select:
+                        fcurves.append(fcurve)
+            # Modern Blender (4.3+) with Project Baklava
+            else:
+                try:
+                    import bpy_extras
+                    slot = getattr(anim_data, "action_slot", None)
+                    if slot is not None and hasattr(bpy_extras, "anim_utils") and hasattr(bpy_extras.anim_utils, "action_get_channelbag_for_slot"):
+                        channelbag = bpy_extras.anim_utils.action_get_channelbag_for_slot(action, slot)
+                        if channelbag and hasattr(channelbag, "fcurves"):
+                            for fcurve in channelbag.fcurves:
+                                if fcurve.select:
+                                    fcurves.append(fcurve)
+                except Exception as e:
+                    print(f"Error accessing slotted action fcurves: {e}")
+                    
         return fcurves
 
     def execute(self, context):

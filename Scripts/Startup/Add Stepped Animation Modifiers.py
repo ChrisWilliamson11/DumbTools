@@ -87,18 +87,28 @@ class AddSteppedModifierOperator(Operator):
         return context.window_manager.invoke_props_dialog(self, width=300)
 
 
+def draw_menu(self, context):
+    self.layout.operator(AddSteppedModifierOperator.bl_idname, text="Add Stepped Modifiers", icon='MODIFIER')
+
 def register():
     try:
         bpy.utils.unregister_class(AddSteppedModifierOperator)
     except Exception:
         pass
     bpy.utils.register_class(AddSteppedModifierOperator)
-
+    
+    if hasattr(bpy.types, "DOPESHEET_MT_channel"):
+        bpy.types.DOPESHEET_MT_channel.append(draw_menu)
+    if hasattr(bpy.types, "GRAPH_MT_channel"):
+        bpy.types.GRAPH_MT_channel.append(draw_menu)
 
 def unregister():
+    if hasattr(bpy.types, "DOPESHEET_MT_channel"):
+        bpy.types.DOPESHEET_MT_channel.remove(draw_menu)
+    if hasattr(bpy.types, "GRAPH_MT_channel"):
+        bpy.types.GRAPH_MT_channel.remove(draw_menu)
+        
     bpy.utils.unregister_class(AddSteppedModifierOperator)
 
-
-
-register()
-bpy.ops.anim.add_stepped_modifiers('INVOKE_DEFAULT')
+if __name__ == "__main__":
+    register()

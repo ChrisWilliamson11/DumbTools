@@ -110,5 +110,4 @@ def unregister():
         
     bpy.utils.unregister_class(AddSteppedModifierOperator)
 
-if __name__ == "__main__":
-    register()
+register()

@@ -57,6 +57,22 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
         default=False,
         description="Also create a rectangular outline for the full image size"
     )
+    
+    use_animation: bpy.props.BoolProperty(
+        name="Process Animation",
+        default=False,
+        description="Create a sequence of objects and animate visibility via constraints"
+    )
+    
+    frame_start: bpy.props.IntProperty(
+        name="Frame Start",
+        default=1
+    )
+    
+    frame_end: bpy.props.IntProperty(
+        name="Frame End",
+        default=250
+    )
 
     @classmethod
     def poll(cls, context):
@@ -79,6 +95,9 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
             self.report({'ERROR'}, "No Image Texture linked to Principled BSDF found in the first material.")
             return {'CANCELLED'}
             
+        self.frame_start = context.scene.frame_start
+        self.frame_end = context.scene.frame_end
+            
         return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
@@ -92,96 +111,155 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
             
         cv2 = ensure_cv2()
         
-        width, height = img.size
-        
-        if width == 0 or height == 0:
-            self.report({'ERROR'}, "Image has 0 dimensions.")
-            return {'CANCELLED'}
+        original_frame = context.scene.frame_current
+
+        if self.use_animation:
+            frames = range(self.frame_start, self.frame_end + 1)
             
-        # Extract alpha channel using fast method
-        pixels = np.empty(width * height * 4, dtype=np.float32)
-        img.pixels.foreach_get(pixels)
-        
-        if len(pixels) != width * height * 4:
-            self.report({'ERROR'}, "Image is not 4-channel RGBA.")
-            return {'CANCELLED'}
+            # create Root Empty
+            root_empty = bpy.data.objects.new(f"{img.name}_Root", None)
+            context.collection.objects.link(root_empty)
+            root_empty.location = obj.location
             
-        alpha = pixels[3::4].reshape((height, width))
-        alpha = np.flipud(alpha) # OpenCV y is top-down
-        
-        alpha_8u = (alpha * 255).astype(np.uint8)
-        
-        thresh_val = int(self.alpha_threshold * 255)
-        _, binary = cv2.threshold(alpha_8u, thresh_val, 255, cv2.THRESH_BINARY)
-        
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if not contours:
-            self.report({'WARNING'}, "No opaque areas found with given threshold.")
-            return {'CANCELLED'}
-        
-        curve_data = bpy.data.curves.new(name=f"{img.name}_Splines", type='CURVE')
-        curve_data.dimensions = '2D'
-        curve_data.fill_mode = 'BOTH'
-        
-        if self.create_border:
-            border_spline = curve_data.splines.new(type='POLY')
-            border_spline.points.add(3)
-            w_scaled = width * self.scale
-            h_scaled = height * self.scale
-            border_spline.points[0].co = (0, 0, 0, 1)
-            border_spline.points[1].co = (w_scaled, 0, 0, 1)
-            border_spline.points[2].co = (w_scaled, h_scaled, 0, 1)
-            border_spline.points[3].co = (0, h_scaled, 0, 1)
-            border_spline.use_cyclic_u = True
-        
-        for cnt in contours:
-            if len(cnt) < 3:
+            # create Hide Empty
+            hide_empty = bpy.data.objects.new(f"{img.name}_Hide", None)
+            context.collection.objects.link(hide_empty)
+            hide_empty.parent = root_empty
+            hide_empty.location = (0, 0, -100) # local offset
+            
+        else:
+            frames = [original_frame]
+
+        meshes_created = 0
+
+        for f in frames:
+            if self.use_animation:
+                context.scene.frame_set(f)
+                img.update()
+            
+            width, height = img.size
+            if width == 0 or height == 0:
                 continue
                 
-            spline = curve_data.splines.new(type='POLY')
-            spline.points.add(len(cnt) - 1)
+            # Extract alpha channel using fast method
+            pixels = np.empty(width * height * 4, dtype=np.float32)
+            img.pixels.foreach_get(pixels)
             
-            for i, pt in enumerate(cnt):
-                x, y = pt[0]
-                blender_y = height - y
-                spline.points[i].co = (x * self.scale, blender_y * self.scale, 0, 1)
+            if len(pixels) != width * height * 4:
+                continue
                 
-            spline.use_cyclic_u = True
+            alpha = pixels[3::4].reshape((height, width))
+            alpha = np.flipud(alpha) # OpenCV y is top-down
+            
+            alpha_8u = (alpha * 255).astype(np.uint8)
+            
+            thresh_val = int(self.alpha_threshold * 255)
+            _, binary = cv2.threshold(alpha_8u, thresh_val, 255, cv2.THRESH_BINARY)
+            
+            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if not contours:
+                continue
+            
+            curve_name = f"{img.name}_F{f}" if self.use_animation else f"{img.name}_Mesh"
+            curve_data = bpy.data.curves.new(name=curve_name, type='CURVE')
+            curve_data.dimensions = '2D'
+            curve_data.fill_mode = 'BOTH'
+            
+            if self.create_border:
+                border_spline = curve_data.splines.new(type='POLY')
+                border_spline.points.add(3)
+                w_scaled = width * self.scale
+                h_scaled = height * self.scale
+                border_spline.points[0].co = (0, 0, 0, 1)
+                border_spline.points[1].co = (w_scaled, 0, 0, 1)
+                border_spline.points[2].co = (w_scaled, h_scaled, 0, 1)
+                border_spline.points[3].co = (0, h_scaled, 0, 1)
+                border_spline.use_cyclic_u = True
+            
+            for cnt in contours:
+                if len(cnt) < 3:
+                    continue
+                    
+                spline = curve_data.splines.new(type='POLY')
+                spline.points.add(len(cnt) - 1)
+                
+                for i, pt in enumerate(cnt):
+                    x, y = pt[0]
+                    blender_y = height - y
+                    spline.points[i].co = (x * self.scale, blender_y * self.scale, 0, 1)
+                    
+                spline.use_cyclic_u = True
 
-        curve_obj = bpy.data.objects.new(name=f"{img.name}_Mesh", object_data=curve_data)
-        context.collection.objects.link(curve_obj)
-        
-        curve_obj.location = obj.location
-        
-        bpy.ops.object.select_all(action='DESELECT')
-        curve_obj.select_set(True)
-        context.view_layer.objects.active = curve_obj
-        
-        # Convert to mesh
-        bpy.ops.object.convert(target='MESH')
-        new_mesh_obj = context.active_object
-        
-        # Assign material
-        new_mesh_obj.data.materials.append(mat)
-        
-        # Generate UVs based on vertex positions
-        mesh = new_mesh_obj.data
-        if not mesh.uv_layers:
-            mesh.uv_layers.new(name="UVMap")
-        uv_layer = mesh.uv_layers.active.data
-        
-        for poly in mesh.polygons:
-            for loop_index in poly.loop_indices:
-                loop = mesh.loops[loop_index]
-                v = mesh.vertices[loop.vertex_index]
+            curve_obj = bpy.data.objects.new(name=curve_name, object_data=curve_data)
+            context.collection.objects.link(curve_obj)
+            
+            if self.use_animation:
+                curve_obj.parent = root_empty
+                curve_obj.location = (0, 0, 0)
+            else:
+                curve_obj.location = obj.location
+            
+            bpy.ops.object.select_all(action='DESELECT')
+            curve_obj.select_set(True)
+            context.view_layer.objects.active = curve_obj
+            
+            # Convert to mesh
+            bpy.ops.object.convert(target='MESH')
+            new_mesh_obj = context.active_object
+            
+            # Assign material
+            new_mesh_obj.data.materials.append(mat)
+            
+            # Generate UVs based on vertex positions
+            mesh = new_mesh_obj.data
+            if not mesh.uv_layers:
+                mesh.uv_layers.new(name="UVMap")
+            uv_layer = mesh.uv_layers.active.data
+            
+            for poly in mesh.polygons:
+                for loop_index in poly.loop_indices:
+                    loop = mesh.loops[loop_index]
+                    v = mesh.vertices[loop.vertex_index]
+                    
+                    u = (v.co.x / self.scale) / width
+                    v_coord = (v.co.y / self.scale) / height
+                    
+                    uv_layer[loop_index].uv = (u, v_coord)
+
+            # Setup animation constraints
+            if self.use_animation:
+                constraint = new_mesh_obj.constraints.new('COPY_LOCATION')
+                constraint.target = hide_empty
                 
-                u = (v.co.x / self.scale) / width
-                v_coord = (v.co.y / self.scale) / height
+                # Frame 0 -> 1.0
+                constraint.influence = 1.0
+                constraint.keyframe_insert(data_path='influence', frame=0)
                 
-                uv_layer[loop_index].uv = (u, v_coord)
+                # Frame f -> 0.0
+                constraint.influence = 0.0
+                constraint.keyframe_insert(data_path='influence', frame=f)
                 
-        self.report({'INFO'}, f"Successfully created filled mesh from {img.name}")
+                # Frame f+1 -> 1.0
+                constraint.influence = 1.0
+                constraint.keyframe_insert(data_path='influence', frame=f+1)
+                
+                # Set interpolation to CONSTANT
+                if new_mesh_obj.animation_data and new_mesh_obj.animation_data.action:
+                    for fcurve in new_mesh_obj.animation_data.action.fcurves:
+                        for kf in fcurve.keyframe_points:
+                            kf.interpolation = 'CONSTANT'
+            
+            meshes_created += 1
+
+        if self.use_animation:
+            context.scene.frame_set(original_frame)
+
+        if meshes_created == 0:
+            self.report({'WARNING'}, "No meshes were created. Check threshold and image data.")
+        else:
+            self.report({'INFO'}, f"Successfully created {meshes_created} mesh(es) from {img.name}")
+            
         return {'FINISHED'}
 
 classes = (DUMBTOOLS_OT_image_to_spline,)

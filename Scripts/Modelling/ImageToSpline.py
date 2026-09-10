@@ -244,9 +244,31 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
                 constraint.influence = 1.0
                 constraint.keyframe_insert(data_path='influence', frame=f+1)
                 
-                # Set interpolation to CONSTANT
+                # Set interpolation to CONSTANT, accounting for Blender 5 Animation API (Slots, Bindings, etc)
                 if new_mesh_obj.animation_data and new_mesh_obj.animation_data.action:
-                    for fcurve in new_mesh_obj.animation_data.action.fcurves:
+                    action = new_mesh_obj.animation_data.action
+                    found_fcurves = set()
+                    
+                    def find_fcurves(obj, depth=0):
+                        if depth > 4 or obj is None: return
+                        
+                        if hasattr(obj, "fcurves"):
+                            try:
+                                for fc in obj.fcurves:
+                                    if hasattr(fc, "keyframe_points"):
+                                        found_fcurves.add(fc)
+                            except Exception: pass
+                                
+                        for attr in ("slots", "bindings", "layers", "strips"):
+                            if hasattr(obj, attr):
+                                try:
+                                    for item in getattr(obj, attr):
+                                        find_fcurves(item, depth + 1)
+                                except Exception: pass
+                                
+                    find_fcurves(action)
+                    
+                    for fcurve in found_fcurves:
                         for kf in fcurve.keyframe_points:
                             kf.interpolation = 'CONSTANT'
             

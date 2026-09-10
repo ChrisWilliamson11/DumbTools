@@ -139,14 +139,11 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
             
             if self.use_animation:
                 context.scene.frame_set(f)
-                if mat and mat.use_nodes:
-                    mat.node_tree.update_tag()
-                img.update_tag()
-                context.view_layer.update() # Force depsgraph
+                context.view_layer.update()
                 
-                # Force Blender's UI and video decoding threads to process the frame
-                bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
-                
+            print(f"\n--- PROCESSING FRAME {f} ---")
+            print(f"Image Source: {img.source}")
+            
             # 1. Try reading directly from disk if it's a sequence
             if img.source == 'SEQUENCE' and node and hasattr(node, "image_user"):
                 filepath = ""
@@ -155,7 +152,7 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
                     try: filepath = bpy.path.abspath(img.filepath_from_user(image_user=node.image_user))
                     except: pass
                 
-                # B: If Blender returns same/wrong path, force regex calculation
+                # B: Force regex calculation
                 base_path = bpy.path.abspath(img.filepath)
                 import re
                 m = re.search(r'(\d+)(?=[^\d]*$)', base_path)
@@ -176,21 +173,30 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
             # 2. Fallback to OpenCV VideoCapture for MOVIE files (if supported by OS/FFmpeg)
             if alpha_8u is None and img.source == 'MOVIE':
                 movie_path = bpy.path.abspath(img.filepath)
+                print(f"Attempting OpenCV VideoCapture on: {movie_path}")
                 if os.path.exists(movie_path):
-                    cap = cv2.VideoCapture(movie_path)
+                    cap = cv2.VideoCapture(movie_path) # Try default backend
+                    cap.set(cv2.CAP_PROP_CONVERT_RGB, 0) # Try to preserve alpha
                     if cap.isOpened():
                         movie_frame = f - 1 # OpenCV is 0-indexed
                         if node and hasattr(node, "image_user"):
                             movie_frame = f - node.image_user.frame_start + node.image_user.frame_offset
                         cap.set(cv2.CAP_PROP_POS_FRAMES, movie_frame)
                         ret, img_cv = cap.read()
-                        if ret and img_cv is not None and len(img_cv.shape) == 3 and img_cv.shape[2] == 4:
-                            height, width = img_cv.shape[:2]
-                            alpha_8u = img_cv[:, :, 3]
+                        print(f"VideoCapture Read Success: {ret}")
+                        if ret and img_cv is not None:
+                            print(f"VideoCapture Shape: {img_cv.shape}")
+                            if len(img_cv.shape) == 3 and img_cv.shape[2] == 4:
+                                height, width = img_cv.shape[:2]
+                                alpha_8u = img_cv[:, :, 3]
+                                print("SUCCESS: OpenCV loaded movie frame with ALPHA!")
+                            else:
+                                print(f"ERROR: OpenCV loaded movie but it only has {img_cv.shape[2] if len(img_cv.shape) == 3 else 'unknown'} channels.")
                     cap.release()
                     
             # 3. Ultimate Fallback to Blender's pixel cache
             if alpha_8u is None:
+                print("FALLBACK: Using Blender's internal img.pixels cache...")
                 if self.use_animation:
                     try: img.gl_load()
                     except: pass
@@ -198,16 +204,19 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
                     
                 width, height = img.size
                 if width == 0 or height == 0:
+                    print("ERROR: img.size is 0x0")
                     continue
                     
                 pixels = np.empty(width * height * 4, dtype=np.float32)
                 img.pixels.foreach_get(pixels)
                 if len(pixels) != width * height * 4:
+                    print("ERROR: pixels array size mismatch")
                     continue
                     
                 alpha = pixels[3::4].reshape((height, width))
                 alpha = np.flipud(alpha) # OpenCV y is top-down
                 alpha_8u = (alpha * 255).astype(np.uint8)
+                print("SUCCESS: Loaded from img.pixels cache (but might be stuck on old frame).")
             
             thresh_val = int(self.alpha_threshold * 255)
             _, binary = cv2.threshold(alpha_8u, thresh_val, 255, cv2.THRESH_BINARY)

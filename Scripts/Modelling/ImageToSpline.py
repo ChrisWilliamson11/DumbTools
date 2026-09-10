@@ -227,11 +227,17 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
         thresh_val = int(self.alpha_threshold * 255)
         _, binary = cv2.threshold(alpha_8u, thresh_val, 255, cv2.THRESH_BINARY)
         
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Clean up compression noise with morphological operations
+        kernel = np.ones((3,3), np.uint8)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel) # Removes small specks
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel) # Fills small holes in edges
+        
+        # Use RETR_TREE to capture internal holes, not just the external silhouette
+        contours, hierarchy = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         
         if not contours:
             return
-        
+            
         curve_name = f"{img.name}_F{f}" if self.use_animation else f"{img.name}_Mesh"
         curve_data = bpy.data.curves.new(name=curve_name, type='CURVE')
         curve_data.dimensions = '2D'
@@ -250,6 +256,10 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
         
         for cnt in contours:
             if len(cnt) < 3:
+                continue
+                
+            # Filter out tiny noise islands (compression artifacts)
+            if cv2.contourArea(cnt) < 10.0:
                 continue
                 
             spline = curve_data.splines.new(type='POLY')

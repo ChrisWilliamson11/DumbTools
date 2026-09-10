@@ -139,10 +139,28 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
             
             if self.use_animation:
                 context.scene.frame_set(f)
+                context.view_layer.update() # Force depsgraph
                 
             # 1. Try reading directly from disk if it's a sequence
-            if img.source == 'SEQUENCE' and node and hasattr(node, "image_user") and hasattr(img, "filepath_from_user"):
-                filepath = bpy.path.abspath(img.filepath_from_user(image_user=node.image_user))
+            if img.source == 'SEQUENCE' and node and hasattr(node, "image_user"):
+                filepath = ""
+                # A: Try Blender's evaluated path
+                if hasattr(img, "filepath_from_user"):
+                    try: filepath = bpy.path.abspath(img.filepath_from_user(image_user=node.image_user))
+                    except: pass
+                
+                # B: If Blender returns same/wrong path, force regex calculation
+                base_path = bpy.path.abspath(img.filepath)
+                import re
+                m = re.search(r'(\d+)(?=[^\d]*$)', base_path)
+                if m:
+                    image_frame = f - node.image_user.frame_start + node.image_user.frame_offset + 1
+                    frame_str = m.group(1)
+                    new_frame_str = str(image_frame).zfill(len(frame_str))
+                    regex_path = base_path[:m.start()] + new_frame_str + base_path[m.end():]
+                    if os.path.exists(regex_path):
+                        filepath = regex_path
+                        
                 if filepath and os.path.exists(filepath):
                     img_cv = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
                     if img_cv is not None and len(img_cv.shape) == 3 and img_cv.shape[2] == 4:

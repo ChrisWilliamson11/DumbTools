@@ -16,21 +16,21 @@ def ensure_cv2():
         import cv2
         return cv2
 
-def get_image_from_material(mat):
+def get_image_node_from_material(mat):
     if not mat or not mat.use_nodes:
-        return None
+        return None, None
     for node in mat.node_tree.nodes:
         if node.type == 'BSDF_PRINCIPLED':
             base_color = node.inputs.get("Base Color")
             if base_color and base_color.is_linked:
                 link = base_color.links[0]
                 if link.from_node.type == 'TEX_IMAGE':
-                    return link.from_node.image
+                    return link.from_node, link.from_node.image
     # Fallback to any TEX_IMAGE node if principled isn't found/linked
     for node in mat.node_tree.nodes:
         if node.type == 'TEX_IMAGE':
-            return node.image
-    return None
+            return node, node.image
+    return None, None
 
 class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
     bl_idname = "dumbtools.image_to_spline"
@@ -90,7 +90,7 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
             self.report({'ERROR'}, "Active object has no material.")
             return {'CANCELLED'}
             
-        img = get_image_from_material(mat)
+        node, img = get_image_node_from_material(mat)
         if not img:
             self.report({'ERROR'}, "No Image Texture linked to Principled BSDF found in the first material.")
             return {'CANCELLED'}
@@ -101,9 +101,10 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
         return context.window_manager.invoke_props_dialog(self)
 
     def execute(self, context):
+        import os
         obj = context.active_object
         mat = obj.data.materials[0]
-        img = get_image_from_material(mat)
+        node, img = get_image_node_from_material(mat)
         
         if not img:
             self.report({'ERROR'}, "Could not find image in material.")
@@ -133,25 +134,40 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
         meshes_created = 0
 
         for f in frames:
+            alpha_8u = None
+            width, height = 0, 0
+            
             if self.use_animation:
                 context.scene.frame_set(f)
-                img.update()
-            
-            width, height = img.size
-            if width == 0 or height == 0:
-                continue
                 
-            # Extract alpha channel using fast method
-            pixels = np.empty(width * height * 4, dtype=np.float32)
-            img.pixels.foreach_get(pixels)
+            # 1. Try reading directly from disk if it's a sequence
+            if img.source == 'SEQUENCE' and node and hasattr(node, "image_user") and hasattr(img, "filepath_from_user"):
+                filepath = bpy.path.abspath(img.filepath_from_user(image_user=node.image_user))
+                if filepath and os.path.exists(filepath):
+                    img_cv = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
+                    if img_cv is not None and len(img_cv.shape) == 3 and img_cv.shape[2] == 4:
+                        height, width = img_cv.shape[:2]
+                        alpha_8u = img_cv[:, :, 3]
             
-            if len(pixels) != width * height * 4:
-                continue
-                
-            alpha = pixels[3::4].reshape((height, width))
-            alpha = np.flipud(alpha) # OpenCV y is top-down
-            
-            alpha_8u = (alpha * 255).astype(np.uint8)
+            # 2. Fallback to Blender's pixel cache
+            if alpha_8u is None:
+                if self.use_animation:
+                    try: img.reload()
+                    except: pass
+                    img.update()
+                    
+                width, height = img.size
+                if width == 0 or height == 0:
+                    continue
+                    
+                pixels = np.empty(width * height * 4, dtype=np.float32)
+                img.pixels.foreach_get(pixels)
+                if len(pixels) != width * height * 4:
+                    continue
+                    
+                alpha = pixels[3::4].reshape((height, width))
+                alpha = np.flipud(alpha) # OpenCV y is top-down
+                alpha_8u = (alpha * 255).astype(np.uint8)
             
             thresh_val = int(self.alpha_threshold * 255)
             _, binary = cv2.threshold(alpha_8u, thresh_val, 255, cv2.THRESH_BINARY)

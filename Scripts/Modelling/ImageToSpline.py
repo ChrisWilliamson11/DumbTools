@@ -144,6 +144,9 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
                 img.update_tag()
                 context.view_layer.update() # Force depsgraph
                 
+                # Force Blender's UI and video decoding threads to process the frame
+                bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
+                
             # 1. Try reading directly from disk if it's a sequence
             if img.source == 'SEQUENCE' and node and hasattr(node, "image_user"):
                 filepath = ""
@@ -170,7 +173,23 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
                         height, width = img_cv.shape[:2]
                         alpha_8u = img_cv[:, :, 3]
             
-            # 2. Fallback to Blender's pixel cache (Required for MOVIEs)
+            # 2. Fallback to OpenCV VideoCapture for MOVIE files (if supported by OS/FFmpeg)
+            if alpha_8u is None and img.source == 'MOVIE':
+                movie_path = bpy.path.abspath(img.filepath)
+                if os.path.exists(movie_path):
+                    cap = cv2.VideoCapture(movie_path)
+                    if cap.isOpened():
+                        movie_frame = f - 1 # OpenCV is 0-indexed
+                        if node and hasattr(node, "image_user"):
+                            movie_frame = f - node.image_user.frame_start + node.image_user.frame_offset
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, movie_frame)
+                        ret, img_cv = cap.read()
+                        if ret and img_cv is not None and len(img_cv.shape) == 3 and img_cv.shape[2] == 4:
+                            height, width = img_cv.shape[:2]
+                            alpha_8u = img_cv[:, :, 3]
+                    cap.release()
+                    
+            # 3. Ultimate Fallback to Blender's pixel cache
             if alpha_8u is None:
                 if self.use_animation:
                     try: img.gl_load()

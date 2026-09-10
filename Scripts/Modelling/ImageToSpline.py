@@ -224,6 +224,16 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
             bpy.ops.object.convert(target='MESH')
             new_mesh_obj = context.active_object
             
+            # Fix normals for Solidify modifier (ensure all face +Z)
+            bm = bmesh.new()
+            bm.from_mesh(new_mesh_obj.data)
+            for face in bm.faces:
+                if face.normal.z < 0:
+                    face.normal_flip()
+            bm.normal_update()
+            bm.to_mesh(new_mesh_obj.data)
+            bm.free()
+            
             # Assign material
             new_mesh_obj.data.materials.append(mat)
             

@@ -141,34 +141,56 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
                 context.scene.frame_set(f)
                 context.view_layer.update() # Force depsgraph
                 
+            print(f"\n--- PROCESSING FRAME {f} ---")
+            print(f"Image Source: {img.source}")
+            
             # 1. Try reading directly from disk if it's a sequence
             if img.source == 'SEQUENCE' and node and hasattr(node, "image_user"):
                 filepath = ""
+                
+                print(f"ImageUser Start: {node.image_user.frame_start}, Offset: {node.image_user.frame_offset}")
+                
                 # A: Try Blender's evaluated path
                 if hasattr(img, "filepath_from_user"):
-                    try: filepath = bpy.path.abspath(img.filepath_from_user(image_user=node.image_user))
-                    except: pass
+                    try: 
+                        filepath = bpy.path.abspath(img.filepath_from_user(image_user=node.image_user))
+                        print(f"Blender Evaluated Path: {filepath}")
+                    except Exception as e: 
+                        print(f"Blender Evaluated Path Error: {e}")
                 
-                # B: If Blender returns same/wrong path, force regex calculation
+                # B: Force regex calculation
                 base_path = bpy.path.abspath(img.filepath)
+                print(f"Base Path: {base_path}")
                 import re
                 m = re.search(r'(\d+)(?=[^\d]*$)', base_path)
                 if m:
+                    # Calculate frame number based on Blender's image user offset
                     image_frame = f - node.image_user.frame_start + node.image_user.frame_offset + 1
                     frame_str = m.group(1)
                     new_frame_str = str(image_frame).zfill(len(frame_str))
                     regex_path = base_path[:m.start()] + new_frame_str + base_path[m.end():]
+                    print(f"Regex Path Calculated: {regex_path}")
+                    
                     if os.path.exists(regex_path):
+                        print(f"Regex Path EXISTS on disk! Using this.")
                         filepath = regex_path
+                    else:
+                        print(f"Regex Path DOES NOT EXIST on disk.")
                         
                 if filepath and os.path.exists(filepath):
                     img_cv = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
                     if img_cv is not None and len(img_cv.shape) == 3 and img_cv.shape[2] == 4:
                         height, width = img_cv.shape[:2]
                         alpha_8u = img_cv[:, :, 3]
+                        print("SUCCESS: OpenCV loaded the image!")
+                    else:
+                        print("ERROR: OpenCV failed to load or image doesn't have 4 channels.")
+                else:
+                    print("ERROR: Final filepath does not exist or is empty.")
             
             # 2. Fallback to Blender's pixel cache
             if alpha_8u is None:
+                print("FALLBACK: Using Blender's internal img.pixels cache...")
                 if self.use_animation:
                     try: img.reload()
                     except: pass
@@ -176,16 +198,19 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
                     
                 width, height = img.size
                 if width == 0 or height == 0:
+                    print("ERROR: img.size is 0x0")
                     continue
                     
                 pixels = np.empty(width * height * 4, dtype=np.float32)
                 img.pixels.foreach_get(pixels)
                 if len(pixels) != width * height * 4:
+                    print("ERROR: pixels array size mismatch")
                     continue
                     
                 alpha = pixels[3::4].reshape((height, width))
                 alpha = np.flipud(alpha) # OpenCV y is top-down
                 alpha_8u = (alpha * 255).astype(np.uint8)
+                print("SUCCESS: Loaded from img.pixels cache.")
             
             thresh_val = int(self.alpha_threshold * 255)
             _, binary = cv2.threshold(alpha_8u, thresh_val, 255, cv2.THRESH_BINARY)

@@ -40,9 +40,24 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
     alpha_threshold: bpy.props.FloatProperty(
         name="Alpha Threshold",
         default=0.5,
+        min=0.01,
+        max=0.99,
+        description="Threshold to separate opaque from transparent"
+    )
+    
+    noise_filter_area: bpy.props.FloatProperty(
+        name="Noise Filter Area",
+        default=10.0,
         min=0.0,
-        max=1.0,
-        description="Alpha value above which pixels are considered solid"
+        description="Minimum pixel area to keep an island. Increase to remove larger speckles"
+    )
+    
+    smoothing_iterations: bpy.props.IntProperty(
+        name="Edge Smoothing",
+        default=1,
+        min=0,
+        max=15,
+        description="Amount of morphological smoothing to apply to the alpha edge"
     )
     
     scale: bpy.props.FloatProperty(
@@ -227,10 +242,11 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
         thresh_val = int(self.alpha_threshold * 255)
         _, binary = cv2.threshold(alpha_8u, thresh_val, 255, cv2.THRESH_BINARY)
         
-        # Clean up compression noise with morphological operations
-        kernel = np.ones((3,3), np.uint8)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel) # Removes small specks
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel) # Fills small holes in edges
+        if self.smoothing_iterations > 0:
+            # Clean up compression noise with morphological operations
+            kernel = np.ones((3,3), np.uint8)
+            binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=self.smoothing_iterations) # Removes small specks
+            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=self.smoothing_iterations) # Fills small holes in edges
         
         # Use RETR_TREE to capture internal holes, not just the external silhouette
         contours, hierarchy = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -259,7 +275,7 @@ class DUMBTOOLS_OT_image_to_spline(bpy.types.Operator):
                 continue
                 
             # Filter out tiny noise islands (compression artifacts)
-            if cv2.contourArea(cnt) < 10.0:
+            if cv2.contourArea(cnt) < self.noise_filter_area:
                 continue
                 
             spline = curve_data.splines.new(type='POLY')
